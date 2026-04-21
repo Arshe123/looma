@@ -107,6 +107,13 @@ export const fileSystemService = {
       const toResolved = resolveInWorkspace(workspacePath, toRelativePath)
       if (!toResolved.ok) return { success: false, error: toResolved.error }
 
+      try{
+        await fs.access(toResolved.target)
+        return { success: false, error: 'Target path already exists' }
+      } catch (error: any) {
+        // Target path is valid
+      }
+
       await ensureDir(path.dirname(toResolved.target))
       await fs.rename(fromResolved.target, toResolved.target)
       return { success: true }

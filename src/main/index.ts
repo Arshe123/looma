@@ -27,6 +27,8 @@ function createWindow(initialWorkspaceId?: string) {
     titleBarStyle: 'hidden',
   });
 
+  win.setIcon(path.join(__dirname, '../public/logo.png'));
+
   if (process.env.VITE_DEV_SERVER_URL) {
     const url = new URL(process.env.VITE_DEV_SERVER_URL);
     if (initialWorkspaceId) url.searchParams.set('workspaceId', initialWorkspaceId);

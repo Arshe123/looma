@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   workspaceMeta: {
     get: (workspaceId: string) => ipcRenderer.invoke('workspaceMeta:get', workspaceId),
-    set: (workspaceId: string, meta: { expandedDirs: string[]; selectedDir: string; noteOrder: Record<string, string[]> }) =>
+    set: (workspaceId: string, meta: { expandedDirs: string[]; selectedPaths: string[]; noteOrder: Record<string, string[]> }) =>
       ipcRenderer.invoke('workspaceMeta:set', workspaceId, meta),
   },
   fs: {

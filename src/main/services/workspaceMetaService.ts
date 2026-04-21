@@ -5,7 +5,7 @@ import type { Result } from '../interfaces/Result'
 
 export interface WorkspaceMeta {
   expandedDirs: string[]
-  selectedDir: string
+  selectedPaths: string[]
   noteOrder: Record<string, string[]>
 }
 
@@ -23,7 +23,7 @@ const ensureMetaDir = async () => {
 
 const defaultMeta: WorkspaceMeta = {
   expandedDirs: [],
-  selectedDir: '',
+  selectedPaths: [],
   noteOrder: {},
 }
 
@@ -37,7 +37,7 @@ export const workspaceMetaService = {
         success: true,
         data: {
           expandedDirs: Array.isArray(parsed.expandedDirs) ? parsed.expandedDirs : [],
-          selectedDir: typeof parsed.selectedDir === 'string' ? parsed.selectedDir : '',
+          selectedPaths: Array.isArray(parsed.selectedPaths) ? parsed.selectedPaths : (typeof (parsed as any).selectedDir === 'string' && (parsed as any).selectedDir ? [(parsed as any).selectedDir] : []),
           noteOrder: typeof parsed.noteOrder === 'object' && parsed.noteOrder ? (parsed.noteOrder as any) : {},
         },
       }

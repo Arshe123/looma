@@ -24,8 +24,8 @@ export interface ElectronAPI {
     setActive: (id: string) => Promise<Result<void>>;
   };
   workspaceMeta: {
-    get: (workspaceId: string) => Promise<Result<{ expandedDirs: string[]; selectedDir: string; noteOrder: Record<string, string[]> }>>;
-    set: (workspaceId: string, meta: { expandedDirs: string[]; selectedDir: string; noteOrder: Record<string, string[]> }) => Promise<Result<void>>;
+    get: (workspaceId: string) => Promise<Result<{ expandedDirs: string[]; selectedPaths: string[]; noteOrder: Record<string, string[]> }>>;
+    set: (workspaceId: string, meta: { expandedDirs: string[]; selectedPaths: string[]; noteOrder: Record<string, string[]> }) => Promise<Result<void>>;
   };
   fs: {
     listDir: (workspaceId: string, dirRelativePath: string) => Promise<Result<Array<{ name: string; relativePath: string; isDirectory: boolean; size: number; mtimeMs: number }>>>;

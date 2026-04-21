@@ -11,7 +11,6 @@ const props = defineProps<{
 const workspaceStore = useWorkspaceStore()
 
 const expanded = computed(() => workspaceStore.activeExpandedSet)
-const selectedDir = computed(() => (workspaceStore.selectedDir || '').split('\\').join('/').replace(/^\/+/, '').replace(/\/+$/, ''))
 const activeFileRel = computed(() => workspaceStore.activeFileRelativePath)
 
 const getChildren = (dirRelativePath: string) => {
@@ -25,34 +24,49 @@ const toggle = async (dirRelativePath: string) => {
   await workspaceStore.toggleDirExpanded(dirRelativePath)
 }
 
-const selectDir = async (dirRelativePath: string) => {
-  await workspaceStore.selectDir(dirRelativePath)
-}
-
-const openFile = (relativePath: string) => {
-  workspaceStore.setActiveFileRelative(relativePath)
-}
-
 const removeEntry = async (relativePath: string) => {
-  await workspaceStore.deleteEntry(relativePath)
+  if (workspaceStore.selectedPaths.includes(relativePath)) {
+    await workspaceStore.deleteEntries(workspaceStore.selectedPaths)
+  } else {
+    await workspaceStore.deleteEntries([relativePath])
+  }
 }
 
 const renameEntry = async (relativePath: string) => {
   await workspaceStore.renameEntry(relativePath)
 }
 
+const handleRowClick = (event: MouseEvent, row: FsEntry, isMulti: boolean) => {
+  workspaceStore.selectPath(row.relativePath, isMulti, false)
+
+  if (!isMulti) {
+    if (row.isDirectory) {
+      workspaceStore.selectDir(row.relativePath)
+      workspaceStore.toggleDirExpanded(row.relativePath)
+    } else {
+      workspaceStore.setActiveFileRelative(row.relativePath)
+    }
+  }
+}
+
+const handleRightClick = (event: MouseEvent, row: FsEntry) => {
+  event.stopPropagation()
+  workspaceStore.selectPath(row.relativePath, false, true)
+  openMenu(event, row)
+}
+
 const menuOpen = ref(false)
 const menuX = ref(0)
 const menuY = ref(0)
-const menuDir = ref('')
+const selectedFile = ref<FsEntry>()
 
 const closeMenu = () => {
   menuOpen.value = false
 }
 
-const openMenu = (event: MouseEvent, targetDir: string) => {
+const openMenu = (event: MouseEvent, row: FsEntry) => {
   event.preventDefault()
-  menuDir.value = targetDir
+  selectedFile.value = row
   const pad = 8
   const width = 180
   const height = 96
@@ -65,12 +79,12 @@ const openMenu = (event: MouseEvent, targetDir: string) => {
 
 const addFile = async () => {
   closeMenu()
-  await workspaceStore.createMarkdown(undefined, menuDir.value)
+  await workspaceStore.createMarkdown(undefined, selectedFile.value?.relativePath)
 }
 
 const addFolder = async () => {
   closeMenu()
-  await workspaceStore.createFolder(undefined, menuDir.value)
+  await workspaceStore.createFolder(undefined, selectedFile.value?.relativePath)
 }
 
 const parentDirOf = (p: string) => {
@@ -81,22 +95,55 @@ const parentDirOf = (p: string) => {
 }
 
 const onDragStart = (event: DragEvent, entry: FsEntry) => {
-  event.dataTransfer?.setData('text/plain', entry.relativePath)
+  let pathsToDrag = [entry.relativePath]
+  if (workspaceStore.selectedPaths.includes(entry.relativePath)) {
+    pathsToDrag = [...workspaceStore.selectedPaths]
+  } else {
+    workspaceStore.selectPath(entry.relativePath, false, false)
+  }
+  
+  event.dataTransfer?.setData('text/plain', JSON.stringify(pathsToDrag))
   event.dataTransfer?.setData('application/x-workspace-id', props.workspaceId)
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-  event.dataTransfer?.setDragImage?.(new Image(), 0, 0)
+  
+  const dragImage = document.createElement('div')
+  dragImage.textContent = pathsToDrag.length > 1 ? `移动 ${pathsToDrag.length} 个项目` : entry.name
+  dragImage.className = 'bg-blue-500 text-white px-3 py-1 rounded text-sm whitespace-nowrap fixed -top-[1000px]'
+  document.body.appendChild(dragImage)
+  event.dataTransfer?.setDragImage(dragImage, 10, 10)
+  setTimeout(() => document.body.removeChild(dragImage), 0)
 }
 
 const onDropToDir = async (event: DragEvent, dirRelativePath: string) => {
   event.preventDefault()
   const wsId = event.dataTransfer?.getData('application/x-workspace-id') || props.workspaceId
-  const from = event.dataTransfer?.getData('text/plain')
   if (!wsId || wsId !== props.workspaceId) return
-  if (!from || from === dirRelativePath) return
-  const name = from.split('/').pop() || from
-  const to = (dirRelativePath ? `${dirRelativePath}/${name}` : name).replace(/\/{2,}/g, '/')
-  if (to === from) return
-  await workspaceStore.moveEntry(from, to)
+  
+  let draggedPaths: string[] = []
+  try {
+    const data = event.dataTransfer?.getData('text/plain')
+    if (data) {
+      const parsed = JSON.parse(data)
+      if (Array.isArray(parsed)) draggedPaths = parsed
+    }
+  } catch (e) {
+    const raw = event.dataTransfer?.getData('text/plain')
+    if (raw) draggedPaths = [raw]
+  }
+  
+  if (draggedPaths.length === 0) return
+  
+  const toMove = draggedPaths.filter(from => {
+    if (!from || from === dirRelativePath) return false
+    const name = from.split('/').pop() || from
+    const to = (dirRelativePath ? `${dirRelativePath}/${name}` : name).replace(/\/{2,}/g, '/')
+    if (to === from) return false
+    return true
+  })
+  
+  if (toMove.length > 0) {
+    await workspaceStore.moveEntries(toMove, dirRelativePath)
+  }
 }
 
 const allowDrop = (event: DragEvent) => {
@@ -136,6 +183,12 @@ const flattened = computed(() => {
 const onGlobalPointerDown = () => closeMenu()
 const onGlobalKeyDown = (e: KeyboardEvent) => {
   if (e.key === 'Escape') closeMenu()
+  if (e.key === 'Delete') {
+    const paths = workspaceStore.selectedPaths
+    if (paths.length > 0) {
+      workspaceStore.deleteEntries(paths)
+    }
+  }
 }
 
 onMounted(() => {
@@ -158,9 +211,10 @@ onUnmounted(() => {
 
     <div
       class="flex-1 overflow-y-auto px-2 pb-2"
-      @contextmenu="(e) => openMenu(e, selectedDir)"
-      @dragover="allowDrop"
-      @drop="(e) => onDropToDir(e, '')"
+      @click.self="workspaceStore.clearSelection()"
+      @contextmenu.self="(e) => { workspaceStore.clearSelection(); openMenu(e, null) }"
+      @dragover.self="allowDrop"
+      @drop.self="(e) => onDropToDir(e, '')"
     >
       <div
         class="px-2 py-2 rounded-md text-sm text-zinc-500 dark:text-zinc-500"
@@ -175,12 +229,15 @@ onUnmounted(() => {
         class="group flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800"
         :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
         :class="[
-          row.isDirectory && selectedDir === row.relativePath ? 'bg-zinc-100 dark:bg-zinc-800' : '',
-          !row.isDirectory && activeFileRel === row.relativePath ? 'bg-zinc-100 dark:bg-zinc-800' : '',
+          workspaceStore.selectedPaths.includes(row.relativePath) ? 'bg-blue-100/50 dark:bg-blue-900/30' : '',
+          (!workspaceStore.selectedPaths.includes(row.relativePath) && !row.isDirectory && activeFileRel === row.relativePath) ? 'bg-zinc-100 dark:bg-zinc-800' : '',
         ]"
         draggable="true"
         @dragstart="(e) => onDragStart(e, row)"
-        @contextmenu="(e) => openMenu(e, row.isDirectory ? row.relativePath : parentDirOf(row.relativePath))"
+        @click.exact="handleRowClick($event, row, false)"
+        @click.ctrl.exact="handleRowClick($event, row, true)"
+        @click.meta.exact="handleRowClick($event, row, true)"
+        @contextmenu="(e) => handleRightClick(e, row)"
         @dragover.capture="allowDrop"
         @drop.capture.stop="(e) => onDropToDir(e, row.relativePath)"
       >
@@ -199,29 +256,12 @@ onUnmounted(() => {
         <Folder v-if="row.isDirectory" :size="16" class="text-blue-500" />
         <FileText v-else :size="16" class="text-zinc-400" />
 
-        <button
-          class="flex-1 min-w-0 text-left text-sm truncate"
-          @click="row.isDirectory ? selectDir(row.relativePath) : openFile(row.relativePath)"
+        <div
+          class="flex-1 min-w-0 text-left text-sm truncate select-none"
           :title="row.name"
         >
           {{ row.name }}
-        </button>
-
-        <button
-          class="opacity-0 group-hover:opacity-100 transition-opacity w-7 h-7 inline-flex items-center justify-center rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
-          @click.stop="renameEntry(row.relativePath)"
-          title="重命名"
-        >
-          <Edit3 :size="16" />
-        </button>
-
-        <button
-          class="opacity-0 group-hover:opacity-100 transition-opacity w-7 h-7 inline-flex items-center justify-center rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-500 hover:text-red-600"
-          @click.stop="removeEntry(row.relativePath)"
-          title="删除"
-        >
-          <Trash2 :size="16" />
-        </button>
+        </div>
       </div>
 
       <div
@@ -233,16 +273,36 @@ onUnmounted(() => {
         @contextmenu.prevent
       >
         <button
+          v-if="selectedFile.isDirectory"
+          title="新建文件"
           class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
           @click="addFile"
         >
           新建文件
         </button>
         <button
+          v-if="selectedFile.isDirectory"
+          title="新建文件夹"
           class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
           @click="addFolder"
         >
           新建文件夹
+        </button>
+        <button
+          v-if="workspaceStore.selectedPaths.length === 1"
+          class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          @click="renameEntry(workspaceStore.selectedPaths[0])"
+          title="重命名"
+        >
+          <span>重命名</span>
+        </button>
+
+        <button
+          class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          @click="removeEntry(workspaceStore.selectedPaths[0])"
+          title="删除"
+        >
+          <span>删除</span>
         </button>
       </div>
     </div>

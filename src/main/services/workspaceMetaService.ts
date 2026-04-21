@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import fs from 'fs/promises'
 import path from 'path'
-import type { Result } from './fileService'
+import type { Result } from '../interfaces/Result'
 
 export interface WorkspaceMeta {
   expandedDirs: string[]

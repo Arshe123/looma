@@ -1,10 +1,5 @@
 import fs from 'fs/promises';
-
-export interface Result<T = void> {
-  success: boolean;
-  data?: T;
-  error?: string;
-}
+import type { Result } from '../interfaces/Result';
 
 /**
  * Simple file-level lock to prevent concurrent write operations on the same file.

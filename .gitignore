@@ -24,3 +24,7 @@ dist-electron
 *.sw?
 .vite
 .trae
+out/
+
+# local config
+.npmrc

@@ -212,7 +212,7 @@ onUnmounted(() => {
     <div
       class="flex-1 overflow-y-auto px-2 pb-2"
       @click.self="workspaceStore.clearSelection()"
-      @contextmenu.self="(e) => { workspaceStore.clearSelection(); openMenu(e, null) }"
+      @contextmenu.self="(e) => { workspaceStore.clearSelection(); openMenu(e, { name: '', relativePath: '', isDirectory: true, size: 0, mtimeMs: 0})}"
       @dragover.self="allowDrop"
       @drop.self="(e) => onDropToDir(e, '')"
     >
@@ -298,6 +298,7 @@ onUnmounted(() => {
         </button>
 
         <button
+          v-if="selectedFile.relativePath !== ''"
           class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
           @click="removeEntry(workspaceStore.selectedPaths[0])"
           title="删除"

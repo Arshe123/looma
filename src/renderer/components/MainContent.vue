@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { useWorkspaceStore } from '../store/workspace';
 import Editor from './Editor.vue';
 import Preview from './Preview.vue';
-import { Columns, Eye, Edit3, CheckCircle2, AlertCircle, FileText } from 'lucide-vue-next';
+import { Columns, Eye, Edit3, CheckCircle2, AlertCircle, FileText, FileQuestion } from 'lucide-vue-next';
 
 const workspaceStore = useWorkspaceStore();
 let keyHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -13,11 +13,24 @@ const content = ref('');
 const isSaving = ref(false);
 const saveError = ref<string | null>(null);
 
+const isSupportedFile = computed(() => {
+  const path = workspaceStore.activeFilePath;
+  if (!path) return false;
+  const ext = path.split('.').pop()?.toLowerCase();
+  return ext === 'md' || ext === 'txt';
+});
+
 const loadFile = async (path: string) => {
   if (!path) {
     content.value = '';
     return;
   }
+  
+  if (!isSupportedFile.value) {
+    content.value = '';
+    return;
+  }
+  
   const result = await window.electronAPI.file.readMarkdown(path);
   if (result.success && result.data !== undefined) {
     content.value = result.data;
@@ -155,18 +168,28 @@ watch(() => workspaceStore.activeFilePath, (newPath) => {
 
     <!-- Workspace View Area -->
     <main v-if="workspaceStore.activeFilePath" class="flex-1 flex overflow-hidden">
-      <div v-if="viewMode !== 'preview'" class="flex-1 overflow-hidden">
-        <Editor 
-          :initialContent="content" 
-          :filePath="workspaceStore.activeFilePath"
-          @change="(newContent) => content = newContent"
-          @save="handleSave"
-        />
+      <div v-if="!isSupportedFile" class="flex-1 flex flex-col items-center justify-center text-zinc-400 dark:text-zinc-600 p-12 text-center bg-zinc-50 dark:bg-zinc-900/50">
+        <FileQuestion :size="64" class="mb-6 opacity-30 text-zinc-500" />
+        <h3 class="text-xl font-medium mb-2 text-zinc-600 dark:text-zinc-300">不支持的文件类型</h3>
+        <p class="max-w-md text-sm opacity-80 mb-4">
+          该文件格式暂时无法在编辑器中打开。我们目前仅支持 <span class="font-mono bg-zinc-200 dark:bg-zinc-800 px-1 py-0.5 rounded">.md</span> 和 <span class="font-mono bg-zinc-200 dark:bg-zinc-800 px-1 py-0.5 rounded">.txt</span> 文件。
+        </p>
       </div>
       
-      <div v-if="viewMode !== 'editor'" class="flex-1 overflow-hidden">
-        <Preview :content="content" />
-      </div>
+      <template v-else>
+        <div v-if="viewMode !== 'preview'" class="flex-1 overflow-hidden">
+          <Editor 
+            :initialContent="content" 
+            :filePath="workspaceStore.activeFilePath"
+            @change="(newContent) => content = newContent"
+            @save="handleSave"
+          />
+        </div>
+        
+        <div v-if="viewMode !== 'editor'" class="flex-1 overflow-hidden border-l border-zinc-200 dark:border-zinc-800">
+          <Preview :content="content" />
+        </div>
+      </template>
     </main>
     
     <div v-else class="flex-1 flex flex-col items-center justify-center text-zinc-400 dark:text-zinc-600 p-12 text-center">

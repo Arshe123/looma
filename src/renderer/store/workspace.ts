@@ -367,8 +367,11 @@ export const useWorkspaceStore = defineStore('workspace', {
     async createMarkdown(title?: string, dirRelativePath?: string) {
       const ws = this.activeWorkspaceId
       if (!ws) return
-      const name = ((title ?? (await this.requestTextInput('新建 Markdown 文件', 'Untitled'))) ?? '').trim()
+      let name = ((title ?? (await this.requestTextInput('新建 Markdown 文件', 'Untitled'))) ?? '').trim()
       if (!name) return
+      if (!name.includes('.')) {
+        name += '.md'
+      }
       const currentDir = this.selectedPaths[0] ? (this.dirEntries[`${ws}:${normalizeDir(this.selectedPaths[0])}`] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0])) : ''
       const targetDir = normalizeDir(dirRelativePath ?? currentDir) || '.'
       this.setBusy(true, '创建中...')

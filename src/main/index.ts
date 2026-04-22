@@ -10,7 +10,7 @@ import { workspaceMetaService } from './services/workspaceMetaService';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-function createWindow(initialWorkspaceId?: string) {
+function createWindow(initialWorkspaceId?: string, isolate?: boolean) {
   const preloadPath = process.env.VITE_DEV_SERVER_URL
     ? path.join(process.cwd(), 'dist-electron', 'preload.cjs')
     : path.join(__dirname, 'preload.cjs');
@@ -29,16 +29,24 @@ function createWindow(initialWorkspaceId?: string) {
 
   win.setIcon(path.join(__dirname, '../public/logo.png'));
 
+  // Handle close event to request workspace state before actually closing
+  win.on('close', (e) => {
+    if (!(win as any).isReadyToClose) {
+      e.preventDefault();
+      win.webContents.send('window:prepare-close');
+    }
+  });
+
   if (process.env.VITE_DEV_SERVER_URL) {
     const url = new URL(process.env.VITE_DEV_SERVER_URL);
     if (initialWorkspaceId) url.searchParams.set('workspaceId', initialWorkspaceId);
+    if (isolate) url.searchParams.set('isolate', 'true');
     win.loadURL(url.toString());
   } else {
-    if (initialWorkspaceId) {
-      win.loadFile(path.join(__dirname, '../dist/index.html'), { query: { workspaceId: initialWorkspaceId } });
-    } else {
-      win.loadFile(path.join(__dirname, '../dist/index.html'));
-    }
+    const query: Record<string, string> = {};
+    if (initialWorkspaceId) query.workspaceId = initialWorkspaceId;
+    if (isolate) query.isolate = 'true';
+    win.loadFile(path.join(__dirname, '../dist/index.html'), { query });
   }
   
   // Initialize telemetry and check for updates
@@ -103,8 +111,12 @@ ipcMain.handle('workspace:reorder', async (_, order: string[]) => {
   return await workspaceService.reorderWorkspaces(order);
 });
 
-ipcMain.handle('workspace:setActive', async (_, id: string) => {
+ipcMain.handle('workspace:setActive', async (_, id: string | null) => {
   return await workspaceService.setActiveWorkspace(id);
+});
+
+ipcMain.handle('workspace:rewriteHistory', async (_, ids: string[]) => {
+  return await workspaceService.rewriteHistory(ids);
 });
 
 ipcMain.handle('workspaceMeta:get', async (_, workspaceId: string) => {
@@ -178,9 +190,18 @@ ipcMain.handle('fs:watchStop', async (event, workspaceId: string) => {
 
 
 // Window Management IPC
-ipcMain.handle('window:close', async () => {
+ipcMain.handle('window:close', async (_, displayedIds?: string[]) => {
   const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-  win?.close();
+  
+  if (win && !(win as any).isReadyToClose) {
+    if (BrowserWindow.getAllWindows().length === 1) {
+      if (displayedIds && displayedIds.length > 0) {
+        await workspaceService.rewriteHistory(displayedIds);
+      }
+    }
+    ;(win as any).isReadyToClose = true;
+    win.close();
+  }
 });
 
 ipcMain.handle('window:minimize', async () => {
@@ -200,7 +221,7 @@ ipcMain.handle('window:toggleMaximize', async () => {
   win.maximize();
 });
 
-ipcMain.handle('window:openWorkspace', async (_, workspaceId: string) => {
-  createWindow(workspaceId);
+ipcMain.handle('window:openWorkspace', async (_, workspaceId: string, opts?: { isolate?: boolean }) => {
+  createWindow(workspaceId, opts?.isolate);
   return { success: true };
 });

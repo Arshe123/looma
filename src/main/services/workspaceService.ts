@@ -154,9 +154,14 @@ export const workspaceService = {
     }
   },
 
-  async setActiveWorkspace(id: string): Promise<Result<void>> {
+  async setActiveWorkspace(id: string | null): Promise<Result<void>> {
     try {
       const state = await readState()
+      if (!id) {
+        state.activeId = null
+        await writeState(state)
+        return { success: true }
+      }
       const ws = state.workspaces.find((w) => w.id === id)
       if (!ws) return { success: false, error: 'Workspace not found' }
       ws.lastOpenedAt = Date.now()
@@ -165,6 +170,36 @@ export const workspaceService = {
       return { success: true }
     } catch (error: any) {
       return { success: false, error: `Failed to set active workspace: ${error?.message ?? String(error)}` }
+    }
+  },
+
+  async rewriteHistory(ids: string[]): Promise<Result<void>> {
+    try {
+      const state = await readState()
+      const workspaceMap = new Map(state.workspaces.map((w) => [w.id, w]))
+      
+      const nextWorkspaces: Workspace[] = []
+      const nextOrder: string[] = []
+      
+      for (const id of ids) {
+        const ws = workspaceMap.get(id)
+        if (ws) {
+          nextWorkspaces.push(ws)
+          nextOrder.push(id)
+        }
+      }
+      
+      state.workspaces = nextWorkspaces
+      state.order = nextOrder
+      
+      if (state.activeId && !nextOrder.includes(state.activeId)) {
+        state.activeId = nextOrder[0] ?? null
+      }
+      
+      await writeState(state)
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: `Failed to rewrite history: ${error?.message ?? String(error)}` }
     }
   },
 }

@@ -15,7 +15,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     rename: (id: string, newName: string) => ipcRenderer.invoke('workspace:rename', id, newName),
     remove: (id: string) => ipcRenderer.invoke('workspace:remove', id),
     reorder: (order: string[]) => ipcRenderer.invoke('workspace:reorder', order),
-    setActive: (id: string) => ipcRenderer.invoke('workspace:setActive', id),
+    setActive: (id: string | null) => ipcRenderer.invoke('workspace:setActive', id),
+    rewriteHistory: (ids: string[]) => ipcRenderer.invoke('workspace:rewriteHistory', ids),
   },
   workspaceMeta: {
     get: (workspaceId: string) => ipcRenderer.invoke('workspaceMeta:get', workspaceId),
@@ -44,9 +45,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
   window: {
-    close: () => ipcRenderer.invoke('window:close'),
+    close: (displayedIds?: string[]) => ipcRenderer.invoke('window:close', displayedIds),
     minimize: () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
-    openWorkspace: (workspaceId: string) => ipcRenderer.invoke('window:openWorkspace', workspaceId),
+    openWorkspace: (workspaceId: string, opts?: { isolate?: boolean }) => ipcRenderer.invoke('window:openWorkspace', workspaceId, opts),
+    onPrepareClose: (callback: () => void) => {
+      ipcRenderer.on('window:prepare-close', callback)
+      return () => ipcRenderer.removeAllListeners('window:prepare-close')
+    },
   },
 });

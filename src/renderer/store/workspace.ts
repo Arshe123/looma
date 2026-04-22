@@ -168,7 +168,10 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.setError('请使用 Electron 启动应用')
         return
       }
-      const wsFromUrl = new URLSearchParams(window.location.search).get('workspaceId')
+      const urlParams = new URLSearchParams(window.location.search)
+      const wsFromUrl = urlParams.get('workspaceId')
+      const isIsolate = urlParams.get('isolate') === 'true'
+      
       const stateResult = await window.electronAPI.workspace.getState()
       if (!stateResult.success || !stateResult.data) {
         this.setError(stateResult.error || 'Failed to load workspaces')
@@ -181,7 +184,14 @@ export const useWorkspaceStore = defineStore('workspace', {
         return
       }
 
-      this.workspaces = listResult.data
+      let loadedWorkspaces = listResult.data
+      
+      // 如果携带了 isolate 参数，并且有指定工作空间 ID，则当前窗口只显示这一个工作空间
+      if (isIsolate && wsFromUrl) {
+        loadedWorkspaces = loadedWorkspaces.filter(w => w.id === wsFromUrl)
+      }
+      
+      this.workspaces = loadedWorkspaces
       const nextActive = wsFromUrl || stateResult.data.activeId || this.workspaces[0]?.id || null
       this.activeWorkspaceId = nextActive
 
@@ -226,6 +236,21 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (this.activeWorkspaceId && !this.workspaces.some((w) => w.id === this.activeWorkspaceId)) {
         this.activeWorkspaceId = this.workspaces[0]?.id || null
       }
+    },
+
+    async clearActiveWorkspace() {
+      const prev = this.watchedWorkspaceId
+      if (prev) {
+        await window.electronAPI.fs.watchStop(prev)
+      }
+      this.activeWorkspaceId = null
+      this.activeFilePath = ''
+      this.activeFileRelativePath = ''
+      this.watchedWorkspaceId = null
+      this.selectedPaths = []
+      this.expandedDirs = []
+      this.noteOrder = {}
+      await window.electronAPI.workspace.setActive('')
     },
 
     async switchWorkspace(id: string) {

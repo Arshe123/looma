@@ -47,6 +47,12 @@ export const fileSystemService = {
       const resolved = resolveInWorkspace(workspacePath, dirRelativePath || '.')
       if (!resolved.ok) return { success: false, error: resolved.error }
 
+      try {
+        await fs.access(resolved.target)
+      } catch {
+        return { success: false, error: `Directory not found: ${dirRelativePath}` }
+      }
+
       const items = await fs.readdir(resolved.target, { withFileTypes: true })
       const entries = await Promise.all(
         items.map(async (d) => {

@@ -245,6 +245,11 @@ export const useWorkspaceStore = defineStore('workspace', {
            await this.loadDir(id, pathDir(p))
         }
       }
+      if (this.expandedDirs.length > 0) {
+        for (const p of this.expandedDirs) {
+          await this.loadDir(id, p)
+        }
+      }
       await window.electronAPI.fs.watchStart(id)
       this.watchedWorkspaceId = id
       this.attachFsEvents()
@@ -308,7 +313,19 @@ export const useWorkspaceStore = defineStore('workspace', {
       const dir = normalizeDir(dirRelativePath)
       const r = await window.electronAPI.fs.listDir(workspaceId, dir || '.')
       if (!r.success || !r.data) {
-        this.setError(r.error || 'Failed to list directory')
+        if (r.error && r.error.includes('Directory not found')) {
+          if (dir === '') return
+          this.expandedDirs = this.expandedDirs.filter((p) => p !== dir)
+          this.selectedPaths = this.selectedPaths.filter((p) => p !== dir && !p.startsWith(dir + '/'))
+          if (this.activeFileRelativePath && this.activeFileRelativePath.startsWith(dir + '/')) {
+            this.activeFileRelativePath = ''
+            this.activeFilePath = ''
+          }
+          delete this.dirEntries[`${workspaceId}:${dir}`]
+          await this.saveWorkspaceMeta()
+        } else {
+          this.setError(r.error || 'Failed to list directory')
+        }
         return
       }
       this.dirEntries[`${workspaceId}:${dir}`] = r.data

@@ -57,11 +57,15 @@ onMounted(() => {
       return
     }
     if (e.ctrlKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+      // Allow editor to handle its own undo natively if focused
+      if (document.activeElement?.closest('.cm-editor') || document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
       e.preventDefault()
       workspaceStore.undo()
       return
     }
     if (e.ctrlKey && (e.key === 'y' || e.key === 'Y')) {
+      // Allow editor to handle its own redo natively if focused
+      if (document.activeElement?.closest('.cm-editor') || document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
       e.preventDefault()
       workspaceStore.redo()
       return

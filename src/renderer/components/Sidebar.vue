@@ -47,17 +47,9 @@ const toggleCollapse = () => {
           </button>
         </div>
       </div>
-      <div v-if="!isCollapsed" class="px-2 pt-2">
-        <div class="text-xs text-zinc-500 truncate">{{ workspaceStore.activeWorkspace?.path || '' }}</div>
-        <div v-if="workspaceStore.activeWorkspaceId" class="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-          右键文件树：新建文件 / 新建文件夹
-        </div>
-      </div>
-
       <div v-if="!isCollapsed && workspaceStore.activeWorkspaceId" class="h-full pt-2">
         <FileTree
           :workspaceId="workspaceStore.activeWorkspaceId"
-          :rootLabel="workspaceStore.activeWorkspace?.name || 'Workspace'"
         />
       </div>
     </div>

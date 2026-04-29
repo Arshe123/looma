@@ -5,7 +5,6 @@ import { useWorkspaceStore, type FsEntry } from '../store/workspace'
 
 const props = defineProps<{
   workspaceId: string
-  rootLabel: string
 }>()
 
 const workspaceStore = useWorkspaceStore()
@@ -204,11 +203,6 @@ onUnmounted(() => {
 
 <template>
   <div class="h-full flex flex-col">
-    <div class="px-3 py-2 flex items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
-      <Folder :size="14" class="text-blue-500" />
-      <span class="truncate">{{ props.rootLabel }}</span>
-    </div>
-
     <div
       class="flex-1 overflow-y-auto px-2 pb-2"
       @click.self="workspaceStore.clearSelection()"

@@ -1,31 +1,62 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
+import { defineAsyncComponent, ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { useWorkspaceStore } from '../store/workspace';
-import Editor from './Editor.vue';
-import Preview from './Preview.vue';
-import { Columns, Eye, Edit3, CheckCircle2, AlertCircle, FileText, FileQuestion } from 'lucide-vue-next';
+import EditorLoadError from './editors/EditorLoadError.vue';
+import { CheckCircle2, AlertCircle, FileText, FileQuestion } from 'lucide-vue-next';
 
 const workspaceStore = useWorkspaceStore();
 let keyHandler: ((e: KeyboardEvent) => void) | null = null;
 
-const viewMode = ref<'split' | 'editor' | 'preview'>('split');
 const saveError = computed(() => (workspaceStore.activeFileSaveError ? workspaceStore.activeFileSaveError : null));
 const isSaving = computed(() => workspaceStore.activeFileIsSaving);
 
-const isSupportedFile = computed(() => {
-  return workspaceStore.isSupportedActiveFile;
-});
+const saveTrigger = ref(0);
+const editorReloadNonce = ref(0);
+
+const getExt = (filePath: string) => {
+  const base = (filePath || '').split(/[\\/]/).pop() || '';
+  const idx = base.lastIndexOf('.');
+  if (idx === -1) return '';
+  return base.slice(idx).toLowerCase();
+};
+
+const createAsyncEditor = (loader: () => Promise<any>) => {
+  return defineAsyncComponent({
+    loader,
+    errorComponent: EditorLoadError,
+    delay: 0,
+    timeout: 30000,
+    onError: (_err, retry, fail, attempts) => {
+      if (attempts <= 1) retry();
+      else fail();
+    },
+  });
+};
+
+const editorByExt = {
+  '.md': createAsyncEditor(() => import('./editors/MarkdownEditor.vue')),
+  '.txt': createAsyncEditor(() => import('./editors/PlainTextEditor.vue')),
+} as const;
+
+const activeExt = computed(() => getExt(workspaceStore.activeFilePath));
+const currentEditor = computed(() => (editorByExt as any)[activeExt.value] || null);
+const isSupportedFile = computed(() => Boolean(currentEditor.value));
+const editorKey = computed(() => `${workspaceStore.activeFilePath}:${activeExt.value}:${editorReloadNonce.value}`);
 
 const handleSave = async (newContent: string) => {
   workspaceStore.setActiveFileContent(newContent);
   await workspaceStore.saveActiveFileContent(newContent);
 };
 
+const onEditorRetry = () => {
+  editorReloadNonce.value += 1;
+};
+
 onMounted(() => {
   keyHandler = (e: KeyboardEvent) => {
     if (e.ctrlKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
       e.preventDefault()
-      handleSave(workspaceStore.activeFileContent)
+      saveTrigger.value += 1
       return
     }
     if (e.ctrlKey && !e.shiftKey && (e.key === 'n' || e.key === 'N')) {
@@ -94,40 +125,7 @@ watch(() => workspaceStore.activeFilePath, (newPath) => {
         </div>
       </div>
 
-      <div class="flex items-center gap-2">
-        <div class="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-800 p-1 rounded-lg">
-          <button 
-            @click="viewMode = 'editor'"
-            :class="[
-              'p-1.5 rounded-md transition-all',
-              viewMode === 'editor' ? 'bg-white dark:bg-zinc-700 text-blue-500 shadow-sm' : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
-            ]"
-            title="仅编辑"
-          >
-            <Edit3 :size="16" />
-          </button>
-          <button 
-            @click="viewMode = 'split'"
-            :class="[
-              'p-1.5 rounded-md transition-all',
-              viewMode === 'split' ? 'bg-white dark:bg-zinc-700 text-blue-500 shadow-sm' : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
-            ]"
-            title="分栏"
-          >
-            <Columns :size="16" />
-          </button>
-          <button 
-            @click="viewMode = 'preview'"
-            :class="[
-              'p-1.5 rounded-md transition-all',
-              viewMode === 'preview' ? 'bg-white dark:bg-zinc-700 text-blue-500 shadow-sm' : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
-            ]"
-            title="仅预览"
-          >
-            <Eye :size="16" />
-          </button>
-        </div>
-      </div>
+      <div class="flex items-center gap-2"></div>
     </header>
 
     <!-- Workspace View Area -->
@@ -140,34 +138,25 @@ watch(() => workspaceStore.activeFilePath, (newPath) => {
         </p>
       </div>
       
-      <template v-else>
-        <div v-if="viewMode !== 'preview'" class="flex-1 overflow-hidden">
-          <Editor 
-            :initialContent="workspaceStore.activeFileContent" 
-            :filePath="workspaceStore.activeFilePath"
-            @change="(newContent) => workspaceStore.setActiveFileContent(newContent)"
-            @save="handleSave"
-          />
-        </div>
-        
-        <div v-if="viewMode !== 'editor'" class="flex-1 overflow-hidden border-l border-zinc-200 dark:border-zinc-800">
-          <Preview :content="workspaceStore.activeFileContent" />
-        </div>
-      </template>
+      <component
+        v-else
+        class="w-full flex-1"
+        :is="currentEditor"
+        :key="editorKey"
+        :filePath="workspaceStore.activeFilePath"
+        :content="workspaceStore.activeFileContent"
+        :saveTrigger="saveTrigger"
+        @update:content="(v) => workspaceStore.setActiveFileContent(v)"
+        @save="handleSave"
+        @retry="onEditorRetry"
+      />
     </main>
     
     <div v-else class="flex-1 flex flex-col items-center justify-center text-zinc-400 dark:text-zinc-600 p-12 text-center">
       <FileText :size="64" class="mb-6 opacity-20" />
       <h3 class="text-xl font-medium mb-2">Welcome to your Notes</h3>
       <p class="max-w-xs text-sm opacity-60">Select a note from the list or create a new one to get started.</p>
-      <div class="mt-6 flex items-center gap-3">
-        <button class="px-4 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-sm" @click="workspaceStore.switchWorkspaceFlow()">
-          切换工作空间 (Ctrl+O)
-        </button>
-        <button class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm" @click="workspaceStore.newWorkspaceFlow()">
-          新建工作空间 (Ctrl+Shift+N)
-        </button>
-      </div>
+      <div class="mt-6 text-sm text-zinc-500 dark:text-zinc-400">从左侧选择文件开始编辑</div>
     </div>
   </div>
 </template>

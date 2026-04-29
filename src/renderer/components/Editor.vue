@@ -6,10 +6,17 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorState } from '@codemirror/state';
 import { useWorkspaceStore } from '../store/workspace';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   initialContent: string;
   filePath: string;
-}>();
+  mode?: 'markdown' | 'plaintext';
+  fontSize?: number;
+  wordWrap?: boolean;
+}>(), {
+  mode: 'markdown',
+  fontSize: 14,
+  wordWrap: true,
+});
 
 const emit = defineEmits(['change', 'save']);
 
@@ -46,18 +53,24 @@ const createEditor = () => {
 
   const themeExtension = workspaceStore.theme === 'dark' ? [oneDark] : [];
 
+  const langExtension = props.mode === 'markdown' ? [markdown()] : [];
+
   const state = EditorState.create({
     doc: props.initialContent,
     extensions: [
       basicSetup,
-      markdown(),
+      ...langExtension,
       ...themeExtension,
       updateListener,
       blurHandler,
+      EditorView.lineWrapping,
       EditorView.theme({
-        '&': { height: '100%', fontSize: '14px' },
+        '&': { height: '100%', fontSize: `${props.fontSize}px` },
         '.cm-scroller': { overflow: 'auto', fontFamily: 'Consolas, Monaco, monospace' },
-        '.cm-content': { padding: '10px 0' },
+        '.cm-content': { 
+          padding: '10px 0',
+          whiteSpace: props.wordWrap ? 'pre-wrap' : 'pre'
+        },
       }),
     ],
   });
@@ -93,13 +106,16 @@ watch(
   },
 );
 
-// Re-create editor when theme changes
-watch(() => workspaceStore.theme, () => {
-  if (editor) {
-    editor.destroy();
-    createEditor();
+// Re-create editor when theme, mode, or wrap settings change
+watch(
+  () => [workspaceStore.theme, props.mode, props.fontSize, props.wordWrap],
+  () => {
+    if (editor) {
+      editor.destroy();
+      createEditor();
+    }
   }
-});
+);
 </script>
 
 <template>

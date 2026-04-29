@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import Editor from '../Editor.vue'
-import { WrapText, Type, Minus, Plus } from 'lucide-vue-next'
+import { WrapText, Minus, Plus } from 'lucide-vue-next'
 
 const props = defineProps<{
   filePath: string
@@ -39,12 +39,6 @@ watch(
     emit('save', localContent.value)
   },
 )
-
-const onInput = (e: Event) => {
-  const v = (e.target as HTMLTextAreaElement).value
-  localContent.value = v
-  emit('update:content', v)
-}
 
 const increaseFont = () => {
   fontSize.value = Math.min(24, fontSize.value + 1)

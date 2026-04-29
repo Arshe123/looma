@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
@@ -313,6 +313,14 @@ ipcMain.handle('fs:watchStart', async (event, workspaceId: string) => {
 
 ipcMain.handle('fs:watchStop', async (event, workspaceId: string) => {
   await fileWatchService.stop(event.sender);
+  return { success: true };
+});
+
+ipcMain.handle('fs:showItemInFolder', async (_, workspaceId: string, relativePath: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  const fullPath = path.join(workspacePath, relativePath);
+  shell.showItemInFolder(fullPath);
   return { success: true };
 });
 

@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { useWorkspaceStore } from '../store/workspace'
 import { X, CheckCircle2, AlertCircle } from 'lucide-vue-next'
-import { computed } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 
 const workspaceStore = useWorkspaceStore()
 
 const isSaving = computed(() => workspaceStore.activeFileIsSaving)
 const saveError = computed(() => workspaceStore.activeFileSaveError || null)
 
-const closeTab = (e: Event, relPath: string) => {
-  e.stopPropagation()
+const closeTab = (e: Event | null, relPath: string) => {
+  if (e) e.stopPropagation()
   const idx = workspaceStore.openedFiles.indexOf(relPath)
   if (idx > -1) {
     workspaceStore.openedFiles.splice(idx, 1)
@@ -58,11 +58,125 @@ const onDragOver = (e: DragEvent, index: number) => {
 const onDragEnd = () => {
   draggedIndex = -1
 }
+
+const onWheel = (e: WheelEvent) => {
+  if (e.deltaY !== 0 && e.deltaX === 0) {
+    e.preventDefault()
+    const container = e.currentTarget as HTMLElement
+    container.scrollLeft += e.deltaY
+  }
+}
+
+// Context Menu Logic
+const menuOpen = ref(false)
+const menuX = ref(0)
+const menuY = ref(0)
+const contextMenuTab = ref<string>('')
+
+const closeMenu = () => {
+  menuOpen.value = false
+}
+
+const onContextMenu = (event: MouseEvent, relPath: string) => {
+  event.preventDefault()
+  contextMenuTab.value = relPath
+  const pad = 8
+  const width = 180
+  const height = 260
+  const x = Math.min(event.clientX, window.innerWidth - width - pad)
+  const y = Math.min(event.clientY, window.innerHeight - height - pad)
+  menuX.value = Math.max(pad, x)
+  menuY.value = Math.max(pad, y)
+  menuOpen.value = true
+}
+
+const handleCloseTab = () => {
+  if (!contextMenuTab.value) return
+  closeTab(null, contextMenuTab.value)
+  closeMenu()
+}
+
+const handleCloseRightTabs = () => {
+  if (!contextMenuTab.value) return
+  const idx = workspaceStore.openedFiles.indexOf(contextMenuTab.value)
+  if (idx > -1) {
+    const toRemove = workspaceStore.openedFiles.slice(idx + 1)
+    if (toRemove.length > 0) {
+      workspaceStore.openedFiles.splice(idx + 1)
+      workspaceStore.saveWorkspaceMeta().catch(() => {})
+      if (toRemove.includes(workspaceStore.activeFileRelativePath)) {
+        workspaceStore.setActiveFileRelative(contextMenuTab.value)
+      }
+    }
+  }
+  closeMenu()
+}
+
+const handleCloseSavedTabs = () => {
+  const activeUnsaved = workspaceStore.hasUnsavedChanges
+  const activeRel = workspaceStore.activeFileRelativePath
+  
+  if (activeUnsaved && activeRel) {
+    workspaceStore.openedFiles = [activeRel]
+  } else {
+    workspaceStore.openedFiles = []
+    workspaceStore.setActiveFileRelative('')
+  }
+  workspaceStore.saveWorkspaceMeta().catch(() => {})
+  closeMenu()
+}
+
+const handleCloseAllTabs = () => {
+  workspaceStore.openedFiles = []
+  workspaceStore.setActiveFileRelative('')
+  workspaceStore.saveWorkspaceMeta().catch(() => {})
+  closeMenu()
+}
+
+const handleCopyPath = () => {
+  if (!contextMenuTab.value || !workspaceStore.activeWorkspace) return
+  const wsPath = workspaceStore.activeWorkspace.path
+  const sep = wsPath.includes('\\') ? '\\' : '/'
+  const root = wsPath.endsWith(sep) ? wsPath.slice(0, -1) : wsPath
+  const absPath = `${root}${sep}${contextMenuTab.value.split('/').join(sep)}`
+  navigator.clipboard.writeText(absPath).catch(() => {})
+  closeMenu()
+}
+
+const handleCopyRelativePath = () => {
+  if (!contextMenuTab.value) return
+  navigator.clipboard.writeText(contextMenuTab.value).catch(() => {})
+  closeMenu()
+}
+
+const handleRevealInExplorer = async () => {
+  if (!contextMenuTab.value || !workspaceStore.activeWorkspaceId) return
+  await window.electronAPI.fs.showItemInFolder(workspaceStore.activeWorkspaceId, contextMenuTab.value)
+  closeMenu()
+}
+
+const onGlobalPointerDown = () => closeMenu()
+const onGlobalKeyDown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape') closeMenu()
+}
+
+onMounted(() => {
+  window.addEventListener('pointerdown', onGlobalPointerDown)
+  window.addEventListener('keydown', onGlobalKeyDown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('pointerdown', onGlobalPointerDown)
+  window.removeEventListener('keydown', onGlobalKeyDown)
+})
 </script>
 
 <template>
   <header class="h-10 flex bg-zinc-50 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 z-10 w-full overflow-hidden select-none">
-    <div class="flex-1 flex overflow-x-auto overflow-y-hidden custom-scrollbar">
+    <div 
+      class="flex-1 flex overflow-x-auto overflow-y-hidden custom-scrollbar"
+      @wheel="onWheel"
+    >
       <div
         v-for="(relPath, index) in workspaceStore.openedFiles"
         :key="relPath"
@@ -77,6 +191,7 @@ const onDragEnd = () => {
         @dragover="(e) => onDragOver(e, index)"
         @dragend="onDragEnd"
         @click="selectTab(relPath)"
+        @contextmenu="(e) => onContextMenu(e, relPath)"
         :title="relPath"
       >
         <span class="text-xs truncate flex-1">{{ relPath.split('/').pop() }}</span>
@@ -108,6 +223,40 @@ const onDragEnd = () => {
         <AlertCircle :size="12" />
         Save Failed
       </div>
+    </div>
+    
+    <!-- Context Menu -->
+    <div
+      v-if="menuOpen"
+      class="fixed z-50 w-[180px] rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl py-1 text-sm text-zinc-700 dark:text-zinc-300"
+      :style="{ left: `${menuX}px`, top: `${menuY}px` }"
+      style="-webkit-app-region: no-drag"
+      @pointerdown.stop
+      @contextmenu.prevent
+    >
+      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCloseTab">
+        关闭
+      </button>
+      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCloseRightTabs">
+        关闭右侧标签页
+      </button>
+      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCloseSavedTabs">
+        关闭已保存
+      </button>
+      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCloseAllTabs">
+        全部关闭
+      </button>
+      <div class="h-px bg-zinc-200 dark:bg-zinc-800 my-1"></div>
+      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCopyPath">
+        复制路径
+      </button>
+      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCopyRelativePath">
+        复制相对路径
+      </button>
+      <div class="h-px bg-zinc-200 dark:bg-zinc-800 my-1"></div>
+      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleRevealInExplorer">
+        在文件资源管理器中显示
+      </button>
     </div>
   </header>
 </template>

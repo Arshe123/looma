@@ -38,6 +38,7 @@ const removeEntry = async (relativePath: string) => {
   } else {
     await workspaceStore.deleteEntries([relativePath])
   }
+  closeMenu()
 }
 
 const renameEntry = async (relativePath: string) => {
@@ -93,13 +94,6 @@ const addFile = async () => {
 const addFolder = async () => {
   closeMenu()
   await workspaceStore.createFolder(undefined, selectedFile.value?.relativePath)
-}
-
-const parentDirOf = (p: string) => {
-  const x = (p || '').split('\\').join('/')
-  const idx = x.lastIndexOf('/')
-  if (idx === -1) return ''
-  return x.slice(0, idx)
 }
 
 const onDragStart = (event: DragEvent, entry: FsEntry) => {
@@ -197,6 +191,28 @@ const onGlobalKeyDown = (e: KeyboardEvent) => {
       workspaceStore.deleteEntries(paths)
     }
   }
+}
+
+const handleCopyPath = () => {
+  if (!selectedFile.value || !workspaceStore.activeWorkspace) return
+  const wsPath = workspaceStore.activeWorkspace.path
+  const sep = wsPath.includes('\\') ? '\\' : '/'
+  const root = wsPath.endsWith(sep) ? wsPath.slice(0, -1) : wsPath
+  const absPath = `${root}${sep}${selectedFile.value.relativePath.split('/').join(sep)}`
+  navigator.clipboard.writeText(absPath).catch(() => {})
+  closeMenu()
+}
+
+const handleCopyRelativePath = () => {
+  if (!selectedFile.value) return
+  navigator.clipboard.writeText(selectedFile.value.relativePath).catch(() => {})
+  closeMenu()
+}
+
+const handleRevealInExplorer = async () => {
+  if (!selectedFile.value || !workspaceStore.activeWorkspaceId) return
+  await window.electronAPI.fs.showItemInFolder(workspaceStore.activeWorkspaceId, selectedFile.value.relativePath)
+  closeMenu()
 }
 
 onMounted(() => {
@@ -307,6 +323,17 @@ onUnmounted(() => {
           title="删除"
         >
           <span>删除</span>
+        </button>
+        <div class="h-px bg-zinc-200 dark:bg-zinc-800 my-1" v-if="selectedFile.relativePath !== ''"></div>
+        <button v-if="selectedFile.relativePath !== ''" class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCopyPath">
+          复制路径
+        </button>
+        <button v-if="selectedFile.relativePath !== ''" class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCopyRelativePath">
+          复制相对路径
+        </button>
+        <div class="h-px bg-zinc-200 dark:bg-zinc-800 my-1" v-if="selectedFile.relativePath !== ''"></div>
+        <button v-if="selectedFile.relativePath !== ''" class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleRevealInExplorer">
+          在文件资源管理器中显示
         </button>
       </div>
     </div>

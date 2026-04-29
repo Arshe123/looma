@@ -25,6 +25,7 @@ dist-electron
 .vite
 .trae
 out/
+.with-you
 
 # local config
 .npmrc

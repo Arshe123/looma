@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { defineAsyncComponent, ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { useWorkspaceStore } from '../store/workspace';
+import EditorTabs from './EditorTabs.vue';
 import EditorLoadError from './editors/EditorLoadError.vue';
 import { CheckCircle2, AlertCircle, FileText, FileQuestion } from 'lucide-vue-next';
 
@@ -43,6 +44,8 @@ const currentEditor = computed(() => (editorByExt as any)[activeExt.value] || nu
 const isSupportedFile = computed(() => Boolean(currentEditor.value));
 const editorKey = computed(() => `${workspaceStore.activeFilePath}:${activeExt.value}:${editorReloadNonce.value}`);
 
+const currentEditorRef = ref<any>(null);
+
 const handleSave = async (newContent: string) => {
   workspaceStore.setActiveFileContent(newContent);
   await workspaceStore.saveActiveFileContent(newContent);
@@ -51,6 +54,20 @@ const handleSave = async (newContent: string) => {
 const onEditorRetry = () => {
   editorReloadNonce.value += 1;
 };
+
+// Save snapshot right before active file path changes
+watch(
+  () => workspaceStore.activeFilePath,
+  (newPath, oldPath) => {
+    if (oldPath && currentEditorRef.value && typeof currentEditorRef.value.saveSnapshot === 'function') {
+      currentEditorRef.value.saveSnapshot()
+    }
+    
+    if (newPath) {
+      workspaceStore.loadActiveFileContent();
+    }
+  }
+);
 
 onMounted(() => {
   keyHandler = (e: KeyboardEvent) => {
@@ -81,52 +98,18 @@ onMounted(() => {
   };
 
   window.addEventListener('keydown', keyHandler)
-
-  if (workspaceStore.activeFilePath) {
-    workspaceStore.loadActiveFileContent();
-  }
 });
 
 onUnmounted(() => {
   if (keyHandler) window.removeEventListener('keydown', keyHandler)
   keyHandler = null
 })
-
-watch(() => workspaceStore.activeFilePath, (newPath) => {
-  if (newPath) {
-    workspaceStore.loadActiveFileContent();
-  }
-});
 </script>
 
 <template>
   <div class="h-full flex flex-col flex-1 bg-white dark:bg-zinc-900 overflow-hidden">
     <!-- Toolbar -->
-    <header class="h-14 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-6 bg-zinc-50 dark:bg-zinc-900 z-10">
-      <div class="flex items-center gap-3 min-w-0">
-        <h1 class="text-sm font-semibold text-zinc-700 dark:text-zinc-300 truncate">
-          {{ workspaceStore.activeFilePath ? workspaceStore.activeFilePath.split(/[\\/]/).pop() : '选择笔记开始编辑' }}
-        </h1>
-        
-        <!-- Save Status Indicators -->
-        <div class="flex items-center gap-2">
-          <div v-if="isSaving" class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 font-medium">
-            <div class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>
-            Saving...
-          </div>
-          <div v-else-if="!saveError && workspaceStore.activeFilePath" class="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] text-emerald-500 font-medium">
-            <CheckCircle2 :size="12" />
-            Saved
-          </div>
-          <div v-else-if="saveError" class="flex items-center gap-1 px-2 py-0.5 rounded bg-red-50 dark:bg-red-900/20 text-[10px] text-red-500 font-medium group cursor-pointer" :title="saveError">
-            <AlertCircle :size="12" />
-            Save Failed
-          </div>
-        </div>
-      </div>
-
-      <div class="flex items-center gap-2"></div>
-    </header>
+    <EditorTabs v-if="workspaceStore.openedFiles.length > 0" />
 
     <!-- Workspace View Area -->
     <main v-if="workspaceStore.activeFilePath" class="flex-1 flex overflow-hidden">
@@ -143,6 +126,7 @@ watch(() => workspaceStore.activeFilePath, (newPath) => {
         class="w-full flex-1"
         :is="currentEditor"
         :key="editorKey"
+        ref="currentEditorRef"
         :filePath="workspaceStore.activeFilePath"
         :content="workspaceStore.activeFileContent"
         :saveTrigger="saveTrigger"

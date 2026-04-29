@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { EditorView, basicSetup } from 'codemirror';
 import { markdown } from '@codemirror/lang-markdown';
 import { oneDark } from '@codemirror/theme-one-dark';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Compartment } from '@codemirror/state';
 import { useWorkspaceStore } from '../store/workspace';
 
 const props = withDefaults(defineProps<{
@@ -25,6 +25,24 @@ const workspaceStore = useWorkspaceStore();
 let editor: EditorView | null = null;
 let saveTimeout: any = null;
 let applyingExternalUpdate = false;
+
+// Compartments for dynamic reconfiguration without destroying editor
+const themeCompartment = new Compartment()
+const langCompartment = new Compartment()
+const lineWrapCompartment = new Compartment()
+const customStyleCompartment = new Compartment()
+
+const getThemeExtension = () => workspaceStore.theme === 'dark' ? [oneDark] : [];
+const getLangExtension = () => props.mode === 'markdown' ? [markdown()] : [];
+const getLineWrapExtension = () => props.wordWrap ? [EditorView.lineWrapping] : [];
+const getCustomStyleExtension = () => EditorView.theme({
+  '&': { height: '100%', fontSize: `${props.fontSize}px` },
+  '.cm-scroller': { overflow: 'auto', fontFamily: 'Consolas, Monaco, monospace' },
+  '.cm-content': { 
+    padding: '10px 0',
+    whiteSpace: props.wordWrap ? 'pre-wrap' : 'pre'
+  },
+})
 
 const createEditor = () => {
   if (!editorContainer.value) return;
@@ -51,27 +69,16 @@ const createEditor = () => {
     },
   });
 
-  const themeExtension = workspaceStore.theme === 'dark' ? [oneDark] : [];
-
-  const langExtension = props.mode === 'markdown' ? [markdown()] : [];
-
   const state = EditorState.create({
     doc: props.initialContent,
     extensions: [
       basicSetup,
-      ...langExtension,
-      ...themeExtension,
+      langCompartment.of(getLangExtension()),
+      themeCompartment.of(getThemeExtension()),
+      lineWrapCompartment.of(getLineWrapExtension()),
+      customStyleCompartment.of(getCustomStyleExtension()),
       updateListener,
       blurHandler,
-      EditorView.lineWrapping,
-      EditorView.theme({
-        '&': { height: '100%', fontSize: `${props.fontSize}px` },
-        '.cm-scroller': { overflow: 'auto', fontFamily: 'Consolas, Monaco, monospace' },
-        '.cm-content': { 
-          padding: '10px 0',
-          whiteSpace: props.wordWrap ? 'pre-wrap' : 'pre'
-        },
-      }),
     ],
   });
 
@@ -111,11 +118,45 @@ watch(
   () => [workspaceStore.theme, props.mode, props.fontSize, props.wordWrap],
   () => {
     if (editor) {
-      editor.destroy();
-      createEditor();
+      editor.dispatch({
+        effects: [
+          themeCompartment.reconfigure(getThemeExtension()),
+          langCompartment.reconfigure(getLangExtension()),
+          lineWrapCompartment.reconfigure(getLineWrapExtension()),
+          customStyleCompartment.reconfigure(getCustomStyleExtension())
+        ]
+      })
     }
   }
 );
+
+defineExpose({
+  getSnapshot() {
+    if (!editor) return null;
+    return {
+      anchor: editor.state.selection.main.anchor,
+      head: editor.state.selection.main.head,
+      scrollTop: editor.scrollDOM.scrollTop
+    }
+  },
+  applySnapshot(snap: { anchor: number, head: number, scrollTop: number }) {
+    if (!editor || !snap) return;
+    
+    const docLength = editor.state.doc.length;
+    const safeAnchor = Math.min(snap.anchor, docLength);
+    const safeHead = Math.min(snap.head, docLength);
+
+    editor.dispatch({
+      selection: { anchor: safeAnchor, head: safeHead }
+    });
+
+    requestAnimationFrame(() => {
+      if (editor) {
+        editor.scrollDOM.scrollTop = snap.scrollTop;
+      }
+    });
+  }
+});
 </script>
 
 <template>

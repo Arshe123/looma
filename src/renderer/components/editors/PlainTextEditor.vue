@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import Editor from '../Editor.vue'
 import { WrapText, Minus, Plus } from 'lucide-vue-next'
+import { useWorkspaceStore } from '../../store/workspace'
 
 const props = defineProps<{
   filePath: string
@@ -14,9 +15,32 @@ const emit = defineEmits<{
   (e: 'save', value: string): void
 }>()
 
+const workspaceStore = useWorkspaceStore()
 const localContent = ref(props.content || '')
 const fontSize = ref(14)
 const wordWrap = ref(true)
+const editorRef = ref<InstanceType<typeof Editor> | null>(null)
+
+onMounted(() => {
+  const session = workspaceStore.fileSessions[workspaceStore.activeFileRelativePath]
+  if (session) {
+    if (session.plaintext) {
+      fontSize.value = session.plaintext.fontSize
+      wordWrap.value = session.plaintext.wordWrap
+    }
+    if (session.codemirror && editorRef.value) {
+      setTimeout(() => {
+        editorRef.value?.applySnapshot(session.codemirror!)
+      }, 50)
+    }
+  }
+})
+
+watch([fontSize, wordWrap], ([fs, ww]) => {
+  workspaceStore.saveFileSession(workspaceStore.activeFileRelativePath, {
+    plaintext: { fontSize: fs, wordWrap: ww }
+  })
+})
 
 const statsText = computed(() => {
   const text = localContent.value || ''
@@ -51,6 +75,18 @@ const decreaseFont = () => {
 const toggleWrap = () => {
   wordWrap.value = !wordWrap.value
 }
+
+defineExpose({
+  saveSnapshot() {
+    const cmSnap = editorRef.value?.getSnapshot()
+    if (cmSnap) {
+      workspaceStore.saveFileSession(workspaceStore.activeFileRelativePath, {
+        plaintext: { fontSize: fontSize.value, wordWrap: wordWrap.value },
+        codemirror: cmSnap
+      })
+    }
+  }
+})
 </script>
 
 <template>
@@ -61,6 +97,7 @@ const toggleWrap = () => {
 
     <div class="flex-1 overflow-hidden">
       <Editor
+        ref="editorRef"
         mode="plaintext"
         :initialContent="localContent"
         :filePath="props.filePath"

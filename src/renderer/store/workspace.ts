@@ -16,10 +16,23 @@ export interface FsEntry {
   mtimeMs: number
 }
 
+export interface EditorSession {
+  updatedAt: number
+  markdown?: { viewMode: 'split' | 'editor' | 'preview' }
+  plaintext?: { fontSize: number; wordWrap: boolean }
+  codemirror?: {
+    anchor: number
+    head: number
+    scrollTop: number
+  }
+}
+
 export interface WorkspaceMeta {
   expandedDirs: string[]
   selectedPaths: string[]
   noteOrder: Record<string, string[]>
+  openedFiles?: string[]
+  fileSessions?: Record<string, EditorSession>
 }
 
 type UndoAction =
@@ -46,6 +59,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeFileLoadedContent: '' as string,
     activeFileIsSaving: false as boolean,
     activeFileSaveError: '' as string,
+    openedFiles: [] as string[],
+    fileSessions: {} as Record<string, EditorSession>,
     selectedPaths: [] as string[],
     expandedDirs: [] as string[],
     noteOrder: {} as Record<string, string[]>,
@@ -306,6 +321,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeFileIsSaving = false
       this.activeFileSaveError = ''
       this.watchedWorkspaceId = null
+      this.openedFiles = []
       this.selectedPaths = []
       this.expandedDirs = []
       this.noteOrder = {}
@@ -374,11 +390,15 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.expandedDirs = []
         this.selectedPaths = []
         this.noteOrder = {}
+        this.openedFiles = []
+        this.fileSessions = {}
         return
       }
       this.expandedDirs = Array.isArray(metaResult.data.expandedDirs) ? metaResult.data.expandedDirs : []
       this.selectedPaths = Array.isArray(metaResult.data.selectedPaths) ? metaResult.data.selectedPaths.map(normalizeDir) : []
       this.noteOrder = metaResult.data.noteOrder || {}
+      this.openedFiles = Array.isArray(metaResult.data.openedFiles) ? metaResult.data.openedFiles.map(normalizeDir) : []
+      this.fileSessions = metaResult.data.fileSessions || {}
     },
 
     async saveWorkspaceMeta() {
@@ -388,12 +408,35 @@ export const useWorkspaceStore = defineStore('workspace', {
       for (const [k, v] of Object.entries(this.noteOrder || {})) {
         noteOrderPlain[k] = Array.isArray(v) ? v.slice() : []
       }
+      
+      // Cleanup sessions for files that are no longer opened to save space
+      const cleanedSessions: Record<string, EditorSession> = {}
+      for (const file of this.openedFiles) {
+        if (this.fileSessions[file]) {
+          cleanedSessions[file] = this.fileSessions[file]
+        }
+      }
+      this.fileSessions = cleanedSessions
+
       const meta: WorkspaceMeta = {
         expandedDirs: this.expandedDirs.map(normalizeDir),
         selectedPaths: this.selectedPaths.map(normalizeDir),
         noteOrder: noteOrderPlain,
+        openedFiles: this.openedFiles.map(normalizeDir),
+        fileSessions: this.fileSessions,
       }
       await window.electronAPI.workspaceMeta.set(id, meta)
+    },
+
+    saveFileSession(relPath: string, session: Partial<EditorSession>) {
+      if (!relPath) return
+      const existing = this.fileSessions[relPath] || { updatedAt: Date.now() }
+      this.fileSessions[relPath] = {
+        ...existing,
+        ...session,
+        updatedAt: Date.now()
+      }
+      // debounce save or rely on caller
     },
 
     async reorderWorkspaces(nextOrder: string[]) {
@@ -480,6 +523,12 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.activeFileSaveError = ''
         return
       }
+      
+      if (!this.openedFiles.includes(rel)) {
+        this.openedFiles.push(rel)
+        this.saveWorkspaceMeta().catch(() => {})
+      }
+
       const sep = pathSep(ws.path)
       const root = ws.path.endsWith(sep) ? ws.path.slice(0, -1) : ws.path
       this.activeFilePath = `${root}${sep}${rel.split('/').join(sep)}`
@@ -628,6 +677,12 @@ export const useWorkspaceStore = defineStore('workspace', {
           this.activeFileSaveError = ''
         }
         
+        const prevOpenedLength = this.openedFiles.length
+        this.openedFiles = this.openedFiles.filter(of => !deletedPaths.some(dp => of === dp || of.startsWith(dp + '/')))
+        if (this.openedFiles.length !== prevOpenedLength) {
+          this.saveWorkspaceMeta().catch(() => {})
+        }
+
         const remainingPaths = this.selectedPaths.filter(p => 
           !deletedPaths.some(dp => p === dp || p.startsWith(dp + '/'))
         )
@@ -680,6 +735,19 @@ export const useWorkspaceStore = defineStore('workspace', {
             break
           }
         }
+        
+        let openedChanged = false
+        this.openedFiles = this.openedFiles.map(of => {
+          const match = items.find(i => of === i.from || of.startsWith(i.from + '/'))
+          if (match) {
+            openedChanged = true
+            return of.replace(match.from, match.to)
+          }
+          return of
+        })
+        if (openedChanged) {
+          this.saveWorkspaceMeta().catch(() => {})
+        }
       }
     },
 
@@ -697,6 +765,14 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.setError(r.error || 'Failed to rename')
         return
       }
+      
+      // Update openedFiles
+      const renamedIdx = this.openedFiles.indexOf(from)
+      if (renamedIdx > -1) {
+        this.openedFiles.splice(renamedIdx, 1, to)
+        this.saveWorkspaceMeta().catch(() => {})
+      }
+
       if (this.activeFileRelativePath === from) this.setActiveFileRelative(to)
     },
 

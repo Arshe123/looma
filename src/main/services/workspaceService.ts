@@ -154,6 +154,31 @@ export const workspaceService = {
     }
   },
 
+  async checkExists(id: string): Promise<Result<{ exists: boolean, path: string, name: string }>> {
+    try {
+      const state = await readState()
+      const ws = state.workspaces.find((w) => w.id === id)
+      if (!ws) return { success: false, error: 'Workspace not found' }
+      const isDir = await isDirectory(ws.path).catch(() => false)
+      return { success: true, data: { exists: isDir, path: ws.path, name: ws.name } }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  },
+
+  async recreateWorkspace(id: string): Promise<Result<void>> {
+    try {
+      const state = await readState()
+      const ws = state.workspaces.find((w) => w.id === id)
+      if (!ws) return { success: false, error: 'Workspace not found' }
+      
+      await fs.mkdir(ws.path, { recursive: true })
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  },
+
   async setActiveWorkspace(id: string | null): Promise<Result<void>> {
     try {
       const state = await readState()

@@ -165,6 +165,11 @@ ipcMain.handle('file:writeMarkdown', async (_, filePath: string, content: string
   return await fileService.writeMarkdown(filePath, content);
 });
 
+ipcMain.handle('app:showMessageBox', async (_, options: any) => {
+  if (!mainWindow) return { response: 0 };
+  return await dialog.showMessageBox(mainWindow, options);
+});
+
 // Workspace Meta IPC (simplified version for now)
 ipcMain.handle('workspace:selectDir', async () => {
   const result = await dialog.showOpenDialog({
@@ -196,6 +201,14 @@ ipcMain.handle('workspace:remove', async (_, id: string) => {
 
 ipcMain.handle('workspace:reorder', async (_, order: string[]) => {
   return await workspaceService.reorderWorkspaces(order);
+});
+
+ipcMain.handle('workspace:checkExists', async (_, id: string) => {
+  return await workspaceService.checkExists(id);
+});
+
+ipcMain.handle('workspace:recreate', async (_, id: string) => {
+  return await workspaceService.recreateWorkspace(id);
 });
 
 ipcMain.handle('workspace:setActive', async (_, id: string | null) => {

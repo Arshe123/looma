@@ -11,6 +11,7 @@ export interface ElectronAPI {
   };
   app: {
     onCommand: (listener: (payload: { id: string }) => void) => () => void;
+    showMessageBox: (options: any) => Promise<{ response: number; checkboxChecked: boolean }>;
   };
   workspace: {
     selectDir: () => Promise<string | null>;
@@ -25,6 +26,8 @@ export interface ElectronAPI {
     rename: (id: string, newName: string) => Promise<Result<void>>;
     remove: (id: string) => Promise<Result<void>>;
     reorder: (order: string[]) => Promise<Result<void>>;
+    checkExists: (id: string) => Promise<Result<{ exists: boolean, path: string, name: string }>>;
+    recreate: (id: string) => Promise<Result<void>>;
     setActive: (id: string | null) => Promise<Result<void>>;
   };
   workspaceMeta: {

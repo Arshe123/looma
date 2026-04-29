@@ -336,6 +336,34 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!id) return
       if (this.isWorkspaceTransitioning) return
 
+      const existsResult = await (window as any).electronAPI.workspace.checkExists(id)
+      if (existsResult.success && existsResult.data) {
+        if (!existsResult.data.exists) {
+          const res = await (window as any).electronAPI.app.showMessageBox({
+            type: 'warning',
+            title: '工作空间已丢失',
+            message: '工作空间已被删除或转移，是否移除记录或重建？',
+            buttons: ['取消', '移除', '重建'],
+            defaultId: 2,
+            cancelId: 0
+          })
+          if (res.response === 1) {
+            await this.removeWorkspace(id, true)
+            return
+          } else if (res.response === 2) {
+            this.setBusy(true, '正在重建工作空间...')
+            const createRes = await (window as any).electronAPI.workspace.recreate(id)
+            this.setBusy(false)
+            if (!createRes.success) {
+              this.setError(createRes.error || '重建失败')
+              return
+            }
+          } else {
+            return
+          }
+        }
+      }
+
       this.setWorkspaceTransition(true, '正在保存...')
       const okToLeave = await this.ensureSavedBeforeWorkspaceChange()
       if (!okToLeave) {
@@ -475,11 +503,13 @@ export const useWorkspaceStore = defineStore('workspace', {
       await this.refreshWorkspaces()
     },
 
-    async removeWorkspace(id: string) {
+    async removeWorkspace(id: string, skipConfirm = false) {
       const ws = this.workspaces.find((w) => w.id === id)
       if (!ws) return
-      const ok = window.confirm(`从列表移除工作空间：${ws.name}？`)
-      if (!ok) return
+      if (!skipConfirm) {
+        const ok = window.confirm(`从列表移除工作空间：${ws.name}？`)
+        if (!ok) return
+      }
       const r = await window.electronAPI.workspace.remove(id)
       if (!r.success) this.setError(r.error || 'Failed to remove workspace')
       await this.refreshWorkspaces()

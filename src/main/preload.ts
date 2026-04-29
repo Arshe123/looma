@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('app:command', handler);
       return () => ipcRenderer.removeListener('app:command', handler);
     },
+    showMessageBox: (options: any) => ipcRenderer.invoke('app:showMessageBox', options),
   },
   workspace: {
     selectDir: () => ipcRenderer.invoke('workspace:selectDir'),
@@ -23,6 +24,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     rename: (id: string, newName: string) => ipcRenderer.invoke('workspace:rename', id, newName),
     remove: (id: string) => ipcRenderer.invoke('workspace:remove', id),
     reorder: (order: string[]) => ipcRenderer.invoke('workspace:reorder', order),
+    checkExists: (id: string) => ipcRenderer.invoke('workspace:checkExists', id),
+    recreate: (id: string) => ipcRenderer.invoke('workspace:recreate', id),
     setActive: (id: string | null) => ipcRenderer.invoke('workspace:setActive', id),
   },
   workspaceMeta: {

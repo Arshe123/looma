@@ -72,7 +72,8 @@ onUnmounted(() => {
   </div>
   <div
     v-if="workspaceStore.lastError"
-    class="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-[520px] px-4 py-3 rounded-lg bg-red-600 text-white text-sm shadow-lg flex items-center justify-between gap-3"
+    class="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-[520px] z-50 pointer-events-auto px-4 py-3 rounded-lg bg-red-600 text-white text-sm shadow-lg flex items-center justify-between gap-3"
+    style="-webkit-app-region: no-drag"
   >
     <div>{{ workspaceStore.lastError }}</div>
     <button class="shrink-0 px-3 py-1 rounded bg-white/20 hover:bg-white/30" @click="workspaceStore.clearError()">关闭</button>

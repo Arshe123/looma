@@ -92,11 +92,14 @@ export const useWorkspaceStore = defineStore('workspace', {
       const p = state.activeFilePath
       if (!p) return false
       const ext = p.split('.').pop()?.toLowerCase()
-      return ext === 'md' || ext === 'txt'
+      const supportedExts = ['md', 'txt', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'mp4', 'webm', 'ogg']
+      return ext ? supportedExts.includes(ext) : false
     },
     hasUnsavedChanges(state) {
       if (!state.activeFilePath) return false
       if (!this.isSupportedActiveFile) return false
+      const ext = state.activeFilePath.split('.').pop()?.toLowerCase()
+      if (ext !== 'md' && ext !== 'txt') return false // Media files don't have unsaved changes
       return state.activeFileContent !== state.activeFileLoadedContent
     },
     keyOfDir: () => (workspaceId: string, dir: string) => `${workspaceId}:${normalizeDir(dir)}`,
@@ -607,6 +610,15 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.activeFileSaveError = ''
         return
       }
+      const ext = this.activeFilePath.split('.').pop()?.toLowerCase()
+      if (ext !== 'md' && ext !== 'txt') {
+        // We do not load media file contents into state.activeFileContent
+        this.activeFileContent = ''
+        this.activeFileLoadedContent = ''
+        this.activeFileSaveError = ''
+        return
+      }
+
       const r = await window.electronAPI.file.readMarkdown(this.activeFilePath)
       if (!r.success || r.data === undefined) {
         this.setError(r.error || 'Failed to load file')
@@ -622,6 +634,9 @@ export const useWorkspaceStore = defineStore('workspace', {
     async saveActiveFileContent(content?: string) {
       if (!this.activeFilePath) return { success: true as const }
       if (!this.isSupportedActiveFile) return { success: true as const }
+      const ext = this.activeFilePath.split('.').pop()?.toLowerCase()
+      if (ext !== 'md' && ext !== 'txt') return { success: true as const } // Don't save media files
+      
       const next = content ?? this.activeFileContent
       this.activeFileIsSaving = true
       this.activeFileSaveError = ''

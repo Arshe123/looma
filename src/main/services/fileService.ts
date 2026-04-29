@@ -31,6 +31,33 @@ export const fileService = {
     }
   },
 
+  async readFileBase64(filePath: string): Promise<Result<string>> {
+    try {
+      const content = await fs.readFile(filePath, 'base64');
+      const ext = filePath.split('.').pop()?.toLowerCase();
+      let mimeType = 'application/octet-stream';
+      
+      if (ext) {
+        const mimeMap: Record<string, string> = {
+          'png': 'image/png',
+          'jpg': 'image/jpeg',
+          'jpeg': 'image/jpeg',
+          'gif': 'image/gif',
+          'webp': 'image/webp',
+          'svg': 'image/svg+xml',
+          'mp4': 'video/mp4',
+          'webm': 'video/webm',
+          'ogg': 'video/ogg'
+        };
+        mimeType = mimeMap[ext] || mimeType;
+      }
+      
+      return { success: true, data: `data:${mimeType};base64,${content}` };
+    } catch (error: any) {
+      return { success: false, error: `Failed to read file: ${error.message}` };
+    }
+  },
+
   async writeMarkdown(filePath: string, content: string): Promise<Result<void>> {
     try {
       await fileLock.acquire(filePath);

@@ -7,6 +7,7 @@ export interface Result<T = void> {
 export interface ElectronAPI {
   file: {
     readMarkdown: (filePath: string) => Promise<Result<string>>;
+    readFileBase64: (filePath: string) => Promise<Result<string>>;
     writeMarkdown: (filePath: string, content: string) => Promise<Result<void>>;
   };
   app: {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
-import Editor from '../Editor.vue'
-import Preview from '../Preview.vue'
+import Editor from './Editor.vue'
+import Preview from '../preview/Preview.vue'
 import { Columns, Eye, Edit3 } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../store/workspace'
 

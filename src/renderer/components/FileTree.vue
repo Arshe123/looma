@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ChevronRight, Folder, FileText, Trash2, Edit3 } from 'lucide-vue-next'
+import { ChevronRight, Folder, FileText, Trash2, Edit3, Image, Video, FileType2 } from 'lucide-vue-next'
 import { useWorkspaceStore, type FsEntry } from '../store/workspace'
 
 const props = defineProps<{
@@ -18,6 +18,15 @@ const getChildren = (dirRelativePath: string) => {
 }
 
 const isExpanded = (dirRelativePath: string) => expanded.value.has(dirRelativePath)
+
+const getIconForFile = (filename: string) => {
+  const ext = filename.split('.').pop()?.toLowerCase()
+  if (ext === 'md') return FileText
+  if (ext === 'txt') return FileType2
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext || '')) return Image
+  if (['mp4', 'webm', 'ogg'].includes(ext || '')) return Video
+  return FileText
+}
 
 const toggle = async (dirRelativePath: string) => {
   await workspaceStore.toggleDirExpanded(dirRelativePath)
@@ -247,8 +256,8 @@ onUnmounted(() => {
         </button>
         <div v-else class="w-6 h-6"></div>
 
-        <Folder v-if="row.isDirectory" :size="16" class="text-blue-500" />
-        <FileText v-else :size="16" class="text-zinc-400" />
+        <Folder v-if="row.isDirectory" :size="16" class="text-blue-500 shrink-0" />
+        <component v-else :is="getIconForFile(row.name)" :size="16" class="text-zinc-400 shrink-0" />
 
         <div
           class="flex-1 min-w-0 text-left text-sm truncate select-none"

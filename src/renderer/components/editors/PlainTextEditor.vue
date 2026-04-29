@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted } from 'vue'
-import Editor from '../Editor.vue'
+import Editor from './Editor.vue'
 import { WrapText, Minus, Plus } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../store/workspace'
 

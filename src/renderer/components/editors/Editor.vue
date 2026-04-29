@@ -4,7 +4,7 @@ import { EditorView, basicSetup } from 'codemirror';
 import { markdown } from '@codemirror/lang-markdown';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorState, Compartment } from '@codemirror/state';
-import { useWorkspaceStore } from '../store/workspace';
+import { useWorkspaceStore } from '../../store/workspace';
 
 const props = withDefaults(defineProps<{
   initialContent: string;

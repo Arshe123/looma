@@ -37,6 +37,15 @@ const createAsyncEditor = (loader: () => Promise<any>) => {
 const editorByExt = {
   '.md': createAsyncEditor(() => import('./editors/MarkdownEditor.vue')),
   '.txt': createAsyncEditor(() => import('./editors/PlainTextEditor.vue')),
+  '.png': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
+  '.jpg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
+  '.jpeg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
+  '.gif': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
+  '.webp': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
+  '.svg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
+  '.mp4': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
+  '.webm': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
+  '.ogg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
 } as const;
 
 const activeExt = computed(() => getExt(workspaceStore.activeFilePath));
@@ -128,7 +137,7 @@ onUnmounted(() => {
         <FileQuestion :size="64" class="mb-6 opacity-30 text-zinc-500" />
         <h3 class="text-xl font-medium mb-2 text-zinc-600 dark:text-zinc-300">不支持的文件类型</h3>
         <p class="max-w-md text-sm opacity-80 mb-4">
-          该文件格式暂时无法在编辑器中打开。我们目前仅支持 <span class="font-mono bg-zinc-200 dark:bg-zinc-800 px-1 py-0.5 rounded">.md</span> 和 <span class="font-mono bg-zinc-200 dark:bg-zinc-800 px-1 py-0.5 rounded">.txt</span> 文件。
+          该文件格式暂时无法在编辑器中打开。
         </p>
       </div>
       

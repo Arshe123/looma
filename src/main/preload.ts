@@ -5,6 +5,7 @@ type FsEventPayload = { workspaceId: string; event: string; relativePath: string
 contextBridge.exposeInMainWorld('electronAPI', {
   file: {
     readMarkdown: (filePath: string) => ipcRenderer.invoke('file:readMarkdown', filePath),
+    readFileBase64: (filePath: string) => ipcRenderer.invoke('file:readFileBase64', filePath),
     writeMarkdown: (filePath: string, content: string) => ipcRenderer.invoke('file:writeMarkdown', filePath, content),
   },
   app: {

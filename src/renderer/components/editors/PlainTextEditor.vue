@@ -6,6 +6,7 @@ import { useWorkspaceStore } from '../../store/workspace'
 
 const props = defineProps<{
   filePath: string
+  relativeFilePath: string
   content: string
   saveTrigger: number
 }>()
@@ -22,7 +23,7 @@ const wordWrap = ref(true)
 const editorRef = ref<InstanceType<typeof Editor> | null>(null)
 
 onMounted(() => {
-  const session = workspaceStore.fileSessions[workspaceStore.activeFileRelativePath]
+  const session = workspaceStore.fileSessions[props.relativeFilePath]
   if (session) {
     if (session.plaintext) {
       fontSize.value = session.plaintext.fontSize
@@ -37,7 +38,8 @@ onMounted(() => {
 })
 
 watch([fontSize, wordWrap], ([fs, ww]) => {
-  workspaceStore.saveFileSession(workspaceStore.activeFileRelativePath, {
+  if (workspaceStore.isWorkspaceTransitioning) return
+  workspaceStore.saveFileSession(props.relativeFilePath, {
     plaintext: { fontSize: fs, wordWrap: ww }
   })
 })
@@ -77,13 +79,14 @@ const toggleWrap = () => {
 }
 
 defineExpose({
-  saveSnapshot() {
+  saveSnapshot(skipSaveMeta = false) {
+    if (workspaceStore.isWorkspaceTransitioning) return
     const cmSnap = editorRef.value?.getSnapshot()
-    if (cmSnap) {
-      workspaceStore.saveFileSession(workspaceStore.activeFileRelativePath, {
+    if (cmSnap && props.relativeFilePath) {
+      workspaceStore.saveFileSession(props.relativeFilePath, {
         plaintext: { fontSize: fontSize.value, wordWrap: wordWrap.value },
         codemirror: cmSnap
-      })
+      }, skipSaveMeta)
     }
   }
 })

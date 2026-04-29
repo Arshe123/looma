@@ -57,19 +57,27 @@ const onEditorRetry = () => {
 
 // Save snapshot right before active file path changes
 watch(
-  () => workspaceStore.activeFilePath,
-  (newPath, oldPath) => {
-    if (oldPath && currentEditorRef.value && typeof currentEditorRef.value.saveSnapshot === 'function') {
-      currentEditorRef.value.saveSnapshot()
+  () => workspaceStore.activeFileRelativePath,
+  (newRel, oldRel) => {
+    // Only save snapshot if we are still in the same workspace as when the editor was loaded
+    if (oldRel && currentEditorRef.value && typeof currentEditorRef.value.saveSnapshot === 'function' && !workspaceStore.isWorkspaceTransitioning) {
+      currentEditorRef.value.saveSnapshot(true)
     }
-    
-    if (newPath) {
-      workspaceStore.loadActiveFileContent();
-    }
-  }
+  },
+  { immediate: true }
 );
 
+const saveCurrentSnapshot = (e?: Event) => {
+  if (workspaceStore.isWorkspaceTransitioning) return
+  const skipSaveMeta = e?.type === 'request-save-snapshot'
+  if (currentEditorRef.value && typeof currentEditorRef.value.saveSnapshot === 'function') {
+    currentEditorRef.value.saveSnapshot(skipSaveMeta)
+  }
+}
+
 onMounted(() => {
+  window.addEventListener('beforeunload', saveCurrentSnapshot)
+  window.addEventListener('request-save-snapshot', saveCurrentSnapshot)
   keyHandler = (e: KeyboardEvent) => {
     if (e.ctrlKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
       e.preventDefault()
@@ -101,6 +109,9 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('beforeunload', saveCurrentSnapshot)
+  window.removeEventListener('request-save-snapshot', saveCurrentSnapshot)
+  saveCurrentSnapshot()
   if (keyHandler) window.removeEventListener('keydown', keyHandler)
   keyHandler = null
 })
@@ -128,6 +139,7 @@ onUnmounted(() => {
         :key="editorKey"
         ref="currentEditorRef"
         :filePath="workspaceStore.activeFilePath"
+        :relativeFilePath="workspaceStore.activeFileRelativePath"
         :content="workspaceStore.activeFileContent"
         :saveTrigger="saveTrigger"
         @update:content="(v) => workspaceStore.setActiveFileContent(v)"

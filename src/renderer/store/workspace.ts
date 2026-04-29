@@ -32,6 +32,7 @@ export interface WorkspaceMeta {
   selectedPaths: string[]
   noteOrder: Record<string, string[]>
   openedFiles?: string[]
+  activeFile?: string
   fileSessions?: Record<string, EditorSession>
 }
 
@@ -354,18 +355,19 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.dirEntries = {}
       this.undoStack = []
       this.redoStack = []
+      this.activeWorkspaceId = null // clear ID during transition to block watchers/snapshots from saving incorrectly
       await this.switchWorkspaceInternal(id)
       this.setWorkspaceTransition(false, '')
     },
 
     async switchWorkspaceInternal(id: string) {
+      this.activeWorkspaceId = id
       this.activeFilePath = ''
       this.activeFileRelativePath = ''
       this.activeFileContent = ''
       this.activeFileLoadedContent = ''
       this.activeFileIsSaving = false
       this.activeFileSaveError = ''
-      this.activeWorkspaceId = id
       await window.electronAPI.workspace.setActive(id)
       await this.loadWorkspaceMeta(id)
       await this.loadDir(id, '')
@@ -399,9 +401,21 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.noteOrder = metaResult.data.noteOrder || {}
       this.openedFiles = Array.isArray(metaResult.data.openedFiles) ? metaResult.data.openedFiles.map(normalizeDir) : []
       this.fileSessions = metaResult.data.fileSessions || {}
+      
+      // Restore active file
+      if (metaResult.data.activeFile && this.openedFiles.includes(metaResult.data.activeFile)) {
+        await this.setActiveFileRelative(metaResult.data.activeFile)
+      } else if (this.openedFiles.length > 0) {
+        await this.setActiveFileRelative(this.openedFiles[this.openedFiles.length - 1])
+      }
     },
 
     async saveWorkspaceMeta() {
+      // Trigger snapshot save synchronously before writing to disk
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('request-save-snapshot'))
+      }
+
       const id = this.activeWorkspaceId
       if (!id) return
       const noteOrderPlain: Record<string, string[]> = {}
@@ -423,20 +437,27 @@ export const useWorkspaceStore = defineStore('workspace', {
         selectedPaths: this.selectedPaths.map(normalizeDir),
         noteOrder: noteOrderPlain,
         openedFiles: this.openedFiles.map(normalizeDir),
-        fileSessions: this.fileSessions,
+        activeFile: this.activeFileRelativePath || undefined,
+        fileSessions: JSON.parse(JSON.stringify(this.fileSessions)),
       }
       await window.electronAPI.workspaceMeta.set(id, meta)
     },
 
-    saveFileSession(relPath: string, session: Partial<EditorSession>) {
+    saveFileSession(relPath: string, session: Partial<EditorSession>, skipSaveMeta = false) {
       if (!relPath) return
+      // Prevent saving session if there is no active workspace yet or we are transitioning
+      if (!this.activeWorkspaceId || this.isWorkspaceTransitioning) return
+
       const existing = this.fileSessions[relPath] || { updatedAt: Date.now() }
       this.fileSessions[relPath] = {
         ...existing,
         ...session,
         updatedAt: Date.now()
       }
-      // debounce save or rely on caller
+      // Trigger a debounced or unawaited save to ensure it is persisted immediately
+      if (!skipSaveMeta) {
+        this.saveWorkspaceMeta().catch(() => {})
+      }
     },
 
     async reorderWorkspaces(nextOrder: string[]) {

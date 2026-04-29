@@ -7,6 +7,7 @@ import { useWorkspaceStore } from '../../store/workspace'
 
 const props = defineProps<{
   filePath: string
+  relativeFilePath: string
   content: string
   saveTrigger: number
 }>()
@@ -21,7 +22,7 @@ const viewMode = ref<'split' | 'editor' | 'preview'>('split')
 const editorRef = ref<InstanceType<typeof Editor> | null>(null)
 
 onMounted(() => {
-  const session = workspaceStore.fileSessions[workspaceStore.activeFileRelativePath]
+  const session = workspaceStore.fileSessions[props.relativeFilePath]
   if (session) {
     if (session.markdown?.viewMode) {
       viewMode.value = session.markdown.viewMode
@@ -36,7 +37,8 @@ onMounted(() => {
 })
 
 watch(viewMode, (newVal) => {
-  workspaceStore.saveFileSession(workspaceStore.activeFileRelativePath, {
+  if (workspaceStore.isWorkspaceTransitioning) return
+  workspaceStore.saveFileSession(props.relativeFilePath, {
     markdown: { viewMode: newVal }
   })
 })
@@ -49,13 +51,14 @@ watch(
 )
 
 defineExpose({
-  saveSnapshot() {
+  saveSnapshot(skipSaveMeta = false) {
+    if (workspaceStore.isWorkspaceTransitioning) return
     const cmSnap = editorRef.value?.getSnapshot()
-    if (cmSnap) {
-      workspaceStore.saveFileSession(workspaceStore.activeFileRelativePath, {
+    if (cmSnap && props.relativeFilePath) {
+      workspaceStore.saveFileSession(props.relativeFilePath, {
         markdown: { viewMode: viewMode.value },
         codemirror: cmSnap
-      })
+      }, skipSaveMeta)
     }
   }
 })

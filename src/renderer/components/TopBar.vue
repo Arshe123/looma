@@ -49,7 +49,7 @@ const closeWindow = async () => {
   try {
     await workspaceStore.saveWorkspaceMeta()
   } catch {}
-  workspaceStore.setWorkspaceTransition(false, '')
+  // Intentionally don't clear transitioning flag so the app stays blocked until it closes
   await (window as any).electronAPI?.window?.close?.()
 }
 

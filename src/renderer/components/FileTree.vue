@@ -69,7 +69,7 @@ const openMenu = (event: MouseEvent, row: FsEntry) => {
   selectedFile.value = row
   const pad = 8
   const width = 180
-  const height = 96
+  const height = 220
   const x = Math.min(event.clientX, window.innerWidth - width - pad)
   const y = Math.min(event.clientY, window.innerHeight - height - pad)
   menuX.value = Math.max(pad, x)

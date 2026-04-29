@@ -32,12 +32,20 @@ const toggleCollapse = () => {
       <div v-if="!isCollapsed && workspaceStore.workspaces.length === 0" class="p-4">
         <div class="text-sm font-semibold text-zinc-800 dark:text-zinc-100">未打开工作空间</div>
         <div class="mt-2 text-xs text-zinc-500 dark:text-zinc-400">请选择一个本地文件夹作为工作空间。</div>
-        <button
-          class="mt-4 w-full px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm"
-          @click="workspaceStore.createWorkspaceFlow()"
-        >
-          新建 / 打开工作空间
-        </button>
+        <div class="mt-4 grid grid-cols-1 gap-2">
+          <button
+            class="w-full px-3 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-sm"
+            @click="workspaceStore.switchWorkspaceFlow()"
+          >
+            切换工作空间 (Ctrl+O)
+          </button>
+          <button
+            class="w-full px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm"
+            @click="workspaceStore.newWorkspaceFlow()"
+          >
+            新建工作空间 (Ctrl+Shift+N)
+          </button>
+        </div>
       </div>
       <div v-if="!isCollapsed" class="px-2 pt-2">
         <div class="text-xs text-zinc-500 truncate">{{ workspaceStore.activeWorkspace?.path || '' }}</div>

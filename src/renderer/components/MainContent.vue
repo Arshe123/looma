@@ -9,59 +9,23 @@ const workspaceStore = useWorkspaceStore();
 let keyHandler: ((e: KeyboardEvent) => void) | null = null;
 
 const viewMode = ref<'split' | 'editor' | 'preview'>('split');
-const content = ref('');
-const isSaving = ref(false);
-const saveError = ref<string | null>(null);
+const saveError = computed(() => (workspaceStore.activeFileSaveError ? workspaceStore.activeFileSaveError : null));
+const isSaving = computed(() => workspaceStore.activeFileIsSaving);
 
 const isSupportedFile = computed(() => {
-  const path = workspaceStore.activeFilePath;
-  if (!path) return false;
-  const ext = path.split('.').pop()?.toLowerCase();
-  return ext === 'md' || ext === 'txt';
+  return workspaceStore.isSupportedActiveFile;
 });
 
-const loadFile = async (path: string) => {
-  if (!path) {
-    content.value = '';
-    return;
-  }
-  
-  if (!isSupportedFile.value) {
-    content.value = '';
-    return;
-  }
-  
-  const result = await window.electronAPI.file.readMarkdown(path);
-  if (result.success && result.data !== undefined) {
-    content.value = result.data;
-  } else {
-    alert(`Error loading file: ${result.error}`);
-  }
-};
-
 const handleSave = async (newContent: string) => {
-  if (!workspaceStore.activeFilePath) return;
-  isSaving.value = true;
-  saveError.value = null;
-  
-  const result = await window.electronAPI.file.writeMarkdown(workspaceStore.activeFilePath, newContent);
-  
-  if (result.success) {
-    isSaving.value = false;
-    setTimeout(() => {
-      isSaving.value = false;
-    }, 2000);
-  } else {
-    isSaving.value = false;
-    saveError.value = result.error || 'Failed to save file';
-  }
+  workspaceStore.setActiveFileContent(newContent);
+  await workspaceStore.saveActiveFileContent(newContent);
 };
 
 onMounted(() => {
   keyHandler = (e: KeyboardEvent) => {
     if (e.ctrlKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
       e.preventDefault()
-      handleSave(content.value)
+      handleSave(workspaceStore.activeFileContent)
       return
     }
     if (e.ctrlKey && !e.shiftKey && (e.key === 'n' || e.key === 'N')) {
@@ -88,7 +52,7 @@ onMounted(() => {
   window.addEventListener('keydown', keyHandler)
 
   if (workspaceStore.activeFilePath) {
-    loadFile(workspaceStore.activeFilePath);
+    workspaceStore.loadActiveFileContent();
   }
 });
 
@@ -99,7 +63,7 @@ onUnmounted(() => {
 
 watch(() => workspaceStore.activeFilePath, (newPath) => {
   if (newPath) {
-    loadFile(newPath);
+    workspaceStore.loadActiveFileContent();
   }
 });
 </script>
@@ -179,15 +143,15 @@ watch(() => workspaceStore.activeFilePath, (newPath) => {
       <template v-else>
         <div v-if="viewMode !== 'preview'" class="flex-1 overflow-hidden">
           <Editor 
-            :initialContent="content" 
+            :initialContent="workspaceStore.activeFileContent" 
             :filePath="workspaceStore.activeFilePath"
-            @change="(newContent) => content = newContent"
+            @change="(newContent) => workspaceStore.setActiveFileContent(newContent)"
             @save="handleSave"
           />
         </div>
         
         <div v-if="viewMode !== 'editor'" class="flex-1 overflow-hidden border-l border-zinc-200 dark:border-zinc-800">
-          <Preview :content="content" />
+          <Preview :content="workspaceStore.activeFileContent" />
         </div>
       </template>
     </main>
@@ -196,6 +160,14 @@ watch(() => workspaceStore.activeFilePath, (newPath) => {
       <FileText :size="64" class="mb-6 opacity-20" />
       <h3 class="text-xl font-medium mb-2">Welcome to your Notes</h3>
       <p class="max-w-xs text-sm opacity-60">Select a note from the list or create a new one to get started.</p>
+      <div class="mt-6 flex items-center gap-3">
+        <button class="px-4 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-sm" @click="workspaceStore.switchWorkspaceFlow()">
+          切换工作空间 (Ctrl+O)
+        </button>
+        <button class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm" @click="workspaceStore.newWorkspaceFlow()">
+          新建工作空间 (Ctrl+Shift+N)
+        </button>
+      </div>
     </div>
   </div>
 </template>

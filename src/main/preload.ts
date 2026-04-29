@@ -7,16 +7,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readMarkdown: (filePath: string) => ipcRenderer.invoke('file:readMarkdown', filePath),
     writeMarkdown: (filePath: string, content: string) => ipcRenderer.invoke('file:writeMarkdown', filePath, content),
   },
+  app: {
+    onCommand: (listener: (payload: { id: string }) => void) => {
+      const handler = (_: unknown, payload: { id: string }) => listener(payload);
+      ipcRenderer.on('app:command', handler);
+      return () => ipcRenderer.removeListener('app:command', handler);
+    },
+  },
   workspace: {
     selectDir: () => ipcRenderer.invoke('workspace:selectDir'),
     getState: () => ipcRenderer.invoke('workspace:getState'),
     list: () => ipcRenderer.invoke('workspace:list'),
     create: (workspacePath: string, name?: string) => ipcRenderer.invoke('workspace:create', workspacePath, name),
+    new: (parentDir: string, name: string, template?: 'empty' | 'basic') => ipcRenderer.invoke('workspace:new', parentDir, name, template),
     rename: (id: string, newName: string) => ipcRenderer.invoke('workspace:rename', id, newName),
     remove: (id: string) => ipcRenderer.invoke('workspace:remove', id),
     reorder: (order: string[]) => ipcRenderer.invoke('workspace:reorder', order),
     setActive: (id: string | null) => ipcRenderer.invoke('workspace:setActive', id),
-    rewriteHistory: (ids: string[]) => ipcRenderer.invoke('workspace:rewriteHistory', ids),
   },
   workspaceMeta: {
     get: (workspaceId: string) => ipcRenderer.invoke('workspaceMeta:get', workspaceId),
@@ -45,10 +52,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
   window: {
-    close: (displayedIds?: string[]) => ipcRenderer.invoke('window:close', displayedIds),
+    close: () => ipcRenderer.invoke('window:close'),
     minimize: () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
-    openWorkspace: (workspaceId: string, opts?: { isolate?: boolean }) => ipcRenderer.invoke('window:openWorkspace', workspaceId, opts),
     onPrepareClose: (callback: () => void) => {
       ipcRenderer.on('window:prepare-close', callback)
       return () => ipcRenderer.removeAllListeners('window:prepare-close')

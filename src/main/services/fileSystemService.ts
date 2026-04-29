@@ -191,12 +191,16 @@ export const fileSystemService = {
 
 type WatchKey = string
 
-const watchers = new Map<WatchKey, FSWatcher>()
+const watchers = new Map<number, { workspaceId: string; watcher: FSWatcher }>()
 
 export const fileWatchService = {
   start(workspaceId: string, workspacePath: string, webContents: WebContents) {
-    const key = `${webContents.id}:${workspaceId}`
-    if (watchers.has(key)) return
+    const existing = watchers.get(webContents.id)
+    if (existing) {
+      if (existing.workspaceId === workspaceId) return
+      watchers.delete(webContents.id)
+      existing.watcher.close().catch(() => {})
+    }
 
     const watcher = chokidar.watch(workspacePath, {
       ignoreInitial: true,
@@ -216,18 +220,26 @@ export const fileWatchService = {
       .on('unlink', (p) => send('unlink', p))
       .on('unlinkDir', (p) => send('unlinkDir', p))
 
-    watchers.set(key, watcher)
+    watchers.set(webContents.id, { workspaceId, watcher })
 
     webContents.once('destroyed', async () => {
-      await this.stop(workspaceId, webContents)
+      await this.stop(webContents)
     })
   },
 
-  async stop(workspaceId: string, webContents: WebContents) {
-    const key = `${webContents.id}:${workspaceId}`
-    const watcher = watchers.get(key)
-    if (!watcher) return
-    watchers.delete(key)
-    await watcher.close()
+  async stop(webContents: WebContents) {
+    const existing = watchers.get(webContents.id)
+    if (!existing) return
+    watchers.delete(webContents.id)
+    await existing.watcher.close()
+  },
+}
+
+export const fileWatchDebug = {
+  getActiveCount() {
+    return watchers.size
+  },
+  getActiveWorkspaceId(webContentsId: number) {
+    return watchers.get(webContentsId)?.workspaceId ?? null
   },
 }

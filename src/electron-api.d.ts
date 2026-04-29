@@ -9,6 +9,9 @@ export interface ElectronAPI {
     readMarkdown: (filePath: string) => Promise<Result<string>>;
     writeMarkdown: (filePath: string, content: string) => Promise<Result<void>>;
   };
+  app: {
+    onCommand: (listener: (payload: { id: string }) => void) => () => void;
+  };
   workspace: {
     selectDir: () => Promise<string | null>;
     getState: () => Promise<Result<{
@@ -18,10 +21,11 @@ export interface ElectronAPI {
     }>>;
     list: () => Promise<Result<Array<{ id: string; name: string; path: string; createdAt: number; lastOpenedAt: number }>>>;
     create: (workspacePath: string, name?: string) => Promise<Result<{ id: string; name: string; path: string }>>;
+    new: (parentDir: string, name: string, template?: 'empty' | 'basic') => Promise<Result<{ id: string; name: string; path: string }>>;
     rename: (id: string, newName: string) => Promise<Result<void>>;
     remove: (id: string) => Promise<Result<void>>;
     reorder: (order: string[]) => Promise<Result<void>>;
-    setActive: (id: string) => Promise<Result<void>>;
+    setActive: (id: string | null) => Promise<Result<void>>;
   };
   workspaceMeta: {
     get: (workspaceId: string) => Promise<Result<{ expandedDirs: string[]; selectedPaths: string[]; noteOrder: Record<string, string[]> }>>;
@@ -43,7 +47,7 @@ export interface ElectronAPI {
     minimize: () => Promise<void>;
     toggleMaximize: () => Promise<void>;
     close: () => Promise<void>;
-    openWorkspace: (workspaceId: string) => Promise<Result<void>>;
+    onPrepareClose: (callback: () => void) => () => void;
   };
 }
 

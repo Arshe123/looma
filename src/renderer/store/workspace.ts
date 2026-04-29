@@ -42,16 +42,22 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeWorkspaceId: null as string | null,
     activeFilePath: '' as string,
     activeFileRelativePath: '' as string,
+    activeFileContent: '' as string,
+    activeFileLoadedContent: '' as string,
+    activeFileIsSaving: false as boolean,
+    activeFileSaveError: '' as string,
     selectedPaths: [] as string[],
     expandedDirs: [] as string[],
     noteOrder: {} as Record<string, string[]>,
     dirEntries: {} as Record<string, FsEntry[]>,
     isBusy: false as boolean,
     busyText: '' as string,
+    isWorkspaceTransitioning: false as boolean,
+    workspaceTransitionText: '' as string,
     lastError: '' as string,
     undoStack: [] as UndoAction[],
     redoStack: [] as UndoAction[],
-    theme: (localStorage.getItem('theme') || 'light') as 'light' | 'dark',
+    theme: (((typeof localStorage !== 'undefined' && localStorage.getItem('theme')) || 'light') as 'light' | 'dark'),
     hasElectronWindowAPI: false as boolean,
     watchedWorkspaceId: null as string | null,
     fsUnsub: null as null | (() => void),
@@ -59,10 +65,23 @@ export const useWorkspaceStore = defineStore('workspace', {
     inputDialogTitle: '' as string,
     inputDialogPlaceholder: '' as string,
     inputDialogValue: '' as string,
+    commandPaletteOpen: false as boolean,
+    commandPaletteQuery: '' as string,
   }),
   getters: {
     activeWorkspace(state) {
       return state.workspaces.find((w) => w.id === state.activeWorkspaceId) || null
+    },
+    isSupportedActiveFile(state) {
+      const p = state.activeFilePath
+      if (!p) return false
+      const ext = p.split('.').pop()?.toLowerCase()
+      return ext === 'md' || ext === 'txt'
+    },
+    hasUnsavedChanges(state) {
+      if (!state.activeFilePath) return false
+      if (!this.isSupportedActiveFile) return false
+      return state.activeFileContent !== state.activeFileLoadedContent
     },
     keyOfDir: () => (workspaceId: string, dir: string) => `${workspaceId}:${normalizeDir(dir)}`,
     activeDirEntries(state): FsEntry[] {
@@ -118,10 +137,11 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     toggleTheme() {
       this.theme = this.theme === 'light' ? 'dark' : 'light'
-      localStorage.setItem('theme', this.theme)
+      if (typeof localStorage !== 'undefined') localStorage.setItem('theme', this.theme)
       this.applyTheme()
     },
     applyTheme() {
+      if (typeof document === 'undefined') return
       if (this.theme === 'dark') document.documentElement.classList.add('dark')
       else document.documentElement.classList.remove('dark')
     },
@@ -129,6 +149,21 @@ export const useWorkspaceStore = defineStore('workspace', {
     setBusy(isBusy: boolean, text = '') {
       this.isBusy = isBusy
       this.busyText = text
+    },
+
+    setWorkspaceTransition(isOn: boolean, text = '') {
+      this.isWorkspaceTransitioning = isOn
+      this.workspaceTransitionText = text
+    },
+
+    openCommandPalette(initialQuery = '') {
+      this.commandPaletteQuery = initialQuery
+      this.commandPaletteOpen = true
+    },
+
+    closeCommandPalette() {
+      this.commandPaletteOpen = false
+      this.commandPaletteQuery = ''
     },
 
     setError(message: string) {
@@ -170,7 +205,6 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       const urlParams = new URLSearchParams(window.location.search)
       const wsFromUrl = urlParams.get('workspaceId')
-      const isIsolate = urlParams.get('isolate') === 'true'
       
       const stateResult = await window.electronAPI.workspace.getState()
       if (!stateResult.success || !stateResult.data) {
@@ -184,29 +218,23 @@ export const useWorkspaceStore = defineStore('workspace', {
         return
       }
 
-      let loadedWorkspaces = listResult.data
-      
-      // 如果携带了 isolate 参数，并且有指定工作空间 ID，则当前窗口只显示这一个工作空间
-      if (isIsolate && wsFromUrl) {
-        loadedWorkspaces = loadedWorkspaces.filter(w => w.id === wsFromUrl)
-      }
-      
-      this.workspaces = loadedWorkspaces
+      this.workspaces = listResult.data
       const nextActive = wsFromUrl || stateResult.data.activeId || this.workspaces[0]?.id || null
       this.activeWorkspaceId = nextActive
 
       if (!this.workspaces.length) {
+        this.hasElectronWindowAPI = Boolean((window as any).electronAPI?.window)
         return
       }
 
       if (this.activeWorkspaceId) {
-        await this.switchWorkspace(this.activeWorkspaceId)
+        await this.switchWorkspaceInternal(this.activeWorkspaceId)
       }
 
       this.hasElectronWindowAPI = Boolean((window as any).electronAPI?.window)
     },
 
-    async createWorkspaceFlow() {
+    async switchWorkspaceFlow() {
       this.clearError()
       this.setBusy(true, '正在选择文件夹...')
       const dir = await window.electronAPI.workspace.selectDir()
@@ -224,6 +252,33 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       await this.refreshWorkspaces()
       await this.switchWorkspace(result.data.id)
+    },
+
+    async createWorkspaceFlow() {
+      await this.switchWorkspaceFlow()
+    },
+
+    async newWorkspaceFlow() {
+      this.clearError()
+      this.setBusy(true, '正在选择保存位置...')
+      const parent = await window.electronAPI.workspace.selectDir()
+      if (!parent) {
+        this.setBusy(false)
+        return
+      }
+      this.setBusy(false)
+      const name = ((await this.requestTextInput('新建工作空间', 'Workspace', '输入工作空间名称')) ?? '').trim()
+      if (!name) return
+      const useTemplate = window.confirm('是否基于模板生成初始内容？\n\n确定：基于模板\n取消：空工作空间')
+      this.setBusy(true, '正在创建工作空间...')
+      const r = await window.electronAPI.workspace.new(parent, name, useTemplate ? 'basic' : 'empty')
+      this.setBusy(false)
+      if (!r.success || !r.data) {
+        this.setError(r.error || 'Failed to create workspace')
+        return
+      }
+      await this.refreshWorkspaces()
+      await this.switchWorkspace(r.data.id)
     },
 
     async refreshWorkspaces() {
@@ -246,28 +301,61 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeWorkspaceId = null
       this.activeFilePath = ''
       this.activeFileRelativePath = ''
+      this.activeFileContent = ''
+      this.activeFileLoadedContent = ''
+      this.activeFileIsSaving = false
+      this.activeFileSaveError = ''
       this.watchedWorkspaceId = null
       this.selectedPaths = []
       this.expandedDirs = []
       this.noteOrder = {}
-      await window.electronAPI.workspace.setActive('')
+      this.dirEntries = {}
+      this.undoStack = []
+      this.redoStack = []
+      await window.electronAPI.workspace.setActive(null)
     },
 
     async switchWorkspace(id: string) {
       if (!id) return
+      if (this.isWorkspaceTransitioning) return
+
+      this.setWorkspaceTransition(true, '正在保存...')
+      const okToLeave = await this.ensureSavedBeforeWorkspaceChange()
+      if (!okToLeave) {
+        this.setWorkspaceTransition(false, '')
+        return
+      }
+
+      try {
+        await this.saveWorkspaceMeta()
+      } catch {}
+
+      this.setWorkspaceTransition(true, '正在切换工作空间...')
       const prev = this.watchedWorkspaceId
       if (prev && prev !== id) {
         await window.electronAPI.fs.watchStop(prev)
       }
+      this.dirEntries = {}
+      this.undoStack = []
+      this.redoStack = []
+      await this.switchWorkspaceInternal(id)
+      this.setWorkspaceTransition(false, '')
+    },
+
+    async switchWorkspaceInternal(id: string) {
       this.activeFilePath = ''
       this.activeFileRelativePath = ''
+      this.activeFileContent = ''
+      this.activeFileLoadedContent = ''
+      this.activeFileIsSaving = false
+      this.activeFileSaveError = ''
       this.activeWorkspaceId = id
       await window.electronAPI.workspace.setActive(id)
       await this.loadWorkspaceMeta(id)
       await this.loadDir(id, '')
       if (this.selectedPaths.length > 0) {
         for (const p of this.selectedPaths) {
-           await this.loadDir(id, pathDir(p))
+          await this.loadDir(id, pathDir(p))
         }
       }
       if (this.expandedDirs.length > 0) {
@@ -345,6 +433,10 @@ export const useWorkspaceStore = defineStore('workspace', {
           if (this.activeFileRelativePath && this.activeFileRelativePath.startsWith(dir + '/')) {
             this.activeFileRelativePath = ''
             this.activeFilePath = ''
+            this.activeFileContent = ''
+            this.activeFileLoadedContent = ''
+            this.activeFileIsSaving = false
+            this.activeFileSaveError = ''
           }
           delete this.dirEntries[`${workspaceId}:${dir}`]
           await this.saveWorkspaceMeta()
@@ -382,11 +474,76 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeFileRelativePath = rel
       if (!rel) {
         this.activeFilePath = ''
+        this.activeFileContent = ''
+        this.activeFileLoadedContent = ''
+        this.activeFileIsSaving = false
+        this.activeFileSaveError = ''
         return
       }
       const sep = pathSep(ws.path)
       const root = ws.path.endsWith(sep) ? ws.path.slice(0, -1) : ws.path
       this.activeFilePath = `${root}${sep}${rel.split('/').join(sep)}`
+      this.activeFileContent = ''
+      this.activeFileLoadedContent = ''
+      this.activeFileIsSaving = false
+      this.activeFileSaveError = ''
+      this.loadActiveFileContent().catch(() => {})
+    },
+
+    setActiveFileContent(content: string) {
+      this.activeFileContent = content
+    },
+
+    async loadActiveFileContent() {
+      if (!this.activeFilePath) {
+        this.activeFileContent = ''
+        this.activeFileLoadedContent = ''
+        this.activeFileSaveError = ''
+        return
+      }
+      if (!this.isSupportedActiveFile) {
+        this.activeFileContent = ''
+        this.activeFileLoadedContent = ''
+        this.activeFileSaveError = ''
+        return
+      }
+      const r = await window.electronAPI.file.readMarkdown(this.activeFilePath)
+      if (!r.success || r.data === undefined) {
+        this.setError(r.error || 'Failed to load file')
+        this.activeFileContent = ''
+        this.activeFileLoadedContent = ''
+        return
+      }
+      this.activeFileContent = r.data
+      this.activeFileLoadedContent = r.data
+      this.activeFileSaveError = ''
+    },
+
+    async saveActiveFileContent(content?: string) {
+      if (!this.activeFilePath) return { success: true as const }
+      if (!this.isSupportedActiveFile) return { success: true as const }
+      const next = content ?? this.activeFileContent
+      this.activeFileIsSaving = true
+      this.activeFileSaveError = ''
+      const r = await window.electronAPI.file.writeMarkdown(this.activeFilePath, next)
+      this.activeFileIsSaving = false
+      if (!r.success) {
+        this.activeFileSaveError = r.error || 'Failed to save file'
+        return r
+      }
+      this.activeFileContent = next
+      this.activeFileLoadedContent = next
+      return r
+    },
+
+    async ensureSavedBeforeWorkspaceChange(): Promise<boolean> {
+      if (!this.hasUnsavedChanges) return true
+      const r = await this.saveActiveFileContent()
+      if (r.success) return true
+      const ok = window.confirm(
+        `自动保存失败：${r.error || '未知错误'}\n\n是否强制切换并丢弃未保存变更？\n\n确定：强制切换\n取消：取消切换`,
+      )
+      return ok
     },
 
     async createMarkdown(title?: string, dirRelativePath?: string) {
@@ -465,6 +622,10 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (isActiveFileDeleted) {
           this.activeFileRelativePath = ''
           this.activeFilePath = ''
+          this.activeFileContent = ''
+          this.activeFileLoadedContent = ''
+          this.activeFileIsSaving = false
+          this.activeFileSaveError = ''
         }
         
         const remainingPaths = this.selectedPaths.filter(p => 

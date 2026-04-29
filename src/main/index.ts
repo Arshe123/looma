@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs/promises';
 import { fileService } from './services/fileService';
 import { telemetryService } from './services/telemetryService';
 import { workspaceService } from './services/workspaceService';
@@ -10,7 +11,74 @@ import { workspaceMetaService } from './services/workspaceMetaService';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-function createWindow(initialWorkspaceId?: string, isolate?: boolean) {
+let mainWindow: BrowserWindow | null = null;
+
+const getWorkspaceById = async (workspaceId: string) => {
+  const state = await workspaceService.getState();
+  if (!state.success || !state.data) return null;
+  return state.data.workspaces.find((w) => w.id === workspaceId) ?? null;
+};
+
+const setWindowTitleForWorkspace = async (workspaceId: string | null) => {
+  const win = mainWindow ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+  if (!win) return;
+  if (!workspaceId) {
+    win.setTitle('With You');
+    return;
+  }
+  const ws = await getWorkspaceById(workspaceId);
+  win.setTitle(ws?.name || 'With You');
+};
+
+const buildAppMenu = (win: BrowserWindow) => {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: '文件',
+      submenu: [
+        {
+          label: '切换工作空间…',
+          accelerator: 'Ctrl+O',
+          click: () => win.webContents.send('app:command', { id: 'workspace.switch' }),
+        },
+        {
+          label: '新建工作空间…',
+          accelerator: 'Ctrl+Shift+N',
+          click: () => win.webContents.send('app:command', { id: 'workspace.new' }),
+        },
+        { type: 'separator' },
+        { role: 'quit', label: '退出' },
+      ],
+    },
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo', label: '撤销' },
+        { role: 'redo', label: '重做' },
+        { type: 'separator' },
+        { role: 'cut', label: '剪切' },
+        { role: 'copy', label: '复制' },
+        { role: 'paste', label: '粘贴' },
+        { role: 'selectAll', label: '全选' },
+      ],
+    },
+    {
+      label: '视图',
+      submenu: [
+        { role: 'reload', label: '重新加载' },
+        { role: 'toggleDevTools', label: '切换开发者工具' },
+        { type: 'separator' },
+        { role: 'resetZoom', label: '重置缩放' },
+        { role: 'zoomIn', label: '放大' },
+        { role: 'zoomOut', label: '缩小' },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: '切换全屏' },
+      ],
+    },
+  ];
+  return Menu.buildFromTemplate(template);
+};
+
+function createWindow(initialWorkspaceId?: string) {
   const preloadPath = process.env.VITE_DEV_SERVER_URL
     ? path.join(process.cwd(), 'dist-electron', 'preload.cjs')
     : path.join(__dirname, 'preload.cjs');
@@ -27,6 +95,7 @@ function createWindow(initialWorkspaceId?: string, isolate?: boolean) {
     titleBarStyle: 'hidden',
   });
 
+  mainWindow = win;
   win.setIcon(path.join(__dirname, '../public/logo.png'));
 
   // Handle close event to request workspace state before actually closing
@@ -37,15 +106,15 @@ function createWindow(initialWorkspaceId?: string, isolate?: boolean) {
     }
   });
 
+  Menu.setApplicationMenu(buildAppMenu(win));
+
   if (process.env.VITE_DEV_SERVER_URL) {
     const url = new URL(process.env.VITE_DEV_SERVER_URL);
     if (initialWorkspaceId) url.searchParams.set('workspaceId', initialWorkspaceId);
-    if (isolate) url.searchParams.set('isolate', 'true');
     win.loadURL(url.toString());
   } else {
     const query: Record<string, string> = {};
     if (initialWorkspaceId) query.workspaceId = initialWorkspaceId;
-    if (isolate) query.isolate = 'true';
     win.loadFile(path.join(__dirname, '../dist/index.html'), { query });
   }
   
@@ -55,12 +124,30 @@ function createWindow(initialWorkspaceId?: string, isolate?: boolean) {
   telemetryService.checkForUpdates();
 }
 
-app.whenReady().then(() => {
-  workspaceService
-    .getState()
-    .then((r) => createWindow(r.success && r.data?.activeId ? r.data.activeId : undefined))
-    .catch(() => createWindow());
-});
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
+  app.whenReady().then(() => {
+    workspaceService
+      .getState()
+      .then(async (r) => {
+        const activeId = r.success && r.data?.activeId ? r.data.activeId : undefined;
+        createWindow(activeId);
+        await setWindowTitleForWorkspace(activeId ?? null);
+      })
+      .catch(() => {
+        createWindow();
+      });
+  });
+}
 
 // 关闭所有窗口时退出应用 (Windows & Linux)
 app.on('window-all-closed', () => {
@@ -112,11 +199,35 @@ ipcMain.handle('workspace:reorder', async (_, order: string[]) => {
 });
 
 ipcMain.handle('workspace:setActive', async (_, id: string | null) => {
-  return await workspaceService.setActiveWorkspace(id);
+  const r = await workspaceService.setActiveWorkspace(id);
+  if (r.success) await setWindowTitleForWorkspace(id);
+  return r;
 });
 
-ipcMain.handle('workspace:rewriteHistory', async (_, ids: string[]) => {
-  return await workspaceService.rewriteHistory(ids);
+ipcMain.handle('workspace:new', async (_, parentDir: string, name: string, template?: 'empty' | 'basic') => {
+  try {
+    const folderName = (name || '').trim();
+    if (!folderName) return { success: false, error: 'Workspace name is required' };
+    const parent = (parentDir || '').trim();
+    if (!parent) return { success: false, error: 'Parent directory is required' };
+    const dest = path.join(parent, folderName);
+    await fs.mkdir(dest, { recursive: false });
+    if (template === 'basic') {
+      const md = [
+        '# Welcome',
+        '',
+        '这是一个新的工作空间。',
+        '',
+        '- Ctrl+O：切换工作空间',
+        '- Ctrl+Shift+N：新建工作空间',
+        '',
+      ].join('\n');
+      await fs.writeFile(path.join(dest, 'Welcome.md'), md, 'utf-8');
+    }
+    return await workspaceService.createWorkspace(dest, folderName);
+  } catch (error: any) {
+    return { success: false, error: `Failed to create workspace: ${error?.message ?? String(error)}` };
+  }
 });
 
 ipcMain.handle('workspaceMeta:get', async (_, workspaceId: string) => {
@@ -184,22 +295,16 @@ ipcMain.handle('fs:watchStart', async (event, workspaceId: string) => {
 });
 
 ipcMain.handle('fs:watchStop', async (event, workspaceId: string) => {
-  await fileWatchService.stop(workspaceId, event.sender);
+  await fileWatchService.stop(event.sender);
   return { success: true };
 });
 
 
 // Window Management IPC
-ipcMain.handle('window:close', async (_, displayedIds?: string[]) => {
-  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-  
+ipcMain.handle('window:close', async () => {
+  const win = mainWindow ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
   if (win && !(win as any).isReadyToClose) {
-    if (BrowserWindow.getAllWindows().length === 1) {
-      if (displayedIds && displayedIds.length > 0) {
-        await workspaceService.rewriteHistory(displayedIds);
-      }
-    }
-    ;(win as any).isReadyToClose = true;
+    (win as any).isReadyToClose = true;
     win.close();
   }
 });
@@ -219,9 +324,4 @@ ipcMain.handle('window:toggleMaximize', async () => {
   }
 
   win.maximize();
-});
-
-ipcMain.handle('window:openWorkspace', async (_, workspaceId: string, opts?: { isolate?: boolean }) => {
-  createWindow(workspaceId, opts?.isolate);
-  return { success: true };
 });

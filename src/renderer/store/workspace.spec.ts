@@ -24,6 +24,7 @@ const mockElectronAPI = () => {
       remove: vi.fn(async () => ok()),
       reorder: vi.fn(async () => ok()),
       setActive: vi.fn(async () => ok()),
+      checkExists: vi.fn(async () => ok({ exists: true })),
     },
     workspaceMeta: {
       get: vi.fn(async () => ok({ expandedDirs: [], selectedPaths: [], noteOrder: {} })),

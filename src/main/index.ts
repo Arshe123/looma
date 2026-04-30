@@ -149,6 +149,27 @@ if (!gotLock) {
   });
 }
 
+let isQuitting = false;
+
+app.on('before-quit', async (e) => {
+  if (isQuitting) return;
+  e.preventDefault();
+  isQuitting = true;
+  
+  try {
+    const state = await workspaceService.getState();
+    if (state.success && state.data) {
+      for (const ws of state.data.workspaces) {
+        await fileSystemService.emptyTrash(ws.id).catch(() => {});
+      }
+    }
+  } catch (error) {
+    // Ignore errors during quit
+  }
+  
+  app.quit();
+});
+
 // 关闭所有窗口时退出应用 (Windows & Linux)
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -302,6 +323,10 @@ ipcMain.handle('fs:restore', async (_, workspaceId: string, trashRelativePath: s
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
   return await fileSystemService.restoreFromTrash(workspaceId, workspacePath, trashRelativePath, restoreToRelativePath);
+});
+
+ipcMain.handle('fs:emptyTrash', async (_, workspaceId: string) => {
+  return await fileSystemService.emptyTrash(workspaceId);
 });
 
 ipcMain.handle('fs:watchStart', async (event, workspaceId: string) => {

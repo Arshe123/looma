@@ -43,6 +43,7 @@ export interface ElectronAPI {
     move: (workspaceId: string, fromRelativePath: string, toRelativePath: string) => Promise<Result<void>>;
     delete: (workspaceId: string, targetRelativePath: string) => Promise<Result<{ trashRelativePath: string }>>;
     restore: (workspaceId: string, trashRelativePath: string, restoreToRelativePath: string) => Promise<Result<void>>;
+    emptyTrash: (workspaceId: string) => Promise<Result<void>>;
     watchStart: (workspaceId: string) => Promise<Result<void>>;
     watchAdd: (workspaceId: string, dirRelativePaths: string[]) => Promise<Result<void>>;
     watchStop: (workspaceId: string) => Promise<Result<void>>;

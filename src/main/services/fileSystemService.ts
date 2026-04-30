@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { app, shell } from 'electron'
 import chokidar, { type FSWatcher } from 'chokidar'
 import fs from 'fs/promises'
 import path from 'path'
@@ -193,6 +193,16 @@ export const fileSystemService = {
       return { success: true }
     } catch (error: any) {
       return { success: false, error: `Failed to restore: ${error?.message ?? String(error)}` }
+    }
+  },
+
+  async emptyTrash(workspaceId: string): Promise<Result<void>> {
+    try {
+      const trashDir = getTrashDir(workspaceId)
+      await fs.rm(trashDir, { recursive: true, force: true })
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: `Failed to empty trash: ${error?.message ?? String(error)}` }
     }
   },
 }

@@ -44,9 +44,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('fs:rename', workspaceId, targetRelativePath, newName),
     move: (workspaceId: string, fromRelativePath: string, toRelativePath: string) =>
       ipcRenderer.invoke('fs:move', workspaceId, fromRelativePath, toRelativePath),
-    delete: (workspaceId: string, targetRelativePath: string) => ipcRenderer.invoke('fs:delete', workspaceId, targetRelativePath),
+    delete: (workspaceId: string, targetRelativePath: string) =>
+      ipcRenderer.invoke('fs:delete', workspaceId, targetRelativePath),
     restore: (workspaceId: string, trashRelativePath: string, restoreToRelativePath: string) =>
       ipcRenderer.invoke('fs:restore', workspaceId, trashRelativePath, restoreToRelativePath),
+    emptyTrash: (workspaceId: string) => ipcRenderer.invoke('fs:emptyTrash', workspaceId),
     watchStart: (workspaceId: string) => ipcRenderer.invoke('fs:watchStart', workspaceId),
     watchAdd: (workspaceId: string, dirRelativePaths: string[]) => ipcRenderer.invoke('fs:watchAdd', workspaceId, dirRelativePaths),
     watchStop: (workspaceId: string) => ipcRenderer.invoke('fs:watchStop', workspaceId),

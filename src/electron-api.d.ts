@@ -44,6 +44,7 @@ export interface ElectronAPI {
     delete: (workspaceId: string, targetRelativePath: string) => Promise<Result<{ trashRelativePath: string }>>;
     restore: (workspaceId: string, trashRelativePath: string, restoreToRelativePath: string) => Promise<Result<void>>;
     watchStart: (workspaceId: string) => Promise<Result<void>>;
+    watchAdd: (workspaceId: string, dirRelativePaths: string[]) => Promise<Result<void>>;
     watchStop: (workspaceId: string) => Promise<Result<void>>;
     showItemInFolder: (workspaceId: string, relativePath: string) => Promise<Result<void>>;
     onEvent: (listener: (payload: { workspaceId: string; event: string; relativePath: string }) => void) => () => void;

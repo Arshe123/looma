@@ -401,20 +401,13 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeFileSaveError = ''
       await window.electronAPI.workspace.setActive(id)
       await this.loadWorkspaceMeta(id)
-      await this.loadDir(id, '')
-      if (this.selectedPaths.length > 0) {
-        for (const p of this.selectedPaths) {
-          await this.loadDir(id, pathDir(p))
-        }
-      }
-      if (this.expandedDirs.length > 0) {
-        for (const p of this.expandedDirs) {
-          await this.loadDir(id, p)
-        }
-      }
+
       await window.electronAPI.fs.watchStart(id)
       this.watchedWorkspaceId = id
       this.attachFsEvents()
+
+      await this.loadDir(id, '')
+      this.loadRestoredDirsInBackground(id).catch(() => {})
     },
 
     async loadWorkspaceMeta(id: string) {
@@ -543,6 +536,32 @@ export const useWorkspaceStore = defineStore('workspace', {
         return
       }
       this.dirEntries[`${workspaceId}:${dir}`] = r.data
+      window.electronAPI.fs.watchAdd?.(workspaceId, [dir || '.']).catch(() => {})
+    },
+
+    async loadRestoredDirsInBackground(workspaceId: string) {
+      const wsId = workspaceId
+      const dirs = new Set<string>()
+
+      for (const p of this.selectedPaths) {
+        const d = normalizeDir(pathDir(p))
+        if (d) dirs.add(d)
+      }
+
+      for (const p of this.expandedDirs) {
+        const d = normalizeDir(p)
+        if (d) dirs.add(d)
+      }
+
+      const sorted = Array.from(dirs).sort((a, b) => a.split('/').length - b.split('/').length)
+
+      for (const d of sorted) {
+        if (this.activeWorkspaceId !== wsId) return
+        const key = `${wsId}:${d}`
+        if (this.dirEntries[key]) continue
+        await this.loadDir(wsId, d)
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      }
     },
 
     async selectDir(dirRelativePath: string) {

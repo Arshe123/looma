@@ -38,6 +38,7 @@ const mockElectronAPI = () => {
       delete: vi.fn(async () => ok({ trashRelativePath: '' })),
       restore: vi.fn(async () => ok()),
       watchStart: vi.fn(async () => ok()),
+      watchAdd: vi.fn(async () => ok()),
       watchStop: vi.fn(async () => ok()),
       onEvent: vi.fn(() => () => {}),
     },

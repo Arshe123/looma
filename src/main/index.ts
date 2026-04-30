@@ -311,6 +311,14 @@ ipcMain.handle('fs:watchStart', async (event, workspaceId: string) => {
   return { success: true };
 });
 
+ipcMain.handle('fs:watchAdd', async (event, workspaceId: string, dirRelativePaths: string[]) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  const paths = Array.isArray(dirRelativePaths) ? dirRelativePaths : [];
+  fileWatchService.add(workspaceId, workspacePath, event.sender, paths);
+  return { success: true };
+});
+
 ipcMain.handle('fs:watchStop', async (event, workspaceId: string) => {
   await fileWatchService.stop(event.sender);
   return { success: true };

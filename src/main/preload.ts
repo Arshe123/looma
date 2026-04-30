@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     restore: (workspaceId: string, trashRelativePath: string, restoreToRelativePath: string) =>
       ipcRenderer.invoke('fs:restore', workspaceId, trashRelativePath, restoreToRelativePath),
     watchStart: (workspaceId: string) => ipcRenderer.invoke('fs:watchStart', workspaceId),
+    watchAdd: (workspaceId: string, dirRelativePaths: string[]) => ipcRenderer.invoke('fs:watchAdd', workspaceId, dirRelativePaths),
     watchStop: (workspaceId: string) => ipcRenderer.invoke('fs:watchStop', workspaceId),
     showItemInFolder: (workspaceId: string, relativePath: string) => ipcRenderer.invoke('fs:showItemInFolder', workspaceId, relativePath),
     onEvent: (listener: (payload: FsEventPayload) => void) => {

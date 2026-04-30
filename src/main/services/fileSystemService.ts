@@ -23,22 +23,37 @@ const resolveInWorkspace = (workspacePath: string, relativePath: string) => {
   return { ok: true as const, root, target }
 }
 
+const toFsEntryFromDirent = (root: string, parentAbs: string, d: import('fs').Dirent): FsEntry => {
+  const abs = path.join(parentAbs, d.name)
+  const rel = path.relative(root, abs)
+  return {
+    name: d.name,
+    relativePath: toPosix(rel),
+    isDirectory: d.isDirectory(),
+    size: 0,
+    mtimeMs: 0,
+  }
+}
+
 const ensureDir = async (p: string) => {
   await fs.mkdir(p, { recursive: true })
 }
 
-const getTrashDir = (workspaceId: string) => {
-  return path.join(app.getPath('appData'), 'workspace-meta', 'with-you', 'trash', workspaceId)
+const safeRename = async (oldPath: string, newPath: string) => {
+  try {
+    await fs.rename(oldPath, newPath)
+  } catch (error: any) {
+    if (error.code === 'EXDEV') {
+      await fs.cp(oldPath, newPath, { recursive: true })
+      await fs.rm(oldPath, { recursive: true, force: true })
+    } else {
+      throw error
+    }
+  }
 }
 
-const statToEntry = (name: string, rel: string, stat: any): FsEntry => {
-  return {
-    name,
-    relativePath: toPosix(rel),
-    isDirectory: stat.isDirectory(),
-    size: typeof stat.size === 'number' ? stat.size : 0,
-    mtimeMs: typeof stat.mtimeMs === 'number' ? stat.mtimeMs : 0,
-  }
+const getTrashDir = (workspaceId: string) => {
+  return path.join(app.getPath('appData'), 'workspace-meta', 'with-you', 'trash', workspaceId)
 }
 
 export const fileSystemService = {
@@ -54,14 +69,7 @@ export const fileSystemService = {
       }
 
       const items = await fs.readdir(resolved.target, { withFileTypes: true })
-      const entries = await Promise.all(
-        items.map(async (d) => {
-          const abs = path.join(resolved.target, d.name)
-          const rel = path.relative(resolved.root, abs)
-          const st = await fs.stat(abs)
-          return statToEntry(d.name, rel, st)
-        }),
-      )
+      const entries = items.map((d) => toFsEntryFromDirent(resolved.root, resolved.target, d))
 
       entries.sort((a, b) => {
         if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
@@ -121,7 +129,7 @@ export const fileSystemService = {
       }
 
       await ensureDir(path.dirname(toResolved.target))
-      await fs.rename(fromResolved.target, toResolved.target)
+      await safeRename(fromResolved.target, toResolved.target)
       return { success: true }
     } catch (error: any) {
       return { success: false, error: `Failed to move: ${error?.message ?? String(error)}` }
@@ -142,7 +150,7 @@ export const fileSystemService = {
       } catch (error: any) {
         // New name is valid
       }
-      await fs.rename(targetResolved.target, newPath)
+      await safeRename(targetResolved.target, newPath)
       return { success: true, data: toPosix(path.relative(targetResolved.root, newPath)) }
     } catch (error: any) {
       return { success: false, error: `Failed to rename: ${error?.message ?? String(error)}` }
@@ -159,7 +167,7 @@ export const fileSystemService = {
       const base = path.basename(targetResolved.target)
       const stamp = Date.now()
       const trashAbs = path.join(trashDir, `${stamp}_${base}`)
-      await fs.rename(targetResolved.target, trashAbs)
+      await safeRename(targetResolved.target, trashAbs)
       return { success: true, data: { trashRelativePath: toPosix(path.relative(trashDir, trashAbs)) } }
     } catch (error: any) {
       return { success: false, error: `Failed to delete: ${error?.message ?? String(error)}` }
@@ -181,7 +189,7 @@ export const fileSystemService = {
       if (!restoreResolved.ok) return { success: false, error: restoreResolved.error }
 
       await ensureDir(path.dirname(restoreResolved.target))
-      await fs.rename(trashAbs, restoreResolved.target)
+      await safeRename(trashAbs, restoreResolved.target)
       return { success: true }
     } catch (error: any) {
       return { success: false, error: `Failed to restore: ${error?.message ?? String(error)}` }
@@ -191,7 +199,22 @@ export const fileSystemService = {
 
 type WatchKey = string
 
-const watchers = new Map<number, { workspaceId: string; watcher: FSWatcher }>()
+type WatchState = {
+  workspaceId: string
+  workspacePath: string
+  watcher: FSWatcher
+  watchedTargets: Set<string>
+}
+
+const watchers = new Map<number, WatchState>()
+
+const defaultWatchIgnored = [
+  '**/.git/**',
+  '**/node_modules/**',
+  '**/dist/**',
+  '**/build/**',
+  '**/.with-you/**',
+]
 
 export const fileWatchService = {
   start(workspaceId: string, workspacePath: string, webContents: WebContents) {
@@ -205,7 +228,8 @@ export const fileWatchService = {
     const watcher = chokidar.watch(workspacePath, {
       ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 150, pollInterval: 25 },
-      depth: 20,
+      depth: 1,
+      ignored: defaultWatchIgnored,
     })
 
     const send = (event: string, absPath: string) => {
@@ -220,11 +244,44 @@ export const fileWatchService = {
       .on('unlink', (p) => send('unlink', p))
       .on('unlinkDir', (p) => send('unlinkDir', p))
 
-    watchers.set(webContents.id, { workspaceId, watcher })
+    const watchedTargets = new Set<string>()
+    watchedTargets.add(path.resolve(workspacePath))
+
+    watchers.set(webContents.id, { workspaceId, workspacePath, watcher, watchedTargets })
 
     webContents.once('destroyed', async () => {
       await this.stop(webContents)
     })
+  },
+
+  add(workspaceId: string, workspacePath: string, webContents: WebContents, relativePaths: string[]) {
+    if (!Array.isArray(relativePaths) || relativePaths.length === 0) return
+
+    const existing = watchers.get(webContents.id)
+    if (!existing || existing.workspaceId !== workspaceId) {
+      this.start(workspaceId, workspacePath, webContents)
+    }
+
+    const state = watchers.get(webContents.id)
+    if (!state) return
+
+    const toAdd: string[] = []
+    for (const rel of relativePaths) {
+      const resolved = resolveInWorkspace(workspacePath, rel || '.')
+      if (!resolved.ok) continue
+      const abs = path.resolve(resolved.target)
+      if (state.watchedTargets.has(abs)) continue
+      state.watchedTargets.add(abs)
+      toAdd.push(abs)
+    }
+
+    if (toAdd.length > 0) {
+      try {
+        state.watcher.add(toAdd)
+      } catch {
+        // 忽略添加监听路径时的错误
+      }
+    }
   },
 
   async stop(webContents: WebContents) {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
 import Editor from './Editor.vue'
-import Preview from '../preview/Preview.vue'
+import TiptapPreview from '../preview/TiptapPreview.vue'
 import { Columns, Eye, Edit3 } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../store/workspace'
 
@@ -76,7 +76,10 @@ defineExpose({
       />
     </div>
     <div v-if="viewMode !== 'editor'" class="flex-1 overflow-hidden border-l border-zinc-200 dark:border-zinc-800">
-      <Preview :content="props.content" />
+      <TiptapPreview 
+        :content="props.content" 
+        @update:content="(v) => emit('update:content', v)"
+      />
     </div>
 
     <!-- Floating View Mode Controls -->
@@ -114,4 +117,3 @@ defineExpose({
     </div>
   </div>
 </template>
-

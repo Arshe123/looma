@@ -35,19 +35,44 @@ const customStyleCompartment = new Compartment()
 const getThemeExtension = () => workspaceStore.theme === 'dark' ? [oneDark] : [];
 const getLangExtension = () => props.mode === 'markdown' ? [markdown()] : [];
 const getLineWrapExtension = () => props.wordWrap ? [EditorView.lineWrapping] : [];
+const BASE_BOTTOM_SPACER = '22vh'
 const getCustomStyleExtension = () => EditorView.theme({
   '&': { height: '100%', fontSize: `${props.fontSize}px` },
   '.cm-scroller': { overflow: 'auto', fontFamily: 'Consolas, Monaco, monospace' },
   '.cm-content': { 
-    padding: '10px 0',
+    padding: `10px 0 ${BASE_BOTTOM_SPACER} 0`,
     whiteSpace: props.wordWrap ? 'pre-wrap' : 'pre'
   },
 })
+
+const CURSOR_BOTTOM_THRESHOLD_PX = 120
+const ensureCursorComfort = (view: EditorView) => {
+  if (!view.hasFocus) return
+
+  const cursorPos = view.state.selection.main.head
+  const scrollerRect = view.scrollDOM.getBoundingClientRect()
+
+  let cursorRect = view.coordsAtPos(cursorPos)
+  if (!cursorRect && cursorPos > 0) {
+    cursorRect = view.coordsAtPos(cursorPos - 1)
+  }
+  if (!cursorRect) return
+
+  const distanceToBottom = scrollerRect.bottom - cursorRect.bottom
+  if (distanceToBottom < CURSOR_BOTTOM_THRESHOLD_PX) {
+    const delta = CURSOR_BOTTOM_THRESHOLD_PX - distanceToBottom
+    view.scrollDOM.scrollTop += Math.ceil(delta)
+  }
+}
 
 const createEditor = () => {
   if (!editorContainer.value) return;
 
   const updateListener = EditorView.updateListener.of((update) => {
+    if ((update.docChanged || update.selectionSet) && update.view.hasFocus) {
+      ensureCursorComfort(update.view);
+    }
+
     if (update.docChanged) {
       if (applyingExternalUpdate) return;
       const content = update.state.doc.toString();

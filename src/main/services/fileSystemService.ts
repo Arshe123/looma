@@ -207,10 +207,7 @@ export const fileSystemService = {
   },
 }
 
-type WatchKey = string
-
 type WatchState = {
-  workspaceId: string
   workspacePath: string
   watcher: FSWatcher
   watchedTargets: Set<string>
@@ -230,7 +227,6 @@ export const fileWatchService = {
   start(workspaceId: string, workspacePath: string, webContents: WebContents) {
     const existing = watchers.get(webContents.id)
     if (existing) {
-      if (existing.workspaceId === workspaceId) return
       watchers.delete(webContents.id)
       existing.watcher.close().catch(() => {})
     }
@@ -257,7 +253,7 @@ export const fileWatchService = {
     const watchedTargets = new Set<string>()
     watchedTargets.add(path.resolve(workspacePath))
 
-    watchers.set(webContents.id, { workspaceId, workspacePath, watcher, watchedTargets })
+    watchers.set(webContents.id, { workspacePath, watcher, watchedTargets })
 
     webContents.once('destroyed', async () => {
       await this.stop(webContents)
@@ -267,8 +263,7 @@ export const fileWatchService = {
   add(workspaceId: string, workspacePath: string, webContents: WebContents, relativePaths: string[]) {
     if (!Array.isArray(relativePaths) || relativePaths.length === 0) return
 
-    const existing = watchers.get(webContents.id)
-    if (!existing || existing.workspaceId !== workspaceId) {
+    if (!watchers.get(webContents.id)) {
       this.start(workspaceId, workspacePath, webContents)
     }
 
@@ -277,7 +272,7 @@ export const fileWatchService = {
 
     const toAdd: string[] = []
     for (const rel of relativePaths) {
-      const resolved = resolveInWorkspace(workspacePath, rel || '.')
+      const resolved = resolveInWorkspace(state.workspacePath, rel || '.')
       if (!resolved.ok) continue
       const abs = path.resolve(resolved.target)
       if (state.watchedTargets.has(abs)) continue
@@ -299,14 +294,5 @@ export const fileWatchService = {
     if (!existing) return
     watchers.delete(webContents.id)
     await existing.watcher.close()
-  },
-}
-
-export const fileWatchDebug = {
-  getActiveCount() {
-    return watchers.size
-  },
-  getActiveWorkspaceId(webContentsId: number) {
-    return watchers.get(webContentsId)?.workspaceId ?? null
   },
 }

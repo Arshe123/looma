@@ -39,6 +39,15 @@ const ensureDir = async (p: string) => {
   await fs.mkdir(p, { recursive: true })
 }
 
+const pathExists = async (p: string) => {
+  try {
+    await fs.access(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
 const safeRename = async (oldPath: string, newPath: string) => {
   try {
     await fs.rename(oldPath, newPath)
@@ -62,12 +71,6 @@ export const fileSystemService = {
       const resolved = resolveInWorkspace(workspacePath, dirRelativePath || '.')
       if (!resolved.ok) return { success: false, error: resolved.error }
 
-      try {
-        await fs.access(resolved.target)
-      } catch {
-        return { success: false, error: `Directory not found: ${dirRelativePath}` }
-      }
-
       const items = await fs.readdir(resolved.target, { withFileTypes: true })
       const entries = items.map((d) => toFsEntryFromDirent(resolved.root, resolved.target, d))
 
@@ -78,6 +81,9 @@ export const fileSystemService = {
 
       return { success: true, data: entries }
     } catch (error: any) {
+      if (error?.code === 'ENOENT') {
+        return { success: false, error: `Directory not found: ${dirRelativePath}` }
+      }
       return { success: false, error: `Failed to list directory: ${error?.message ?? String(error)}` }
     }
   },
@@ -121,11 +127,8 @@ export const fileSystemService = {
       const toResolved = resolveInWorkspace(workspacePath, toRelativePath)
       if (!toResolved.ok) return { success: false, error: toResolved.error }
 
-      try{
-        await fs.access(toResolved.target)
+      if (await pathExists(toResolved.target)) {
         return { success: false, error: 'Target path already exists' }
-      } catch (error: any) {
-        // Target path is valid
       }
 
       await ensureDir(path.dirname(toResolved.target))
@@ -144,11 +147,8 @@ export const fileSystemService = {
       const newNameTrimmed = newName.trim()
       if (!newNameTrimmed) return { success: false, error: 'New name is required' }
       const newPath = path.join(path.dirname(targetResolved.target), newNameTrimmed)
-      try{
-        await fs.access(newPath)
+      if (await pathExists(newPath)) {
         return { success: false, error: 'New name already exists' }
-      } catch (error: any) {
-        // New name is valid
       }
       await safeRename(targetResolved.target, newPath)
       return { success: true, data: toPosix(path.relative(targetResolved.root, newPath)) }

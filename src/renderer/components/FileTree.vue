@@ -3,17 +3,13 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ChevronRight, Folder, FileText, Trash2, Edit3, Image, Video, FileType2 } from 'lucide-vue-next'
 import { useWorkspaceStore, type FsEntry } from '../store/workspace'
 
-const props = defineProps<{
-  workspaceId: string
-}>()
-
 const workspaceStore = useWorkspaceStore()
 
 const expanded = computed(() => workspaceStore.activeExpandedSet)
 const activeFileRel = computed(() => workspaceStore.activeFileRelativePath)
 
 const getChildren = (dirRelativePath: string) => {
-  const key = workspaceStore.keyOfDir(props.workspaceId, dirRelativePath)
+  const key = workspaceStore.keyOfDir(dirRelativePath)
   return workspaceStore.dirEntries[key] || []
 }
 
@@ -105,7 +101,6 @@ const onDragStart = (event: DragEvent, entry: FsEntry) => {
   }
   
   event.dataTransfer?.setData('text/plain', JSON.stringify(pathsToDrag))
-  event.dataTransfer?.setData('application/x-workspace-id', props.workspaceId)
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
   
   const dragImage = document.createElement('div')
@@ -118,8 +113,6 @@ const onDragStart = (event: DragEvent, entry: FsEntry) => {
 
 const onDropToDir = async (event: DragEvent, dirRelativePath: string) => {
   event.preventDefault()
-  const wsId = event.dataTransfer?.getData('application/x-workspace-id') || props.workspaceId
-  if (!wsId || wsId !== props.workspaceId) return
   
   let draggedPaths: string[] = []
   try {

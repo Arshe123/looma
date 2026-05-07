@@ -27,7 +27,7 @@ const toggleMenu = () => {
 
 const onSwitchTo = async (id: string) => {
   closeMenu()
-  await workspaceStore.switchWorkspace(id)
+  await workspaceStore.openWorkspaceInNewWindow(id)
 }
 
 const minimizeWindow = () => {
@@ -138,22 +138,22 @@ onUnmounted(() => {
 
             <button
               class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center justify-between"
-              @click="() => { closeMenu(); workspaceStore.switchWorkspaceFlow() }"
+              @click="() => { closeMenu(); workspaceStore.openWorkspaceInNewWindowFlow() }"
             >
               <span class="inline-flex items-center gap-2 text-zinc-800 dark:text-zinc-100">
                 <FolderOpen :size="16" class="text-zinc-500" />
-                切换工作空间…
+                打开工作空间（新窗口）…
               </span>
               <span class="text-[11px] text-zinc-400">Ctrl+O</span>
             </button>
 
             <button
               class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center justify-between"
-              @click="() => { closeMenu(); workspaceStore.newWorkspaceFlow() }"
+              @click="() => { closeMenu(); workspaceStore.newWorkspaceInNewWindowFlow() }"
             >
               <span class="inline-flex items-center gap-2 text-zinc-800 dark:text-zinc-100">
                 <Plus :size="16" class="text-zinc-500" />
-                新建工作空间…
+                新建工作空间（新窗口）…
               </span>
               <span class="text-[11px] text-zinc-400">Ctrl+Shift+N</span>
             </button>

@@ -47,6 +47,7 @@ const mockElectronAPI = () => {
       minimize: vi.fn(async () => {}),
       toggleMaximize: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
+      openWorkspace: vi.fn(async () => ok()),
       onPrepareClose: vi.fn(() => () => {}),
     },
   }
@@ -112,10 +113,10 @@ describe('workspace store - single workspace switching', () => {
     expect(electronAPI.workspace.setActive).toHaveBeenCalledWith('ws2')
     expect(electronAPI.fs.watchStart).toHaveBeenCalledWith('ws2')
     expect(store.activeWorkspaceId).toBe('ws2')
-    expect(Object.keys(store.dirEntries).every((k) => k.startsWith('ws2:'))).toBe(true)
+    expect(Object.keys(store.dirEntries).every((k) => !k.includes(':'))).toBe(true)
   })
 
-  it('switchWorkspaceFlow selects dir, creates workspace and switches', async () => {
+  it('switchWorkspaceFlow selects dir and opens in a new window', async () => {
     const store = useWorkspaceStore()
     const electronAPI = (globalThis as any).window.electronAPI
 
@@ -132,10 +133,11 @@ describe('workspace store - single workspace switching', () => {
 
     await store.switchWorkspaceFlow()
 
-    expect(store.activeWorkspaceId).toBe('ws2')
+    expect(electronAPI.window.openWorkspace).toHaveBeenCalledWith('ws2')
+    expect(store.activeWorkspaceId).toBe('ws1')
   })
 
-  it('newWorkspaceFlow creates via main process and switches', async () => {
+  it('newWorkspaceFlow creates via main process and opens in a new window', async () => {
     const store = useWorkspaceStore()
     const electronAPI = (globalThis as any).window.electronAPI
 
@@ -154,6 +156,6 @@ describe('workspace store - single workspace switching', () => {
     await p
 
     expect(electronAPI.workspace.new).toHaveBeenCalled()
-    expect(store.activeWorkspaceId).toBe('wsNew')
+    expect(electronAPI.window.openWorkspace).toHaveBeenCalledWith('wsNew')
   })
 })

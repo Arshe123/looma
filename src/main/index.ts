@@ -36,12 +36,12 @@ const buildAppMenu = (win: BrowserWindow) => {
       label: '文件',
       submenu: [
         {
-          label: '切换工作空间…',
+          label: '打开工作空间（新窗口）…',
           accelerator: 'Ctrl+O',
           click: () => win.webContents.send('app:command', { id: 'workspace.switch' }),
         },
         {
-          label: '新建工作空间…',
+          label: '新建工作空间（新窗口）…',
           accelerator: 'Ctrl+Shift+N',
           click: () => win.webContents.send('app:command', { id: 'workspace.new' }),
         },
@@ -382,4 +382,12 @@ ipcMain.handle('window:toggleMaximize', async () => {
   }
 
   win.maximize();
+});
+
+ipcMain.handle('window:openWorkspace', async (_, workspaceId: string) => {
+  if (!workspaceId) return { success: false, error: 'Workspace ID is required' };
+  const ws = await getWorkspaceById(workspaceId);
+  if (!ws) return { success: false, error: 'Workspace not found' };
+  createWindow(workspaceId);
+  return { success: true };
 });

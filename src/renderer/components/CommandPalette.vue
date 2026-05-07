@@ -17,15 +17,15 @@ type CommandItem = { id: string; title: string; shortcut: string; run: () => voi
 const commands = computed<CommandItem[]>(() => [
   {
     id: 'workspace.switch',
-    title: '切换工作空间…',
+    title: '打开工作空间（新窗口）…',
     shortcut: 'Ctrl+O',
-    run: () => workspaceStore.switchWorkspaceFlow(),
+    run: () => workspaceStore.openWorkspaceInNewWindowFlow(),
   },
   {
     id: 'workspace.new',
-    title: '新建工作空间…',
+    title: '新建工作空间（新窗口）…',
     shortcut: 'Ctrl+Shift+N',
-    run: () => workspaceStore.newWorkspaceFlow(),
+    run: () => workspaceStore.newWorkspaceInNewWindowFlow(),
   },
 ])
 
@@ -130,4 +130,3 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
-

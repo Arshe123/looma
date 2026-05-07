@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     close: () => ipcRenderer.invoke('window:close'),
     minimize: () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
+    openWorkspace: (workspaceId: string) => ipcRenderer.invoke('window:openWorkspace', workspaceId),
     onPrepareClose: (callback: () => void) => {
       ipcRenderer.on('window:prepare-close', callback)
       return () => ipcRenderer.removeAllListeners('window:prepare-close')

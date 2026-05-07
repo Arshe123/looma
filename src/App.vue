@@ -18,12 +18,12 @@ onMounted(() => {
   keyHandler = (e: KeyboardEvent) => {
     if (e.ctrlKey && !e.shiftKey && (e.key === 'o' || e.key === 'O')) {
       e.preventDefault()
-      workspaceStore.switchWorkspaceFlow()
+      workspaceStore.openWorkspaceInNewWindowFlow()
       return
     }
     if (e.ctrlKey && e.shiftKey && (e.key === 'n' || e.key === 'N')) {
       e.preventDefault()
-      workspaceStore.newWorkspaceFlow()
+      workspaceStore.newWorkspaceInNewWindowFlow()
       return
     }
     if (e.ctrlKey && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
@@ -37,8 +37,8 @@ onMounted(() => {
   window.addEventListener('keydown', keyHandler)
 
   cleanupAppCommand = (window as any).electronAPI?.app?.onCommand?.((cmd: { id: string }) => {
-    if (cmd.id === 'workspace.switch') workspaceStore.switchWorkspaceFlow()
-    if (cmd.id === 'workspace.new') workspaceStore.newWorkspaceFlow()
+    if (cmd.id === 'workspace.switch') workspaceStore.openWorkspaceInNewWindowFlow()
+    if (cmd.id === 'workspace.new') workspaceStore.newWorkspaceInNewWindowFlow()
   }) ?? null
 });
 

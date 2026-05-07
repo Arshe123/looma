@@ -37,9 +37,9 @@ export interface WorkspaceMeta {
 }
 
 type UndoAction =
-  | { type: 'create'; workspaceId: string; relativePath: string }
-  | { type: 'move'; workspaceId: string; items: { from: string; to: string }[] }
-  | { type: 'delete'; workspaceId: string; items: { trashRelativePath: string; restoreTo: string }[] }
+  | { type: 'create'; relativePath: string }
+  | { type: 'move'; items: { from: string; to: string }[] }
+  | { type: 'delete'; items: { trashRelativePath: string; restoreTo: string }[] }
 
 const normalizeDir = (p: string) => {
   const x = (p || '').trim().split('\\').join('/').replace(/^\/+/, '').replace(/\/+$/, '')
@@ -102,12 +102,13 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (ext !== 'md' && ext !== 'txt') return false // Media files don't have unsaved changes
       return state.activeFileContent !== state.activeFileLoadedContent
     },
-    keyOfDir: () => (workspaceId: string, dir: string) => `${workspaceId}:${normalizeDir(dir)}`,
+    keyOfDir: () => (dir: string) => normalizeDir(dir),
     activeDirEntries(state): FsEntry[] {
-      const ws = state.activeWorkspaceId
-      if (!ws) return []
-      const currentDir = state.selectedPaths[0] ? (state.dirEntries[`${ws}:${normalizeDir(state.selectedPaths[0])}`] ? state.selectedPaths[0] : pathDir(state.selectedPaths[0])) : ''
-      const key = `${ws}:${normalizeDir(currentDir)}`
+      if (!state.activeWorkspaceId) return []
+      const currentDir = state.selectedPaths[0]
+        ? (state.dirEntries[normalizeDir(state.selectedPaths[0])] ? state.selectedPaths[0] : pathDir(state.selectedPaths[0]))
+        : ''
+      const key = normalizeDir(currentDir)
       return state.dirEntries[key] || []
     },
     activeMarkdownFiles(): FsEntry[] {
@@ -254,6 +255,10 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     async switchWorkspaceFlow() {
+      await this.openWorkspaceInNewWindowFlow()
+    },
+
+    async openWorkspaceInNewWindowFlow() {
       this.clearError()
       this.setBusy(true, '正在选择文件夹...')
       const dir = await window.electronAPI.workspace.selectDir()
@@ -270,14 +275,18 @@ export const useWorkspaceStore = defineStore('workspace', {
         return
       }
       await this.refreshWorkspaces()
-      await this.switchWorkspace(result.data.id)
+      await this.openWorkspaceInNewWindow(result.data.id)
     },
 
     async createWorkspaceFlow() {
-      await this.switchWorkspaceFlow()
+      await this.openWorkspaceInNewWindowFlow()
     },
 
     async newWorkspaceFlow() {
+      await this.newWorkspaceInNewWindowFlow()
+    },
+
+    async newWorkspaceInNewWindowFlow() {
       this.clearError()
       this.setBusy(true, '正在选择保存位置...')
       const parent = await window.electronAPI.workspace.selectDir()
@@ -297,7 +306,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         return
       }
       await this.refreshWorkspaces()
-      await this.switchWorkspace(r.data.id)
+      await this.openWorkspaceInNewWindow(r.data.id)
     },
 
     async refreshWorkspaces() {
@@ -333,6 +342,11 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.undoStack = []
       this.redoStack = []
       await window.electronAPI.workspace.setActive(null)
+    },
+
+    async openWorkspaceInNewWindow(id: string) {
+      if (!id) return
+      await (window as any).electronAPI?.window?.openWorkspace?.(id)
     },
 
     async switchWorkspace(id: string) {
@@ -528,14 +542,14 @@ export const useWorkspaceStore = defineStore('workspace', {
             this.activeFileIsSaving = false
             this.activeFileSaveError = ''
           }
-          delete this.dirEntries[`${workspaceId}:${dir}`]
+          delete this.dirEntries[dir]
           await this.saveWorkspaceMeta()
         } else {
           this.setError(r.error || 'Failed to list directory')
         }
         return
       }
-      this.dirEntries[`${workspaceId}:${dir}`] = r.data
+      this.dirEntries[dir] = r.data
       window.electronAPI.fs.watchAdd?.(workspaceId, [dir || '.']).catch(() => {})
     },
 
@@ -557,7 +571,7 @@ export const useWorkspaceStore = defineStore('workspace', {
 
       for (const d of sorted) {
         if (this.activeWorkspaceId !== wsId) return
-        const key = `${wsId}:${d}`
+        const key = d
         if (this.dirEntries[key]) continue
         await this.loadDir(wsId, d)
         await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -688,7 +702,9 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!name.includes('.')) {
         name += '.md'
       }
-      const currentDir = this.selectedPaths[0] ? (this.dirEntries[`${ws}:${normalizeDir(this.selectedPaths[0])}`] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0])) : ''
+      const currentDir = this.selectedPaths[0]
+        ? (this.dirEntries[normalizeDir(this.selectedPaths[0])] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0]))
+        : ''
       const targetDir = normalizeDir(dirRelativePath ?? currentDir) || '.'
       this.setBusy(true, '创建中...')
       const r = await window.electronAPI.fs.createFile(ws, targetDir, name)
@@ -697,7 +713,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.setError(r.error || 'Failed to create file')
         return
       }
-      this.undoStack.unshift({ type: 'create', workspaceId: ws, relativePath: r.data })
+      this.undoStack.unshift({ type: 'create', relativePath: r.data })
       this.redoStack = []
       await this.loadDir(ws, normalizeDir(pathDir(r.data)))
       await this.loadDir(ws, currentDir)
@@ -709,7 +725,9 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!ws) return
       const folderName = ((name ?? (await this.requestTextInput('新建文件夹', 'New Folder'))) ?? '').trim()
       if (!folderName) return
-      const currentDir = this.selectedPaths[0] ? (this.dirEntries[`${ws}:${normalizeDir(this.selectedPaths[0])}`] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0])) : ''
+      const currentDir = this.selectedPaths[0]
+        ? (this.dirEntries[normalizeDir(this.selectedPaths[0])] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0]))
+        : ''
       const targetDir = normalizeDir(dirRelativePath ?? currentDir) || '.'
       this.setBusy(true, '创建中...')
       const r = await window.electronAPI.fs.createFolder(ws, targetDir, folderName)
@@ -718,7 +736,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.setError(r.error || 'Failed to create folder')
         return
       }
-      this.undoStack.unshift({ type: 'create', workspaceId: ws, relativePath: r.data })
+      this.undoStack.unshift({ type: 'create', relativePath: r.data })
       this.redoStack = []
       await this.loadDir(ws, normalizeDir(pathDir(r.data)))
       await this.loadDir(ws, currentDir)
@@ -742,11 +760,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (items.length > 0) {
         this.undoStack.unshift({
           type: 'delete',
-          workspaceId: ws,
           items
         })
         this.redoStack = []
-        const currentDir = this.selectedPaths[0] ? (this.dirEntries[`${ws}:${normalizeDir(this.selectedPaths[0])}`] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0])) : ''
+        const currentDir = this.selectedPaths[0]
+          ? (this.dirEntries[normalizeDir(this.selectedPaths[0])] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0]))
+          : ''
         await this.loadDir(ws, currentDir)
         
         const deletedPaths = items.map(i => i.restoreTo)
@@ -801,10 +820,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.setBusy(false)
       
       if (items.length > 0) {
-        this.undoStack.unshift({ type: 'move', workspaceId: ws, items })
+        this.undoStack.unshift({ type: 'move', items })
         this.redoStack = []
         
-        const currentDir = this.selectedPaths[0] ? (this.dirEntries[`${ws}:${normalizeDir(this.selectedPaths[0])}`] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0])) : ''
+        const currentDir = this.selectedPaths[0]
+          ? (this.dirEntries[normalizeDir(this.selectedPaths[0])] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0]))
+          : ''
         await this.loadDir(ws, currentDir)
         await this.loadDir(ws, targetDirRelativePath)
         
@@ -864,13 +885,14 @@ export const useWorkspaceStore = defineStore('workspace', {
     async undo() {
       const action = this.undoStack.shift()
       if (!action) return
-      const ws = action.workspaceId
+      const ws = this.activeWorkspaceId
+      if (!ws) return
       if (action.type === 'create') {
         this.setBusy(true, '删除中...')
         const r = await window.electronAPI.fs.delete(ws, action.relativePath)
         this.setBusy(false)
         if (r.success && r.data) {
-          this.redoStack.unshift({ type: 'delete', workspaceId: ws, items: [{ trashRelativePath: r.data.trashRelativePath, restoreTo: action.relativePath }] })
+          this.redoStack.unshift({ type: 'delete', items: [{ trashRelativePath: r.data.trashRelativePath, restoreTo: action.relativePath }] })
         }
       }
       if (action.type === 'move') {
@@ -879,7 +901,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           const r = await window.electronAPI.fs.move(ws, item.to, item.from)
           if (r.success) reversedItems.push({ from: item.to, to: item.from })
         }
-        if (reversedItems.length > 0) this.redoStack.unshift({ type: 'move', workspaceId: ws, items: reversedItems })
+        if (reversedItems.length > 0) this.redoStack.unshift({ type: 'move', items: reversedItems })
       }
       if (action.type === 'delete') {
         this.setBusy(true, '恢复中...')
@@ -891,14 +913,17 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.setBusy(false)
         if (restoredItems.length > 0) this.redoStack.unshift({ ...action, items: restoredItems })
       }
-      const currentDir = this.selectedPaths[0] ? (this.dirEntries[`${ws}:${normalizeDir(this.selectedPaths[0])}`] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0])) : ''
+      const currentDir = this.selectedPaths[0]
+        ? (this.dirEntries[normalizeDir(this.selectedPaths[0])] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0]))
+        : ''
       if (this.activeWorkspaceId) await this.loadDir(this.activeWorkspaceId, currentDir)
     },
 
     async redo() {
       const action = this.redoStack.shift()
       if (!action) return
-      const ws = action.workspaceId
+      const ws = this.activeWorkspaceId
+      if (!ws) return
       if (action.type === 'delete') {
         this.setBusy(true, '删除中...')
         const newItems: { trashRelativePath: string; restoreTo: string }[] = []
@@ -907,7 +932,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           if (r.success && r.data) newItems.push({ trashRelativePath: r.data.trashRelativePath, restoreTo: item.restoreTo })
         }
         this.setBusy(false) 
-        if (newItems.length > 0) this.undoStack.unshift({ type: 'delete', workspaceId: ws, items: newItems })
+        if (newItems.length > 0) this.undoStack.unshift({ type: 'delete', items: newItems })
       }
       if (action.type === 'move') {
         const reversedItems: { from: string; to: string }[] = []
@@ -915,12 +940,14 @@ export const useWorkspaceStore = defineStore('workspace', {
           const r = await window.electronAPI.fs.move(ws, item.to, item.from)
           if (r.success) reversedItems.push({ from: item.to, to: item.from })
         }
-        if (reversedItems.length > 0) this.undoStack.unshift({ type: 'move', workspaceId: ws, items: reversedItems })
+        if (reversedItems.length > 0) this.undoStack.unshift({ type: 'move', items: reversedItems })
       }
       if (action.type === 'create') {
         await this.createMarkdown(pathBase(action.relativePath))
       }
-      const currentDir = this.selectedPaths[0] ? (this.dirEntries[`${ws}:${normalizeDir(this.selectedPaths[0])}`] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0])) : ''
+      const currentDir = this.selectedPaths[0]
+        ? (this.dirEntries[normalizeDir(this.selectedPaths[0])] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0]))
+        : ''
       if (this.activeWorkspaceId) await this.loadDir(this.activeWorkspaceId, currentDir)
     },
 
@@ -929,7 +956,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.fsUnsub = window.electronAPI.fs.onEvent((payload) => {
         if (payload.workspaceId !== this.activeWorkspaceId) return
         const affected = normalizeDir(pathDir(payload.relativePath))
-        const key = `${payload.workspaceId}:${affected}`
+        const key = affected
         if (this.dirEntries[key]) this.loadDir(payload.workspaceId, affected)
       })
     },

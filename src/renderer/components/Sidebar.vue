@@ -35,22 +35,20 @@ const toggleCollapse = () => {
         <div class="mt-4 grid grid-cols-1 gap-2">
           <button
             class="w-full px-3 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-sm"
-            @click="workspaceStore.switchWorkspaceFlow()"
+            @click="workspaceStore.openWorkspaceInNewWindowFlow()"
           >
-            切换工作空间 (Ctrl+O)
+            打开工作空间 (Ctrl+O)
           </button>
           <button
             class="w-full px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm"
-            @click="workspaceStore.newWorkspaceFlow()"
+            @click="workspaceStore.newWorkspaceInNewWindowFlow()"
           >
             新建工作空间 (Ctrl+Shift+N)
           </button>
         </div>
       </div>
       <div v-if="!isCollapsed && workspaceStore.activeWorkspaceId" class="h-full pt-2">
-        <FileTree
-          :workspaceId="workspaceStore.activeWorkspaceId"
-        />
+        <FileTree />
       </div>
     </div>
 

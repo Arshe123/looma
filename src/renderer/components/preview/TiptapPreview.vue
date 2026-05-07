@@ -79,7 +79,7 @@ onMounted(() => {
       TableHeader,
       TableCell,
       Placeholder.configure({
-        placeholder: '输入 / 唤起菜单，或直接输入 Markdown...',
+        placeholder: 'Shift + Enter 唤起菜单，或直接输入 Markdown...',
       }),
       Markdown.configure({
         html: true,

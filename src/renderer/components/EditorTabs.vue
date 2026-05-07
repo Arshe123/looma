@@ -150,8 +150,8 @@ const handleCopyRelativePath = () => {
 }
 
 const handleRevealInExplorer = async () => {
-  if (!contextMenuTab.value || !workspaceStore.activeWorkspaceId) return
-  await window.electronAPI.fs.showItemInFolder(workspaceStore.activeWorkspaceId, contextMenuTab.value)
+  if (!contextMenuTab.value) return
+  await workspaceStore.showItemInFolder(contextMenuTab.value)
   closeMenu()
 }
 

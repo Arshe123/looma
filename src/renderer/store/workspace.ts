@@ -960,6 +960,27 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (this.dirEntries[key]) this.loadDir(payload.workspaceId, affected)
       })
     },
+
+    async showItemInFolder(relativePath: string) {
+      const ws = this.activeWorkspaceId
+      if (!ws) return
+      const r = await window.electronAPI.fs.showItemInFolder(ws, normalizeDir(relativePath))
+      if (!r.success) {
+        this.setError(r.error || '无法在资源管理器中显示文件')
+        return
+      }
+    },
+
+    async isFile(relativePath: string) {
+      const ws = this.activeWorkspaceId
+      if (!ws) return null
+      const r = await window.electronAPI.fs.isFile(ws, normalizeDir(relativePath))
+      if (!r.success) {
+        this.setError(r.error || '无法判断文件类型')
+        return null
+      }
+      return r.data
+    },
   },
 })
 

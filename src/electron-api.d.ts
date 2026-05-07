@@ -48,6 +48,7 @@ export interface ElectronAPI {
     watchAdd: (workspaceId: string, dirRelativePaths: string[]) => Promise<Result<void>>;
     watchStop: (workspaceId: string) => Promise<Result<void>>;
     showItemInFolder: (workspaceId: string, relativePath: string) => Promise<Result<void>>;
+    isFile: (workspaceId: string, targetRelativePath: string) => Promise<Result<boolean>>;
     onEvent: (listener: (payload: { workspaceId: string; event: string; relativePath: string }) => void) => () => void;
   };
   window: {

@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('fs:event', handler);
       return () => ipcRenderer.removeListener('fs:event', handler);
     },
+    isFile: (workspaceId: string, targetRelativePath: string) => ipcRenderer.invoke('fs:isFile', workspaceId, targetRelativePath),
   },
   window: {
     close: () => ipcRenderer.invoke('window:close'),

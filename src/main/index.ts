@@ -357,6 +357,13 @@ ipcMain.handle('fs:showItemInFolder', async (_, workspaceId: string, relativePat
   return { success: true };
 });
 
+ipcMain.handle('fs:isFile', async (_, workspaceId: string, targetRelativePath: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  return await fileSystemService.isFile(workspacePath, targetRelativePath);
+});
+
+
 
 // Window Management IPC
 ipcMain.handle('window:close', async () => {

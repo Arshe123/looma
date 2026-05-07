@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ChevronRight, Folder, FileText, Trash2, Edit3, Image, Video, FileType2 } from 'lucide-vue-next'
+import { ChevronRight, Folder, FileText, Image, Video, FileType2 } from 'lucide-vue-next'
 import { useWorkspaceStore, type FsEntry } from '../store/workspace'
 
 const workspaceStore = useWorkspaceStore()
@@ -11,6 +11,12 @@ const activeFileRel = computed(() => workspaceStore.activeFileRelativePath)
 const getChildren = (dirRelativePath: string) => {
   const key = workspaceStore.keyOfDir(dirRelativePath)
   return workspaceStore.dirEntries[key] || []
+}
+
+const getParentDirFromPath = async (path: string) => {
+  const isFile = await workspaceStore.isFile(path)
+  if (!isFile) return path;
+  return path.split('/').slice(0, -1).join('/')
 }
 
 const isExpanded = (dirRelativePath: string) => expanded.value.has(dirRelativePath)
@@ -127,6 +133,8 @@ const onDropToDir = async (event: DragEvent, dirRelativePath: string) => {
   }
   
   if (draggedPaths.length === 0) return
+
+  dirRelativePath = await getParentDirFromPath(dirRelativePath)
   
   const toMove = draggedPaths.filter(from => {
     if (!from || from === dirRelativePath) return false
@@ -203,8 +211,8 @@ const handleCopyRelativePath = () => {
 }
 
 const handleRevealInExplorer = async () => {
-  if (!selectedFile.value || !workspaceStore.activeWorkspaceId) return
-  await window.electronAPI.fs.showItemInFolder(workspaceStore.activeWorkspaceId, selectedFile.value.relativePath)
+  if (!selectedFile.value) return
+  await workspaceStore.showItemInFolder(selectedFile.value.relativePath)
   closeMenu()
 }
 

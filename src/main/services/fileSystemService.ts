@@ -4,6 +4,7 @@ import fs from 'fs/promises'
 import path from 'path'
 import type { WebContents } from 'electron'
 import type { Result } from '../interfaces/Result'
+import type { Stats } from 'node:fs'
 
 export interface FsEntry {
   name: string
@@ -171,6 +172,15 @@ export const fileSystemService = {
       return { success: true, data: { trashRelativePath: toPosix(path.relative(trashDir, trashAbs)) } }
     } catch (error: any) {
       return { success: false, error: `Failed to delete: ${error?.message ?? String(error)}` }
+    }
+  },
+
+  async isFile(workspacePath: string, targetRelativePath: string): Promise<Result<boolean>> {
+    try {
+      const stats = await fs.stat(path.join(workspacePath, targetRelativePath))
+      return { success: true, data: stats.isFile() }
+    } catch (error: any) {
+      return { success: false, error: `判断文件类型失败: ${error?.message ?? String(error)}` }
     }
   },
 

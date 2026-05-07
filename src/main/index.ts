@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell, screen } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
@@ -79,13 +79,52 @@ const buildAppMenu = (win: BrowserWindow) => {
 };
 
 function createWindow(initialWorkspaceId?: string) {
+  const defaultWidth = 1200;
+  const defaultHeight = 800;
+
+  const getWindowPosition = (width: number, height: number) => {
+    const referenceWindow = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+    const display = referenceWindow
+      ? screen.getDisplayMatching(referenceWindow.getBounds())
+      : screen.getPrimaryDisplay();
+    const workArea = display.workArea;
+
+    const centeredX = Math.round(workArea.x + (workArea.width - width) / 2);
+    const centeredY = Math.round(workArea.y + (workArea.height - height) / 2);
+
+    const openedWindowCount = BrowserWindow.getAllWindows().length;
+    if (openedWindowCount === 0) {
+      return { x: centeredX, y: centeredY };
+    }
+
+    const stepX = 36;
+    const stepY = 28;
+    const maxStepsX = Math.max(1, Math.floor(Math.max(0, workArea.width - width) / stepX));
+    const maxStepsY = Math.max(1, Math.floor(Math.max(0, workArea.height - height) / stepY));
+    const maxSteps = Math.max(1, Math.min(maxStepsX, maxStepsY));
+    const offsetStep = ((openedWindowCount - 1) % maxSteps) + 1;
+
+    const maxX = workArea.x + Math.max(0, workArea.width - width);
+    const maxY = workArea.y + Math.max(0, workArea.height - height);
+    const rawX = centeredX + offsetStep * stepX;
+    const rawY = centeredY + offsetStep * stepY;
+
+    return {
+      x: Math.min(Math.max(rawX, workArea.x), maxX),
+      y: Math.min(Math.max(rawY, workArea.y), maxY),
+    };
+  };
+
+  const position = getWindowPosition(defaultWidth, defaultHeight);
   const preloadPath = process.env.VITE_DEV_SERVER_URL
     ? path.join(process.cwd(), 'dist-electron', 'preload.cjs')
     : path.join(__dirname, 'preload.cjs');
 
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: defaultWidth,
+    height: defaultHeight,
+    x: position.x,
+    y: position.y,
     frame: false,
     webPreferences: {
       preload: preloadPath,

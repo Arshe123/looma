@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { useWorkspaceStore } from './workspace'
+import { useWorkspaceStore } from '../workspace'
 
 const ok = <T>(data?: T) => ({ success: true as const, data })
 const fail = (error: string) => ({ success: false as const, error })
@@ -157,5 +157,47 @@ describe('workspace store - single workspace switching', () => {
 
     expect(electronAPI.workspace.new).toHaveBeenCalled()
     expect(electronAPI.window.openWorkspace).toHaveBeenCalledWith('wsNew')
+  })
+
+  it('moveEntries remaps opened files under moved directory', async () => {
+    const store = useWorkspaceStore()
+    const electronAPI = (globalThis as any).window.electronAPI
+
+    store.workspaces = [{ id: 'ws1', name: 'WS1', path: 'C:\\ws1', createdAt: 1, lastOpenedAt: 1 }]
+    store.activeWorkspaceId = 'ws1'
+    store.selectedPaths = ['docs']
+    store.dirEntries = { docs: [] }
+    store.openedFiles = ['docs/a.md', 'docs/sub/b.md', 'other/c.md']
+
+    electronAPI.fs.move.mockResolvedValueOnce(ok())
+    await store.moveEntries(['docs'], 'archive')
+
+    expect(store.openedFiles).toEqual(['archive/docs/a.md', 'archive/docs/sub/b.md', 'other/c.md'])
+    expect(store.selectedPaths).toEqual([])
+  })
+
+  it('deleteEntries clears active file and opened descendants', async () => {
+    const store = useWorkspaceStore()
+    const electronAPI = (globalThis as any).window.electronAPI
+
+    store.workspaces = [{ id: 'ws1', name: 'WS1', path: 'C:\\ws1', createdAt: 1, lastOpenedAt: 1 }]
+    store.activeWorkspaceId = 'ws1'
+    store.selectedPaths = ['docs', 'keep']
+    store.dirEntries = { docs: [] }
+    store.activeFileRelativePath = 'docs/a.md'
+    store.activeFilePath = 'C:\\ws1\\docs\\a.md'
+    store.activeFileContent = 'x'
+    store.activeFileLoadedContent = 'y'
+    store.openedFiles = ['docs/a.md', 'docs/sub/b.md', 'keep/c.md']
+
+    electronAPI.fs.delete.mockResolvedValueOnce(ok({ trashRelativePath: '.trash/1' }))
+    await store.deleteEntries(['docs'])
+
+    expect(store.activeFilePath).toBe('')
+    expect(store.activeFileRelativePath).toBe('')
+    expect(store.activeFileContent).toBe('')
+    expect(store.activeFileLoadedContent).toBe('')
+    expect(store.openedFiles).toEqual(['keep/c.md'])
+    expect(store.selectedPaths).toEqual(['keep'])
   })
 })

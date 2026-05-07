@@ -1,52 +1,20 @@
 import { defineStore } from 'pinia'
-
-export interface Workspace {
-  id: string
-  name: string
-  path: string
-  createdAt: number
-  lastOpenedAt: number
-}
-
-export interface FsEntry {
-  name: string
-  relativePath: string
-  isDirectory: boolean
-  size: number
-  mtimeMs: number
-}
-
-export interface EditorSession {
-  updatedAt: number
-  markdown?: { viewMode: 'split' | 'editor' | 'preview' }
-  plaintext?: { fontSize: number; wordWrap: boolean }
-  codemirror?: {
-    anchor: number
-    head: number
-    scrollTop: number
-  }
-}
-
-export interface WorkspaceMeta {
-  expandedDirs: string[]
-  selectedPaths: string[]
-  noteOrder: Record<string, string[]>
-  openedFiles?: string[]
-  activeFile?: string
-  fileSessions?: Record<string, EditorSession>
-}
-
-type UndoAction =
-  | { type: 'create'; relativePath: string }
-  | { type: 'move'; items: { from: string; to: string }[] }
-  | { type: 'delete'; items: { trashRelativePath: string; restoreTo: string }[] }
-
-const normalizeDir = (p: string) => {
-  const x = (p || '').trim().split('\\').join('/').replace(/^\/+/, '').replace(/\/+$/, '')
-  if (!x) return ''
-  if (x === '.' || x === './') return ''
-  return x
-}
+import {
+  isEditableTextPath,
+  isSameOrChildPath,
+  isSupportedPath,
+  normalizeDir,
+  pathBase,
+  pathDir,
+  pathSep,
+  remapByMoves,
+  removePathsAndDescendants,
+  resolveCurrentDir,
+} from './workspace-utils'
+import { executeRedoAction, executeUndoAction } from './workspace-history-service'
+import { buildWorkspaceMetaPayload } from './workspace-meta-utils'
+import type { EditorSession, FsEntry, UndoAction, Workspace } from './workspace-types'
+export type { EditorSession, FsEntry, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
 
@@ -89,17 +57,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       return state.workspaces.find((w) => w.id === state.activeWorkspaceId) || null
     },
     isSupportedActiveFile(state) {
-      const p = state.activeFilePath
-      if (!p) return false
-      const ext = p.split('.').pop()?.toLowerCase()
-      const supportedExts = ['md', 'txt', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'mp4', 'webm', 'ogg']
-      return ext ? supportedExts.includes(ext) : false
+      return isSupportedPath(state.activeFilePath)
     },
     hasUnsavedChanges(state) {
       if (!state.activeFilePath) return false
       if (!this.isSupportedActiveFile) return false
-      const ext = state.activeFilePath.split('.').pop()?.toLowerCase()
-      if (ext !== 'md' && ext !== 'txt') return false // Media files don't have unsaved changes
+      if (!isEditableTextPath(state.activeFilePath)) return false // Media files don't have unsaved changes
       return state.activeFileContent !== state.activeFileLoadedContent
     },
     keyOfDir: () => (dir: string) => normalizeDir(dir),
@@ -192,6 +155,50 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     clearError() {
       this.lastError = ''
+    },
+
+    resetActiveFileState() {
+      this.activeFilePath = ''
+      this.activeFileRelativePath = ''
+      this.activeFileContent = ''
+      this.activeFileLoadedContent = ''
+      this.activeFileIsSaving = false
+      this.activeFileSaveError = ''
+    },
+
+    getCurrentDir() {
+      return resolveCurrentDir(this.selectedPaths, this.dirEntries)
+    },
+
+    async refreshDirs(workspaceId: string, dirs: string[]) {
+      const uniqueDirs = Array.from(new Set(dirs.map(normalizeDir)))
+      for (const dir of uniqueDirs) {
+        await this.loadDir(workspaceId, dir)
+      }
+    },
+
+    async syncSelectionAfterRemoval(removedPaths: string[]) {
+      const remaining = removePathsAndDescendants(this.selectedPaths, removedPaths)
+      if (remaining.length !== this.selectedPaths.length) {
+        this.selectedPaths = remaining
+        await this.saveWorkspaceMeta()
+      }
+    },
+
+    syncOpenedFilesAfterRemoval(removedPaths: string[]) {
+      const prevLen = this.openedFiles.length
+      this.openedFiles = removePathsAndDescendants(this.openedFiles, removedPaths)
+      return this.openedFiles.length !== prevLen
+    },
+
+    syncOpenedFilesAfterMove(items: { from: string; to: string }[]) {
+      let changed = false
+      this.openedFiles = this.openedFiles.map((of) => {
+        const next = remapByMoves(of, items)
+        if (next !== of) changed = true
+        return next
+      })
+      return changed
     },
 
     selectPath(path: string, multi: boolean = false, rightClick: boolean = false) {
@@ -327,12 +334,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         await window.electronAPI.fs.watchStop(prev)
       }
       this.activeWorkspaceId = null
-      this.activeFilePath = ''
-      this.activeFileRelativePath = ''
-      this.activeFileContent = ''
-      this.activeFileLoadedContent = ''
-      this.activeFileIsSaving = false
-      this.activeFileSaveError = ''
+      this.resetActiveFileState()
       this.watchedWorkspaceId = null
       this.openedFiles = []
       this.selectedPaths = []
@@ -407,12 +409,7 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async switchWorkspaceInternal(id: string) {
       this.activeWorkspaceId = id
-      this.activeFilePath = ''
-      this.activeFileRelativePath = ''
-      this.activeFileContent = ''
-      this.activeFileLoadedContent = ''
-      this.activeFileIsSaving = false
-      this.activeFileSaveError = ''
+      this.resetActiveFileState()
       await window.electronAPI.workspace.setActive(id)
       await this.loadWorkspaceMeta(id)
 
@@ -450,34 +447,22 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async saveWorkspaceMeta() {
       // Trigger snapshot save synchronously before writing to disk
-      if (typeof window !== 'undefined') {
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
         window.dispatchEvent(new CustomEvent('request-save-snapshot'))
       }
 
       const id = this.activeWorkspaceId
       if (!id) return
-      const noteOrderPlain: Record<string, string[]> = {}
-      for (const [k, v] of Object.entries(this.noteOrder || {})) {
-        noteOrderPlain[k] = Array.isArray(v) ? v.slice() : []
-      }
-      
-      // Cleanup sessions for files that are no longer opened to save space
-      const cleanedSessions: Record<string, EditorSession> = {}
-      for (const file of this.openedFiles) {
-        if (this.fileSessions[file]) {
-          cleanedSessions[file] = this.fileSessions[file]
-        }
-      }
-      this.fileSessions = cleanedSessions
 
-      const meta: WorkspaceMeta = {
-        expandedDirs: this.expandedDirs.map(normalizeDir),
-        selectedPaths: this.selectedPaths.map(normalizeDir),
-        noteOrder: noteOrderPlain,
-        openedFiles: this.openedFiles.map(normalizeDir),
-        activeFile: this.activeFileRelativePath || undefined,
-        fileSessions: JSON.parse(JSON.stringify(this.fileSessions)),
-      }
+      const { cleanedSessions, meta } = buildWorkspaceMetaPayload({
+        expandedDirs: this.expandedDirs,
+        selectedPaths: this.selectedPaths,
+        noteOrder: this.noteOrder,
+        openedFiles: this.openedFiles,
+        activeFileRelativePath: this.activeFileRelativePath,
+        fileSessions: this.fileSessions,
+      })
+      this.fileSessions = cleanedSessions
       await window.electronAPI.workspaceMeta.set(id, meta)
     },
 
@@ -535,12 +520,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           this.expandedDirs = this.expandedDirs.filter((p) => p !== dir)
           this.selectedPaths = this.selectedPaths.filter((p) => p !== dir && !p.startsWith(dir + '/'))
           if (this.activeFileRelativePath && this.activeFileRelativePath.startsWith(dir + '/')) {
-            this.activeFileRelativePath = ''
-            this.activeFilePath = ''
-            this.activeFileContent = ''
-            this.activeFileLoadedContent = ''
-            this.activeFileIsSaving = false
-            this.activeFileSaveError = ''
+            this.resetActiveFileState()
           }
           delete this.dirEntries[dir]
           await this.saveWorkspaceMeta()
@@ -603,11 +583,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       const rel = normalizeDir(relativePath)
       this.activeFileRelativePath = rel
       if (!rel) {
-        this.activeFilePath = ''
-        this.activeFileContent = ''
-        this.activeFileLoadedContent = ''
-        this.activeFileIsSaving = false
-        this.activeFileSaveError = ''
+        this.resetActiveFileState()
         return
       }
       
@@ -643,8 +619,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.activeFileSaveError = ''
         return
       }
-      const ext = this.activeFilePath.split('.').pop()?.toLowerCase()
-      if (ext !== 'md' && ext !== 'txt') {
+      if (!isEditableTextPath(this.activeFilePath)) {
         // We do not load media file contents into state.activeFileContent
         this.activeFileContent = ''
         this.activeFileLoadedContent = ''
@@ -667,8 +642,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     async saveActiveFileContent(content?: string) {
       if (!this.activeFilePath) return { success: true as const }
       if (!this.isSupportedActiveFile) return { success: true as const }
-      const ext = this.activeFilePath.split('.').pop()?.toLowerCase()
-      if (ext !== 'md' && ext !== 'txt') return { success: true as const } // Don't save media files
+      if (!isEditableTextPath(this.activeFilePath)) return { success: true as const } // Don't save media files
       
       const next = content ?? this.activeFileContent
       this.activeFileIsSaving = true
@@ -702,9 +676,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!name.includes('.')) {
         name += '.md'
       }
-      const currentDir = this.selectedPaths[0]
-        ? (this.dirEntries[normalizeDir(this.selectedPaths[0])] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0]))
-        : ''
+      const currentDir = this.getCurrentDir()
       const targetDir = normalizeDir(dirRelativePath ?? currentDir) || '.'
       this.setBusy(true, '创建中...')
       const r = await window.electronAPI.fs.createFile(ws, targetDir, name)
@@ -725,9 +697,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!ws) return
       const folderName = ((name ?? (await this.requestTextInput('新建文件夹', 'New Folder'))) ?? '').trim()
       if (!folderName) return
-      const currentDir = this.selectedPaths[0]
-        ? (this.dirEntries[normalizeDir(this.selectedPaths[0])] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0]))
-        : ''
+      const currentDir = this.getCurrentDir()
       const targetDir = normalizeDir(dirRelativePath ?? currentDir) || '.'
       this.setBusy(true, '创建中...')
       const r = await window.electronAPI.fs.createFolder(ws, targetDir, folderName)
@@ -744,6 +714,7 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async deleteEntries(relativePaths: string[]) {
       const ws = this.activeWorkspaceId
+      if (!ws || relativePaths.length === 0) return
       this.setBusy(true, '删除中...')
       
       const items: { trashRelativePath: string; restoreTo: string }[] = []
@@ -763,37 +734,21 @@ export const useWorkspaceStore = defineStore('workspace', {
           items
         })
         this.redoStack = []
-        const currentDir = this.selectedPaths[0]
-          ? (this.dirEntries[normalizeDir(this.selectedPaths[0])] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0]))
-          : ''
-        await this.loadDir(ws, currentDir)
+        await this.refreshDirs(ws, [this.getCurrentDir()])
         
         const deletedPaths = items.map(i => i.restoreTo)
         const isActiveFileDeleted = deletedPaths.some(dp => 
-          this.activeFileRelativePath === dp || this.activeFileRelativePath.startsWith(dp + '/')
+          isSameOrChildPath(dp, this.activeFileRelativePath)
         )
         if (isActiveFileDeleted) {
-          this.activeFileRelativePath = ''
-          this.activeFilePath = ''
-          this.activeFileContent = ''
-          this.activeFileLoadedContent = ''
-          this.activeFileIsSaving = false
-          this.activeFileSaveError = ''
+          this.resetActiveFileState()
         }
         
-        const prevOpenedLength = this.openedFiles.length
-        this.openedFiles = this.openedFiles.filter(of => !deletedPaths.some(dp => of === dp || of.startsWith(dp + '/')))
-        if (this.openedFiles.length !== prevOpenedLength) {
+        if (this.syncOpenedFilesAfterRemoval(deletedPaths)) {
           this.saveWorkspaceMeta().catch(() => {})
         }
 
-        const remainingPaths = this.selectedPaths.filter(p => 
-          !deletedPaths.some(dp => p === dp || p.startsWith(dp + '/'))
-        )
-        if (remainingPaths.length !== this.selectedPaths.length) {
-          this.selectedPaths = remainingPaths
-          this.saveWorkspaceMeta().catch(console.error)
-        }
+        await this.syncSelectionAfterRemoval(deletedPaths)
       }
     },
 
@@ -823,11 +778,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.undoStack.unshift({ type: 'move', items })
         this.redoStack = []
         
-        const currentDir = this.selectedPaths[0]
-          ? (this.dirEntries[normalizeDir(this.selectedPaths[0])] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0]))
-          : ''
-        await this.loadDir(ws, currentDir)
-        await this.loadDir(ws, targetDirRelativePath)
+        await this.refreshDirs(ws, [this.getCurrentDir(), targetDirRelativePath])
         
         const remainingPaths = this.selectedPaths.filter(p => !items.some(i => i.from === p))
         if (remainingPaths.length !== this.selectedPaths.length) {
@@ -843,16 +794,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           }
         }
         
-        let openedChanged = false
-        this.openedFiles = this.openedFiles.map(of => {
-          const match = items.find(i => of === i.from || of.startsWith(i.from + '/'))
-          if (match) {
-            openedChanged = true
-            return of.replace(match.from, match.to)
-          }
-          return of
-        })
-        if (openedChanged) {
+        if (this.syncOpenedFilesAfterMove(items)) {
           this.saveWorkspaceMeta().catch(() => {})
         }
       }
@@ -888,35 +830,15 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!action) return
       const ws = this.activeWorkspaceId
       if (!ws) return
-      if (action.type === 'create') {
-        this.setBusy(true, '删除中...')
-        const r = await window.electronAPI.fs.delete(ws, action.relativePath)
-        this.setBusy(false)
-        if (r.success && r.data) {
-          this.redoStack.unshift({ type: 'delete', items: [{ trashRelativePath: r.data.trashRelativePath, restoreTo: action.relativePath }] })
-        }
-      }
-      if (action.type === 'move') {
-        const reversedItems: { from: string; to: string }[] = []
-        for (const item of action.items) {
-          const r = await window.electronAPI.fs.move(ws, item.to, item.from)
-          if (r.success) reversedItems.push({ from: item.to, to: item.from })
-        }
-        if (reversedItems.length > 0) this.redoStack.unshift({ type: 'move', items: reversedItems })
-      }
-      if (action.type === 'delete') {
-        this.setBusy(true, '恢复中...')
-        const restoredItems: { trashRelativePath: string; restoreTo: string }[] = []
-        for (const item of action.items) {
-          const r = await window.electronAPI.fs.restore(ws, item.trashRelativePath, item.restoreTo)
-          if (r.success) restoredItems.push(item)
-        }
-        this.setBusy(false)
-        if (restoredItems.length > 0) this.redoStack.unshift({ ...action, items: restoredItems })
-      }
-      const currentDir = this.selectedPaths[0]
-        ? (this.dirEntries[normalizeDir(this.selectedPaths[0])] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0]))
-        : ''
+      const nextRedoAction = await executeUndoAction(action, {
+        workspaceId: ws,
+        api: window.electronAPI,
+        setBusy: (isBusy, text) => this.setBusy(isBusy, text),
+        createMarkdown: (title) => this.createMarkdown(title),
+        pathBase,
+      })
+      if (nextRedoAction) this.redoStack.unshift(nextRedoAction)
+      const currentDir = this.getCurrentDir()
       if (this.activeWorkspaceId) await this.loadDir(this.activeWorkspaceId, currentDir)
     },
 
@@ -925,30 +847,15 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!action) return
       const ws = this.activeWorkspaceId
       if (!ws) return
-      if (action.type === 'delete') {
-        this.setBusy(true, '删除中...')
-        const newItems: { trashRelativePath: string; restoreTo: string }[] = []
-        for (const item of action.items) {
-          const r = await window.electronAPI.fs.delete(ws, item.restoreTo)
-          if (r.success && r.data) newItems.push({ trashRelativePath: r.data.trashRelativePath, restoreTo: item.restoreTo })
-        }
-        this.setBusy(false) 
-        if (newItems.length > 0) this.undoStack.unshift({ type: 'delete', items: newItems })
-      }
-      if (action.type === 'move') {
-        const reversedItems: { from: string; to: string }[] = []
-        for (const item of action.items) {
-          const r = await window.electronAPI.fs.move(ws, item.to, item.from)
-          if (r.success) reversedItems.push({ from: item.to, to: item.from })
-        }
-        if (reversedItems.length > 0) this.undoStack.unshift({ type: 'move', items: reversedItems })
-      }
-      if (action.type === 'create') {
-        await this.createMarkdown(pathBase(action.relativePath))
-      }
-      const currentDir = this.selectedPaths[0]
-        ? (this.dirEntries[normalizeDir(this.selectedPaths[0])] ? this.selectedPaths[0] : pathDir(this.selectedPaths[0]))
-        : ''
+      const nextUndoAction = await executeRedoAction(action, {
+        workspaceId: ws,
+        api: window.electronAPI,
+        setBusy: (isBusy, text) => this.setBusy(isBusy, text),
+        createMarkdown: (title) => this.createMarkdown(title),
+        pathBase,
+      })
+      if (nextUndoAction) this.undoStack.unshift(nextUndoAction)
+      const currentDir = this.getCurrentDir()
       if (this.activeWorkspaceId) await this.loadDir(this.activeWorkspaceId, currentDir)
     },
 
@@ -984,15 +891,3 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
   },
 })
-
-const pathSep = (p: string) => (p.includes('\\') ? '\\' : '/')
-const pathDir = (p: string) => {
-  const x = normalizeDir(p)
-  const idx = x.lastIndexOf('/')
-  return idx === -1 ? '' : x.slice(0, idx)
-}
-const pathBase = (p: string) => {
-  const x = normalizeDir(p)
-  const idx = x.lastIndexOf('/')
-  return idx === -1 ? x : x.slice(idx + 1)
-}

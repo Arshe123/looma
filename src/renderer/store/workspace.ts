@@ -814,7 +814,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (r.success) {
           items.push({ from: normalizeDir(fromRelative), to: normalizeDir(toRelative) })
         } else {
-          this.setError(r.error || 'Failed to move')
+          this.setError(r.error || '移动失败')
         }
       }
       this.setBusy(false)
@@ -837,6 +837,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         
         for (const item of items) {
           if (this.activeFileRelativePath === item.from) {
+            this.openedFiles = this.openedFiles.filter(of => of !== item.from)
             this.setActiveFileRelative(item.to)
             break
           }

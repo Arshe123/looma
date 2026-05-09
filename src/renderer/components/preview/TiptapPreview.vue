@@ -138,7 +138,7 @@ watch(
 </script>
 
 <template>
-  <div ref="previewContainer" class="h-full w-full bg-white dark:bg-zinc-900 overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper">
+  <div ref="previewContainer" class="h-full w-full bg-white dark:bg-zinc-900 overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar">
     <editor-content v-if="editor" :editor="editor" class="h-full" />
     
     <InlineMenu v-if="editor" :editor="editor" />

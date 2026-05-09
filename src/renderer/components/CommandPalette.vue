@@ -112,7 +112,7 @@ onUnmounted(() => {
         <div class="text-[11px] text-zinc-400">Esc</div>
       </div>
 
-      <div class="max-h-[360px] overflow-y-auto">
+      <div class="max-h-[360px] overflow-y-auto focus-scrollbar">
         <button
           v-for="(c, idx) in filtered"
           :key="c.id"

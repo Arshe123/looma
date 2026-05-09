@@ -230,7 +230,7 @@ onUnmounted(() => {
 <template>
   <div class="h-full flex flex-col">
     <div
-      class="flex-1 overflow-y-auto px-2 pb-2"
+      class="flex-1 overflow-y-auto px-2 pb-2 focus-scrollbar"
       @click.self="workspaceStore.clearSelection()"
       @contextmenu.self="(e) => { workspaceStore.clearSelection(); openMenu(e, { name: '', relativePath: '', isDirectory: true, size: 0, mtimeMs: 0})}"
       @dragover.self="allowDrop"

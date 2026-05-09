@@ -81,33 +81,6 @@ onUnmounted(() => {
 </template>
 
 <style>
-/* Global scrollbar styles */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #e2e2e2;
-  border-radius: 4px;
-}
-
-.dark ::-webkit-scrollbar-thumb {
-  background: #3f3f46;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #d4d4d4;
-}
-
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: #52525b;
-}
-
 /* Base transitions */
 * {
   transition-property: background-color, border-color, color, fill, stroke;

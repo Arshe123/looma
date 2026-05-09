@@ -38,7 +38,27 @@ const getLineWrapExtension = () => props.wordWrap ? [EditorView.lineWrapping] : 
 const BASE_BOTTOM_SPACER = '22vh'
 const getCustomStyleExtension = () => EditorView.theme({
   '&': { height: '100%', fontSize: `${props.fontSize}px` },
-  '.cm-scroller': { overflow: 'auto', fontFamily: 'Consolas, Monaco, monospace' },
+  '.cm-scroller': {
+    overflow: 'auto',
+    fontFamily: 'Consolas, Monaco, monospace',
+    scrollbarWidth: 'thin',
+    scrollbarColor: 'transparent transparent',
+  },
+  '.cm-scroller::-webkit-scrollbar': { width: '8px', height: '8px' },
+  '.cm-scroller::-webkit-scrollbar-track': { background: 'transparent' },
+  '.cm-scroller::-webkit-scrollbar-thumb': {
+    backgroundColor: 'transparent',
+    borderRadius: '4px',
+  },
+  '&:hover .cm-scroller, &.cm-focused .cm-scroller': {
+    scrollbarColor: workspaceStore.theme === 'dark' ? '#52525b transparent' : '#d4d4d8 transparent',
+  },
+  '&:hover .cm-scroller::-webkit-scrollbar-thumb, &.cm-focused .cm-scroller::-webkit-scrollbar-thumb': {
+    backgroundColor: workspaceStore.theme === 'dark' ? '#52525b' : '#d4d4d8',
+  },
+  '.cm-scroller::-webkit-scrollbar-thumb:hover': {
+    backgroundColor: workspaceStore.theme === 'dark' ? '#71717a' : '#a1a1aa',
+  },
   '.cm-content': { 
     padding: `10px 0 ${BASE_BOTTOM_SPACER} 0`,
     whiteSpace: props.wordWrap ? 'pre-wrap' : 'pre'

@@ -174,7 +174,7 @@ onUnmounted(() => {
 <template>
   <header class="h-10 flex bg-zinc-50 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 z-10 w-full overflow-hidden select-none">
     <div 
-      class="flex-1 flex overflow-x-auto overflow-y-hidden custom-scrollbar"
+      class="flex-1 flex overflow-x-auto overflow-y-hidden custom-scrollbar focus-scrollbar"
       @wheel="onWheel"
     >
       <div
@@ -269,8 +269,13 @@ onUnmounted(() => {
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background-color: rgba(156, 163, 175, 0.3);
+  background-color: transparent;
   border-radius: 2px;
+}
+.custom-scrollbar:hover::-webkit-scrollbar-thumb,
+.custom-scrollbar:focus-within::-webkit-scrollbar-thumb,
+.custom-scrollbar:active::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.3);
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: rgba(156, 163, 175, 0.5);

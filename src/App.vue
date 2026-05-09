@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { useWorkspaceStore } from './renderer/store/workspace';
 import TopBar from './renderer/components/TopBar.vue';
 import InputDialog from './renderer/components/InputDialog.vue';
@@ -9,11 +9,76 @@ import CommandPalette from './renderer/components/CommandPalette.vue';
 
 const workspaceStore = useWorkspaceStore();
 
+const SIDEBAR_WIDTH_KEY = 'with-you.sidebarWidth'
+const defaultSidebarWidth = 320
+const minSidebarWidth = 56
+const minMainContentWidth = 360
+
+const readStoredSidebarWidth = () => {
+  if (typeof localStorage === 'undefined') return defaultSidebarWidth
+  const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
+  return Number.isFinite(stored) ? stored : defaultSidebarWidth
+}
+
+const clampSidebarWidth = (width: number) => {
+  const maxWidth = typeof window === 'undefined'
+    ? 720
+    : Math.max(minSidebarWidth, window.innerWidth - minMainContentWidth)
+  return Math.min(Math.max(width, minSidebarWidth), maxWidth)
+}
+
+const sidebarWidth = ref(clampSidebarWidth(readStoredSidebarWidth()))
 let keyHandler: ((e: KeyboardEvent) => void) | null = null
 let cleanupAppCommand: null | (() => void) = null
+let isResizingSidebar = false
+let previousBodyCursor = ''
+let previousBodyUserSelect = ''
+
+const persistSidebarWidth = () => {
+  if (typeof localStorage === 'undefined') return
+  localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(sidebarWidth.value)))
+}
+
+const stopSidebarResize = () => {
+  if (!isResizingSidebar) return
+  isResizingSidebar = false
+  document.body.style.cursor = previousBodyCursor
+  document.body.style.userSelect = previousBodyUserSelect
+  window.removeEventListener('pointermove', onSidebarResizeMove)
+  window.removeEventListener('pointerup', stopSidebarResize)
+  window.removeEventListener('pointercancel', stopSidebarResize)
+  persistSidebarWidth()
+}
+
+const onSidebarResizeMove = (e: PointerEvent) => {
+  if (!isResizingSidebar) return
+  sidebarWidth.value = clampSidebarWidth(e.clientX)
+}
+
+const onWindowResize = () => {
+  const nextWidth = clampSidebarWidth(sidebarWidth.value)
+  if (nextWidth !== sidebarWidth.value) {
+    sidebarWidth.value = nextWidth
+    persistSidebarWidth()
+  }
+}
+
+const startSidebarResize = (e: PointerEvent) => {
+  if (e.button !== 0) return
+  e.preventDefault()
+  isResizingSidebar = true
+  previousBodyCursor = document.body.style.cursor
+  previousBodyUserSelect = document.body.style.userSelect
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('pointermove', onSidebarResizeMove)
+  window.addEventListener('pointerup', stopSidebarResize)
+  window.addEventListener('pointercancel', stopSidebarResize)
+}
 
 onMounted(() => {
   workspaceStore.init();
+  window.addEventListener('resize', onWindowResize)
 
   keyHandler = (e: KeyboardEvent) => {
     if (e.ctrlKey && !e.shiftKey && (e.key === 'o' || e.key === 'O')) {
@@ -43,6 +108,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  stopSidebarResize()
+  window.removeEventListener('resize', onWindowResize)
   if (keyHandler) window.removeEventListener('keydown', keyHandler)
   keyHandler = null
   cleanupAppCommand?.()
@@ -54,7 +121,12 @@ onUnmounted(() => {
   <div class="h-screen w-screen flex flex-col overflow-hidden bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 antialiased font-sans select-none">
     <TopBar />
     <div class="flex flex-1 overflow-hidden">
-      <Sidebar />
+      <Sidebar :width="sidebarWidth" />
+      <div
+        class="relative z-10 h-full w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-blue-500/40 active:bg-blue-500/60"
+        style="-webkit-app-region: no-drag"
+        @pointerdown="startSidebarResize"
+      />
       <MainContent />
     </div>
   </div>

@@ -16,7 +16,7 @@ export interface FsEntry {
 
 export interface EditorSession {
   updatedAt: number
-  markdown?: { viewMode: 'split' | 'editor' | 'preview' }
+  markdown?: { viewMode: 'split' | 'editor' | 'preview'; splitRatio?: number }
   plaintext?: { fontSize: number; wordWrap: boolean }
   codemirror?: {
     anchor: number

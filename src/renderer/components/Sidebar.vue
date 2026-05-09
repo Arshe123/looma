@@ -1,11 +1,17 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useWorkspaceStore } from '../store/workspace'
 import FileTree from './FileTree.vue'
 import { Folders, Sun, Moon, GitBranch, Bot } from 'lucide-vue-next'
 
+const props = defineProps<{
+  width: number
+}>()
+
 const workspaceStore = useWorkspaceStore()
 const isOpen = ref(true)
+const toolbarWidth = 56
+const panelWidth = computed(() => Math.max(0, props.width - toolbarWidth))
 
 const toggleSidebar = () => {
   isOpen.value = !isOpen.value
@@ -13,7 +19,10 @@ const toggleSidebar = () => {
 </script>
 
 <template>
-  <aside class="h-full flex border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900">
+  <aside
+    class="h-full flex shrink-0 border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 overflow-hidden"
+    :style="{ width: `${isOpen ? props.width : toolbarWidth}px` }"
+  >
     <div class="w-14 h-full border-r border-zinc-200 dark:border-zinc-800 flex flex-col justify-between py-2">
       <div class="flex flex-col items-center gap-2">
         <button
@@ -59,8 +68,9 @@ const toggleSidebar = () => {
     <div
       :class="[
         'h-full overflow-hidden',
-        isOpen ? 'w-64 border-r border-zinc-200 dark:border-zinc-800' : 'w-0 border-r-0'
+        isOpen ? 'border-r border-zinc-200 dark:border-zinc-800' : 'w-0 border-r-0'
       ]"
+      :style="{ width: isOpen ? `${panelWidth}px` : '0px' }"
     >
       <div v-if="isOpen" class="h-full flex flex-col">
         <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">

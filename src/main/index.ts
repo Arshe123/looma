@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, shell, screen } from 'electron';
+import type { IpcMainInvokeEvent } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
@@ -13,14 +14,18 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 
+const getWindowFromEvent = (event: IpcMainInvokeEvent) => {
+  return BrowserWindow.fromWebContents(event.sender) ?? null;
+};
+
 const getWorkspaceById = async (workspaceId: string) => {
   const state = await workspaceService.getState();
   if (!state.success || !state.data) return null;
   return state.data.workspaces.find((w) => w.id === workspaceId) ?? null;
 };
 
-const setWindowTitleForWorkspace = async (workspaceId: string | null) => {
-  const win = mainWindow ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+const setWindowTitleForWorkspace = async (workspaceId: string | null, targetWindow?: BrowserWindow | null) => {
+  const win = targetWindow ?? mainWindow ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
   if (!win) return;
   if (!workspaceId) {
     win.setTitle('With You');
@@ -137,6 +142,12 @@ function createWindow(initialWorkspaceId?: string) {
   mainWindow = win;
   win.setIcon(path.join(__dirname, '../public/logo.png'));
 
+  win.on('closed', () => {
+    if (mainWindow === win) {
+      mainWindow = BrowserWindow.getAllWindows()[0] ?? null;
+    }
+  });
+
   // Handle close event to request workspace state before actually closing
   win.on('close', (e) => {
     if (!(win as any).isReadyToClose) {
@@ -229,9 +240,10 @@ ipcMain.handle('file:writeMarkdown', async (_, filePath: string, content: string
   return await fileService.writeMarkdown(filePath, content);
 });
 
-ipcMain.handle('app:showMessageBox', async (_, options: any) => {
-  if (!mainWindow) return { response: 0 };
-  return await dialog.showMessageBox(mainWindow, options);
+ipcMain.handle('app:showMessageBox', async (event, options: any) => {
+  const win = getWindowFromEvent(event) ?? mainWindow;
+  if (!win) return { response: 0 };
+  return await dialog.showMessageBox(win, options);
 });
 
 // Workspace Meta IPC (simplified version for now)
@@ -275,9 +287,9 @@ ipcMain.handle('workspace:recreate', async (_, id: string) => {
   return await workspaceService.recreateWorkspace(id);
 });
 
-ipcMain.handle('workspace:setActive', async (_, id: string | null) => {
+ipcMain.handle('workspace:setActive', async (event, id: string | null) => {
   const r = await workspaceService.setActiveWorkspace(id);
-  if (r.success) await setWindowTitleForWorkspace(id);
+  if (r.success) await setWindowTitleForWorkspace(id, getWindowFromEvent(event));
   return r;
 });
 
@@ -405,21 +417,21 @@ ipcMain.handle('fs:isFile', async (_, workspaceId: string, targetRelativePath: s
 
 
 // Window Management IPC
-ipcMain.handle('window:close', async () => {
-  const win = mainWindow ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+ipcMain.handle('window:close', async (event) => {
+  const win = getWindowFromEvent(event);
   if (win && !(win as any).isReadyToClose) {
     (win as any).isReadyToClose = true;
     win.close();
   }
 });
 
-ipcMain.handle('window:minimize', async () => {
-  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+ipcMain.handle('window:minimize', async (event) => {
+  const win = getWindowFromEvent(event);
   win?.minimize();
 });
 
-ipcMain.handle('window:toggleMaximize', async () => {
-  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+ipcMain.handle('window:toggleMaximize', async (event) => {
+  const win = getWindowFromEvent(event);
   if (!win) return;
 
   if (win.isMaximized()) {

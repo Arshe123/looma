@@ -8,6 +8,11 @@ import Inspector from 'unplugin-vue-dev-locator/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
+  server: {
+    watch: {
+      ignored: ['**/*.md', '**/*.txt'],
+    },
+  },
   build: {
     sourcemap: 'hidden',
   },

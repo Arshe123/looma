@@ -2,9 +2,15 @@
 import { useWorkspaceStore } from '../store/workspace'
 import { X } from 'lucide-vue-next'
 import { ref, onMounted, onUnmounted } from 'vue'
-import { getIconForFile } from '@/renderer/util/fileUtil'
 
 const workspaceStore = useWorkspaceStore()
+
+const getTabDisplayName = (relPath: string) => {
+  const fileName = relPath.split('/').pop() || relPath
+  const dotIndex = fileName.lastIndexOf('.')
+  const ext = dotIndex > 0 && dotIndex < fileName.length - 1 ? fileName.slice(dotIndex) : ''
+  return ext ? fileName.slice(0, -ext.length) : fileName
+}
 
 const closeTab = (e: Event | null, relPath: string) => {
   if (e) e.stopPropagation()
@@ -192,8 +198,7 @@ onUnmounted(() => {
         @contextmenu="(e) => onContextMenu(e, relPath)"
         :title="relPath"
       >
-        <component :is="getIconForFile(relPath)" :size="16" class="text-text-subtle shrink-0" />
-        <span class="text-xs truncate flex-1">{{ relPath.split('/').pop() }}</span>
+        <span class="text-xs truncate flex-1">{{ getTabDisplayName(relPath) }}</span>
         
         <!-- Save indicator dot (only for active tab if unsaved, but we don't track per-file unsaved state easily right now, so we use global isSaving for active tab) -->
         <div v-if="workspaceStore.activeFileRelativePath === relPath && workspaceStore.hasUnsavedChanges" class="w-2 h-2 rounded-full bg-text-subtle group-hover:hidden"></div>

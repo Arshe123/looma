@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ChevronRight, Folder } from 'lucide-vue-next'
-import { getIconForFile } from '@/renderer/util/fileUtil'
+import { ChevronRight } from 'lucide-vue-next'
 import { useWorkspaceStore, type FsEntry } from '../store/workspace'
 
 const workspaceStore = useWorkspaceStore()
@@ -18,6 +17,23 @@ const getParentDirFromPath = async (path: string) => {
   if (!isFile) return path
   return path.split('/').slice(0, -1).join('/')
 }
+
+const getDisplayExt = (row: FsEntry) => {
+  if (row.isDirectory) return ''
+  const name = row.name || ''
+  const dotIndex = name.lastIndexOf('.')
+  if (dotIndex === name.length - 1) return ''
+  return name.slice(dotIndex)
+}
+
+const getDisplayName = (row: FsEntry) => {
+  if (row.isDirectory) return row.name
+  const ext = getDisplayExt(row)
+  if (row.name.length === ext.length) return row.name
+  return ext ? row.name.slice(0, -ext.length) : row.name
+}
+
+const shouldShowEntry = (entry: FsEntry) => entry.name === '.gitignore' || !entry.name.startsWith('.')
 
 const isExpanded = (dirRelativePath: string) => expanded.value.has(dirRelativePath)
 const toggle = async (dirRelativePath: string) => workspaceStore.toggleDirExpanded(dirRelativePath)
@@ -142,7 +158,7 @@ const flattened = computed(() => {
   const result: Array<FsEntry & { depth: number }> = []
 
   const walk = (entries: FsEntry[], depth: number) => {
-    for (const entry of entries) {
+    for (const entry of entries.filter(shouldShowEntry)) {
       result.push({ ...entry, depth })
       if (entry.isDirectory && isExpanded(entry.relativePath)) {
         walk(getChildren(entry.relativePath), depth + 1)
@@ -238,11 +254,14 @@ onUnmounted(() => {
         </button>
         <div v-else class="w-6 h-6"></div>
 
-        <Folder v-if="row.isDirectory" :size="16" class="text-accent shrink-0" />
-        <component v-else :is="getIconForFile(row.name)" :size="16" class="text-text-subtle shrink-0" />
-
         <div class="flex-1 min-w-0 text-left text-sm truncate select-none" :title="row.name">
-          {{ row.name }}
+          {{ getDisplayName(row) }}
+        </div>
+        <div
+          v-if="getDisplayExt(row) && getDisplayExt(row) !== '.md'"
+          class="shrink-0 rounded-md bg-panel-soft px-1.5 py-0.5 text-[11px] leading-4 text-text-muted select-none"
+        >
+          {{ getDisplayExt(row) }}
         </div>
       </div>
 

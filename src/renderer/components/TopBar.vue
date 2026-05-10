@@ -40,7 +40,7 @@ const toggleMaximizeWindow = () => {
 
 const closeWindow = async () => {
   if (workspaceStore.isWorkspaceTransitioning) return
-  workspaceStore.setWorkspaceTransition(true, '正在保存...')
+  workspaceStore.setWorkspaceTransition(true, '姝ｅ湪淇濆瓨...')
   const ok = await workspaceStore.ensureSavedBeforeWorkspaceChange()
   if (!ok) {
     workspaceStore.setWorkspaceTransition(false, '')
@@ -90,83 +90,83 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <header class="h-12 w-full border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900" style="-webkit-app-region: drag">
+  <header class="h-12 w-full" style="-webkit-app-region: drag">
     <div class="h-full flex items-center justify-between gap-3 px-2">
       <div class="flex items-center gap-2 min-w-0" style="-webkit-app-region: no-drag">
         <div class="relative" data-workspace-menu>
           <button
-            class="h-9 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/40 hover:bg-white/80 dark:hover:bg-zinc-900/60 flex items-center gap-2 min-w-0"
+            class="h-9 px-3 rounded-lg bg-panel/70 hover:bg-panel-soft flex items-center gap-2 min-w-0 cursor-pointer"
             :title="workspaceStore.activeWorkspace?.path || ''"
             @click="toggleMenu"
             style="-webkit-app-region: no-drag"
           >
-            <span class="truncate text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+            <span class="truncate text-sm font-semibold text-text-main">
               {{ workspaceName }}
             </span>
-            <ChevronDown :size="16" class="text-zinc-500 dark:text-zinc-400 shrink-0" />
+            <ChevronDown :size="16" class="text-text-muted shrink-0" />
           </button>
 
           <div
             v-if="menuOpen"
-            class="absolute left-0 mt-2 w-[420px] max-w-[80vw] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden z-50"
+            class="absolute left-0 mt-2 w-[420px] max-w-[80vw] rounded-xl border border-border-soft bg-panel shadow-2xl overflow-hidden z-50"
             style="-webkit-app-region: no-drag"
             @pointerdown.stop
           >
-            <div class="px-3 py-2 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+            <div class="px-3 py-2 text-[11px] font-semibold text-text-muted border-b border-border-soft">
               最近打开
             </div>
 
-            <div v-if="recentWorkspaces.length === 0" class="px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400">
+            <div v-if="recentWorkspaces.length === 0" class="px-3 py-3 text-sm text-text-muted">
               暂无历史记录
             </div>
 
             <button
               v-for="ws in recentWorkspaces"
               :key="ws.id"
-              class="w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              class="w-full px-3 py-2 text-left hover:bg-accent-soft"
               @click="onSwitchTo(ws.id)"
             >
               <div class="flex items-center justify-between gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm font-medium text-zinc-800 dark:text-zinc-100 truncate">{{ ws.name }}</div>
-                  <div class="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">{{ ws.path }}</div>
+                  <div class="text-sm font-medium text-text-main truncate">{{ ws.name }}</div>
+                  <div class="text-[11px] text-text-muted truncate">{{ ws.path }}</div>
                 </div>
               </div>
             </button>
 
-            <div class="border-t border-zinc-200 dark:border-zinc-800"></div>
+            <div class="border-t border-border-soft"></div>
 
             <button
-              class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center justify-between"
+              class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft flex items-center justify-between"
               @click="() => { closeMenu(); workspaceStore.openWorkspaceInNewWindowFlow() }"
             >
-              <span class="inline-flex items-center gap-2 text-zinc-800 dark:text-zinc-100">
-                <FolderOpen :size="16" class="text-zinc-500" />
-                打开工作空间（新窗口）…
+              <span class="inline-flex items-center gap-2 text-text-main">
+                <FolderOpen :size="16" class="text-text-muted" />
+                打开工作空间
               </span>
-              <span class="text-[11px] text-zinc-400">Ctrl+O</span>
+              <span class="text-[11px] text-text-subtle">Ctrl+O</span>
             </button>
 
             <button
-              class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center justify-between"
+              class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft flex items-center justify-between"
               @click="() => { closeMenu(); workspaceStore.newWorkspaceInNewWindowFlow() }"
             >
-              <span class="inline-flex items-center gap-2 text-zinc-800 dark:text-zinc-100">
-                <Plus :size="16" class="text-zinc-500" />
-                新建工作空间（新窗口）…
+              <span class="inline-flex items-center gap-2 text-text-main">
+                <Plus :size="16" class="text-text-muted" />
+                新建工作空间（选择创建的位置）
               </span>
-              <span class="text-[11px] text-zinc-400">Ctrl+Shift+N</span>
+              <span class="text-[11px] text-text-subtle">Ctrl+Shift+N</span>
             </button>
 
             <button
-              class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center justify-between"
+              class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft flex items-center justify-between"
               @click="() => { closeMenu(); workspaceStore.openCommandPalette() }"
             >
-              <span class="inline-flex items-center gap-2 text-zinc-800 dark:text-zinc-100">
-                <Command :size="16" class="text-zinc-500" />
-                命令面板…
+              <span class="inline-flex items-center gap-2 text-text-main">
+                <Command :size="16" class="text-text-muted" />
+                打开命令面板
               </span>
-              <span class="text-[11px] text-zinc-400">Ctrl+Shift+P</span>
+              <span class="text-[11px] text-text-subtle">Ctrl+Shift+P</span>
             </button>
           </div>
         </div>
@@ -174,21 +174,21 @@ onUnmounted(() => {
 
       <div class="flex items-center gap-1" style="-webkit-app-region: no-drag">
         <button
-          class="w-9 h-9 inline-flex items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+          class="w-9 h-9 inline-flex items-center justify-center rounded-md text-text-muted hover:bg-accent-soft"
           title="最小化"
           @click="minimizeWindow"
         >
           <Minus :size="16" />
         </button>
         <button
-          class="w-9 h-9 inline-flex items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-          title="最大化/还原"
+          class="w-9 h-9 inline-flex items-center justify-center rounded-md text-text-muted hover:bg-accent-soft"
+          title="最大化"
           @click="toggleMaximizeWindow"
         >
           <Square :size="16" />
         </button>
         <button
-          class="w-9 h-9 inline-flex items-center justify-center rounded-md text-zinc-500 hover:bg-red-500 hover:text-white"
+          class="w-9 h-9 inline-flex items-center justify-center rounded-md text-text-muted hover:bg-danger hover:text-white"
           title="关闭"
           @click="closeWindow"
         >

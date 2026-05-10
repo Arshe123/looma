@@ -3,8 +3,7 @@ import chokidar, { type FSWatcher } from 'chokidar'
 import fs from 'fs/promises'
 import path from 'path'
 import type { WebContents } from 'electron'
-import type { Result } from '../interfaces/Result'
-import type { Stats } from 'node:fs'
+import type { Result } from '../interface/Result'
 
 export interface FsEntry {
   name: string
@@ -20,7 +19,7 @@ const resolveInWorkspace = (workspacePath: string, relativePath: string) => {
   const root = path.resolve(workspacePath)
   const target = path.resolve(root, relativePath)
   if (target === root) return { ok: true as const, root, target }
-  if (!target.startsWith(root + path.sep)) return { ok: false as const, error: 'Path is outside workspace' }
+  if (!target.startsWith(root + path.sep)) return { ok: false as const, error: '这不是工作空间内的路径' }
   return { ok: true as const, root, target }
 }
 
@@ -83,9 +82,9 @@ export const fileSystemService = {
       return { success: true, data: entries }
     } catch (error: any) {
       if (error?.code === 'ENOENT') {
-        return { success: false, error: `Directory not found: ${dirRelativePath}` }
+        return { success: false, error: `目录不存在: ${dirRelativePath}` }
       }
-      return { success: false, error: `Failed to list directory: ${error?.message ?? String(error)}` }
+      return { success: false, error: `列出目录失败: ${error?.message ?? String(error)}` }
     }
   },
 
@@ -95,13 +94,13 @@ export const fileSystemService = {
       if (!resolvedParent.ok) return { success: false, error: resolvedParent.error }
 
       const folderName = name.trim()
-      if (!folderName) return { success: false, error: 'Folder name is required' }
+      if (!folderName) return { success: false, error: '文件夹名称不能为空' }
       const destAbs = path.join(resolvedParent.target, folderName)
       const destRel = toPosix(path.relative(resolvedParent.root, destAbs))
       await fs.mkdir(destAbs, { recursive: false })
       return { success: true, data: destRel }
     } catch (error: any) {
-      return { success: false, error: `Failed to create folder: ${error?.message ?? String(error)}` }
+      return { success: false, error: `创建目录失败: ${error?.message ?? String(error)}` }
     }
   },
 
@@ -111,7 +110,7 @@ export const fileSystemService = {
       if (!resolvedParent.ok) return { success: false, error: resolvedParent.error }
 
       const fileName = name.trim()
-      if (!fileName || fileName === '.md') return { success: false, error: 'File name is required' }
+      if (!fileName || fileName === '.md') return { success: false, error: '文件名不能为空' }
       const destAbs = path.join(resolvedParent.target, fileName)
       const destRel = toPosix(path.relative(resolvedParent.root, destAbs))
       await fs.writeFile(destAbs, '', { encoding: 'utf-8', flag: 'wx' })
@@ -129,14 +128,14 @@ export const fileSystemService = {
       if (!toResolved.ok) return { success: false, error: toResolved.error }
 
       if (await pathExists(toResolved.target)) {
-        return { success: false, error: 'Target path already exists' }
+        return { success: false, error: '目标路径已存在' }
       }
 
       await ensureDir(path.dirname(toResolved.target))
       await safeRename(fromResolved.target, toResolved.target)
       return { success: true }
     } catch (error: any) {
-      return { success: false, error: `Failed to move: ${error?.message ?? String(error)}` }
+      return { success: false, error: `移动失败: ${error?.message ?? String(error)}` }
     }
   },
 
@@ -146,15 +145,15 @@ export const fileSystemService = {
       if (!targetResolved.ok) return { success: false, error: targetResolved.error }
 
       const newNameTrimmed = newName.trim()
-      if (!newNameTrimmed) return { success: false, error: 'New name is required' }
+      if (!newNameTrimmed) return { success: false, error: '新名称不能为空' }
       const newPath = path.join(path.dirname(targetResolved.target), newNameTrimmed)
       if (await pathExists(newPath)) {
-        return { success: false, error: 'New name already exists' }
+        return { success: false, error: '新名称已存在' }
       }
       await safeRename(targetResolved.target, newPath)
       return { success: true, data: toPosix(path.relative(targetResolved.root, newPath)) }
     } catch (error: any) {
-      return { success: false, error: `Failed to rename: ${error?.message ?? String(error)}` }
+      return { success: false, error: `重命名失败: ${error?.message ?? String(error)}` }
     }
   },
 
@@ -171,7 +170,7 @@ export const fileSystemService = {
       await safeRename(targetResolved.target, trashAbs)
       return { success: true, data: { trashRelativePath: toPosix(path.relative(trashDir, trashAbs)) } }
     } catch (error: any) {
-      return { success: false, error: `Failed to delete: ${error?.message ?? String(error)}` }
+      return { success: false, error: `删除失败: ${error?.message ?? String(error)}` }
     }
   },
 
@@ -180,7 +179,7 @@ export const fileSystemService = {
       const stats = await fs.stat(path.join(workspacePath, targetRelativePath))
       return { success: true, data: stats.isFile() }
     } catch (error: any) {
-      return { success: false, error: `判断文件类型失败: ${error?.message ?? String(error)}` }
+      return { success: false, error: `检查文件类型失败: ${error?.message ?? String(error)}` }
     }
   },
 
@@ -193,7 +192,7 @@ export const fileSystemService = {
     try {
       const trashDir = getTrashDir(workspaceId)
       const trashAbs = path.resolve(trashDir, trashRelativePath)
-      if (!trashAbs.startsWith(path.resolve(trashDir) + path.sep)) return { success: false, error: 'Invalid trash path' }
+      if (!trashAbs.startsWith(path.resolve(trashDir) + path.sep)) return { success: false, error: '无效的回收站路径' }
 
       const restoreResolved = resolveInWorkspace(workspacePath, restoreToRelativePath)
       if (!restoreResolved.ok) return { success: false, error: restoreResolved.error }
@@ -202,7 +201,7 @@ export const fileSystemService = {
       await safeRename(trashAbs, restoreResolved.target)
       return { success: true }
     } catch (error: any) {
-      return { success: false, error: `Failed to restore: ${error?.message ?? String(error)}` }
+      return { success: false, error: `恢复失败: ${error?.message ?? String(error)}` }
     }
   },
 
@@ -212,7 +211,7 @@ export const fileSystemService = {
       await fs.rm(trashDir, { recursive: true, force: true })
       return { success: true }
     } catch (error: any) {
-      return { success: false, error: `Failed to empty trash: ${error?.message ?? String(error)}` }
+      return { success: false, error: `清空回收站失败: ${error?.message ?? String(error)}` }
     }
   },
 }
@@ -294,7 +293,7 @@ export const fileWatchService = {
       try {
         state.watcher.add(toAdd)
       } catch {
-        // 忽略添加监听路径时的错误
+        // 蹇界暐娣诲姞鐩戝惉璺緞鏃剁殑閿欒
       }
     }
   },

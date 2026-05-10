@@ -224,7 +224,7 @@ onBeforeUnmount(() => {
     <button
       v-if="menuVisible"
       id="inline-menu-button"
-      class="absolute flex items-center justify-center w-6 h-6 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-500 transition-colors z-10"
+      class="absolute flex items-center justify-center w-6 h-6 rounded-full bg-panel-soft hover:bg-accent-soft text-text-muted transition-colors z-10"
       :style="{ top: `${buttonPosition.top}px`, left: `${buttonPosition.left}px` }"
       @click="togglePanel"
     >
@@ -235,7 +235,7 @@ onBeforeUnmount(() => {
     <div
       v-if="panelVisible"
       id="inline-panel"
-      class="absolute w-48 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-xl z-20 py-1 overflow-y-auto max-h-[220px]"
+      class="absolute w-48 bg-panel border border-border-soft rounded-lg shadow-xl z-20 py-1 overflow-y-auto max-h-[220px]"
       :style="{ top: `${panelPosition.top}px`, left: `${panelPosition.left}px` }"
     >
       <div
@@ -243,8 +243,8 @@ onBeforeUnmount(() => {
         :key="item.id"
         class="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-colors"
         :class="{
-          'bg-zinc-100 dark:bg-zinc-800 text-blue-600 dark:text-blue-400': index === selectedIndex,
-          'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/50': index !== selectedIndex
+          'bg-accent-soft text-accent': index === selectedIndex,
+          'text-text-main hover:bg-accent-soft/50': index !== selectedIndex
         }"
         @click="item.action(); panelVisible = false"
         @mouseenter="selectedIndex = index"

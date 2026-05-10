@@ -34,6 +34,9 @@ export interface WorkspaceMeta {
   fileSessions?: Record<string, EditorSession>
 }
 
+export type ResolvedThemeName = 'light' | 'dark'
+export type ThemeName = ResolvedThemeName | 'system'
+
 export type UndoAction =
   | { type: 'create'; relativePath: string }
   | { type: 'move'; items: { from: string; to: string }[] }

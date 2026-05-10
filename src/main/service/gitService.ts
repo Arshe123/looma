@@ -44,23 +44,23 @@ export const gitService: GitService = {
   },
 
   async commitAll(message: string): Promise<void> {
-    // TODO: Use `simple-git` to commit all changes.
-    // Future spec:
-    // - Call git.add('.') and git.commit(message).
-    console.log(`Committing all changes with message: ${message}... (Not implemented)`);
+    // TODO: 使用 `simple-git` 提交所有变更。
+    // 未来规格：
+    // - 调用 git.add('.') 和 git.commit(message)。
+    console.log(`提交所有变更，消息：${message}... (未实现)`);
   },
 
   async getHistory(filePath: string): Promise<GitLog[]> {
-    // TODO: Use `simple-git` to fetch git history for a file.
-    // Future spec:
-    // - Call git.log({ file: filePath }).
-    console.log(`Fetching git history for ${filePath}... (Not implemented)`);
+    // TODO: 使用 `simple-git` 来获取文件的 git 历史记录。
+    // 未来规格：
+    // - 调用 git.log({ file: filePath })。
+    console.log(`获取文件 ${filePath} 的 git 历史记录... (未实现)`);
     return [
       {
         hash: "dummy-hash",
         author: "System",
         date: new Date().toISOString(),
-        message: "Git history integration coming soon."
+        message: "Git历史集成即将推出。"
       }
     ];
   }

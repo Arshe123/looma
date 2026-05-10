@@ -17,13 +17,13 @@ type CommandItem = { id: string; title: string; shortcut: string; run: () => voi
 const commands = computed<CommandItem[]>(() => [
   {
     id: 'workspace.switch',
-    title: '打开工作空间（新窗口）…',
+    title: '打开工作空间',
     shortcut: 'Ctrl+O',
     run: () => workspaceStore.openWorkspaceInNewWindowFlow(),
   },
   {
     id: 'workspace.new',
-    title: '新建工作空间（新窗口）…',
+    title: '新建工作空间',
     shortcut: 'Ctrl+Shift+N',
     run: () => workspaceStore.newWorkspaceInNewWindowFlow(),
   },
@@ -99,30 +99,37 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-if="workspaceStore.commandPaletteOpen" class="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-20" @pointerdown.self="close">
-    <div class="w-[720px] max-w-[92vw] rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl overflow-hidden" @pointerdown.stop>
-      <div class="flex items-center gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
-        <Search :size="18" class="text-zinc-400" />
+  <div
+    v-if="workspaceStore.commandPaletteOpen"
+    class="fixed inset-0 z-50 bg-overlay flex items-start justify-center pt-20"
+    @pointerdown.self="close"
+  >
+    <div
+      class="w-[720px] max-w-[92vw] rounded-xl bg-panel border border-border-soft shadow-2xl shadow-black/25 overflow-hidden"
+      @pointerdown.stop
+    >
+      <div class="flex items-center gap-2 px-4 py-3 border-b border-border-soft">
+        <Search :size="18" class="text-text-subtle" />
         <input
           ref="inputRef"
           v-model="query"
-          class="flex-1 bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-100 placeholder:text-zinc-400"
-          placeholder="键入命令"
+          class="flex-1 bg-transparent outline-hidden text-sm text-text-main placeholder:text-text-subtle"
+          placeholder="搜索命令…"
         />
-        <div class="text-[11px] text-zinc-400">Esc</div>
+        <div class="text-[11px] text-text-subtle">Esc</div>
       </div>
 
       <div class="max-h-[360px] overflow-y-auto focus-scrollbar">
         <button
           v-for="(c, idx) in filtered"
           :key="c.id"
-          class="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
-          :class="[idx === activeIndex ? 'bg-zinc-100 dark:bg-zinc-800' : '']"
+          class="w-full px-4 py-3 flex items-center justify-between text-left text-text-main hover:bg-accent-soft"
+          :class="[idx === activeIndex ? 'bg-accent-soft' : '']"
           @mouseenter="activeIndex = idx"
           @click="() => { activeIndex = idx; runActive() }"
         >
-          <div class="text-sm text-zinc-800 dark:text-zinc-100">{{ c.title }}</div>
-          <div class="text-[11px] text-zinc-400">{{ c.shortcut }}</div>
+          <div class="text-sm">{{ c.title }}</div>
+          <div class="text-[11px] text-text-subtle">{{ c.shortcut }}</div>
         </button>
 
         <div v-if="filtered.length === 0" class="px-4 py-6 text-sm text-zinc-500 dark:text-zinc-400">无匹配命令</div>

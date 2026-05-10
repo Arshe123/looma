@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { useWorkspaceStore } from '../store/workspace'
-import { X, CheckCircle2, AlertCircle } from 'lucide-vue-next'
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { X } from 'lucide-vue-next'
+import { ref, onMounted, onUnmounted } from 'vue'
+import { getIconForFile } from '@/renderer/util/fileUtil'
 
 const workspaceStore = useWorkspaceStore()
-
-const isSaving = computed(() => workspaceStore.activeFileIsSaving)
-const saveError = computed(() => workspaceStore.activeFileSaveError || null)
 
 const closeTab = (e: Event | null, relPath: string) => {
   if (e) e.stopPropagation()
@@ -172,7 +170,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <header class="h-10 flex bg-zinc-50 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 z-10 w-full overflow-hidden select-none">
+  <header class="h-10 flex bg-panel-soft border-border-soft z-10 w-full overflow-hidden select-none">
     <div 
       class="flex-1 flex overflow-x-auto overflow-y-hidden custom-scrollbar focus-scrollbar"
       @wheel="onWheel"
@@ -180,11 +178,11 @@ onUnmounted(() => {
       <div
         v-for="(relPath, index) in workspaceStore.openedFiles"
         :key="relPath"
-        class="group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full border-r border-zinc-200 dark:border-zinc-800 cursor-pointer relative shrink-0 transition-colors"
+        class="group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full border-r border-border-soft cursor-pointer relative shrink-0 transition-colors rounded-t-lg"
         :class="[
           workspaceStore.activeFileRelativePath === relPath
-            ? 'bg-white dark:bg-[#1e1e1e] text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-500'
-            : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 border-t-2 border-t-transparent'
+            ? 'bg-surface text-accent'
+            : 'border-b bg-panel-soft text-text-muted hover:bg-accent-soft'
         ]"
         draggable="true"
         @dragstart="(e) => onDragStart(e, index)"
@@ -194,13 +192,14 @@ onUnmounted(() => {
         @contextmenu="(e) => onContextMenu(e, relPath)"
         :title="relPath"
       >
+        <component :is="getIconForFile(relPath)" :size="16" class="text-text-subtle shrink-0" />
         <span class="text-xs truncate flex-1">{{ relPath.split('/').pop() }}</span>
         
         <!-- Save indicator dot (only for active tab if unsaved, but we don't track per-file unsaved state easily right now, so we use global isSaving for active tab) -->
-        <div v-if="workspaceStore.activeFileRelativePath === relPath && workspaceStore.hasUnsavedChanges" class="w-2 h-2 rounded-full bg-zinc-400 group-hover:hidden"></div>
+        <div v-if="workspaceStore.activeFileRelativePath === relPath && workspaceStore.hasUnsavedChanges" class="w-2 h-2 rounded-full bg-text-subtle group-hover:hidden"></div>
 
         <button
-          class="w-5 h-5 flex items-center justify-center rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 opacity-0 group-hover:opacity-100 transition-opacity"
+          class="w-5 h-5 flex items-center justify-center rounded hover:bg-accent-soft opacity-0 group-hover:opacity-100 transition-opacity"
           :class="{ 'opacity-100': workspaceStore.activeFileRelativePath === relPath && !workspaceStore.hasUnsavedChanges }"
           @click="(e) => closeTab(e, relPath)"
         >
@@ -208,53 +207,37 @@ onUnmounted(() => {
         </button>
       </div>
     </div>
-
-    <!-- Right side status -->
-    <div class="flex items-center gap-2 px-4 shrink-0 border-l border-zinc-200 dark:border-zinc-800">
-      <div v-if="isSaving" class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-[10px] text-zinc-500 font-medium">
-        <div class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>
-        Saving...
-      </div>
-      <div v-else-if="!saveError && workspaceStore.activeFilePath" class="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] text-emerald-500 font-medium">
-        <CheckCircle2 :size="12" />
-        Saved
-      </div>
-      <div v-else-if="saveError" class="flex items-center gap-1 px-2 py-0.5 rounded bg-red-50 dark:bg-red-900/20 text-[10px] text-red-500 font-medium group cursor-pointer" :title="saveError">
-        <AlertCircle :size="12" />
-        Save Failed
-      </div>
-    </div>
     
     <!-- Context Menu -->
     <div
       v-if="menuOpen"
-      class="fixed z-50 w-[180px] rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl py-1 text-sm text-zinc-700 dark:text-zinc-300"
+      class="fixed z-50 w-[180px] rounded-lg border border-border-soft bg-panel shadow-xl py-1 text-sm text-text-main"
       :style="{ left: `${menuX}px`, top: `${menuY}px` }"
       style="-webkit-app-region: no-drag"
       @pointerdown.stop
       @contextmenu.prevent
     >
-      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCloseTab">
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleCloseTab">
         关闭
       </button>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCloseRightTabs">
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleCloseRightTabs">
         关闭右侧标签页
       </button>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCloseSavedTabs">
-        关闭已保存
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleCloseSavedTabs">
+        关闭已保存标签页
       </button>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCloseAllTabs">
-        全部关闭
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleCloseAllTabs">
+        关闭全部标签页
       </button>
-      <div class="h-px bg-zinc-200 dark:bg-zinc-800 my-1"></div>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCopyPath">
+      <div class="h-px bg-accent-soft my-1"></div>
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleCopyPath">
         复制路径
       </button>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCopyRelativePath">
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleCopyRelativePath">
         复制相对路径
       </button>
-      <div class="h-px bg-zinc-200 dark:bg-zinc-800 my-1"></div>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleRevealInExplorer">
+      <div class="h-px bg-accent-soft my-1"></div>
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleRevealInExplorer">
         在文件资源管理器中显示
       </button>
     </div>

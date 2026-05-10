@@ -118,12 +118,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-screen w-screen flex flex-col overflow-hidden bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 antialiased font-sans select-none">
+  <div class="h-screen w-screen flex flex-col overflow-hidden bg-bg text-text-main antialiased font-sans select-none">
     <TopBar />
     <div class="flex flex-1 overflow-hidden">
       <Sidebar :width="sidebarWidth" />
       <div
-        class="relative z-10 h-full w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-blue-500/40 active:bg-blue-500/60"
+        class="relative z-10 h-full w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent-soft active:bg-accent"
         style="-webkit-app-region: no-drag"
         @pointerdown="startSidebarResize"
       />
@@ -132,19 +132,19 @@ onUnmounted(() => {
   </div>
   <InputDialog />
   <CommandPalette />
-  <div v-if="workspaceStore.isBusy" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-zinc-900 text-zinc-100 text-xs shadow-lg">
-    {{ workspaceStore.busyText || '处理中…' }}
+  <div v-if="workspaceStore.isBusy" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-panel text-text-main text-xs shadow-lg">
+    {{ workspaceStore.busyText || '处理中...' }}
   </div>
-  <div v-if="workspaceStore.isWorkspaceTransitioning" class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center">
-    <div class="w-[420px] max-w-[92vw] rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl p-5 text-center">
-      <div class="mx-auto w-6 h-6 rounded-full border-2 border-zinc-300 dark:border-zinc-700 border-t-blue-600 animate-spin"></div>
-      <div class="mt-3 text-sm font-semibold text-zinc-800 dark:text-zinc-100">正在加载</div>
-      <div class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ workspaceStore.workspaceTransitionText || '处理中…' }}</div>
+  <div v-if="workspaceStore.isWorkspaceTransitioning" class="fixed inset-0 z-40 bg-overlay flex items-center justify-center">
+    <div class="w-[420px] max-w-[92vw] rounded-xl bg-panel border border-border-soft shadow-2xl p-5 text-center">
+      <div class="mx-auto w-6 h-6 rounded-full border-2 border-border-soft border-t-accent animate-spin"></div>
+      <div class="mt-3 text-sm font-semibold text-text-main">Loading</div>
+      <div class="mt-1 text-xs text-text-muted">{{ workspaceStore.workspaceTransitionText || '处理中...' }}</div>
     </div>
   </div>
   <div
     v-if="workspaceStore.lastError"
-    class="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-[520px] z-50 pointer-events-auto px-4 py-3 rounded-lg bg-red-600 text-white text-sm shadow-lg flex items-center justify-between gap-3"
+    class="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-[520px] z-50 pointer-events-auto px-4 py-3 rounded-lg bg-danger text-white text-sm shadow-lg flex items-center justify-between gap-3"
     style="-webkit-app-region: no-drag"
   >
     <div>{{ workspaceStore.lastError }}</div>

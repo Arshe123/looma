@@ -3,7 +3,6 @@ import { nextTick, ref, watch } from 'vue'
 import { useWorkspaceStore } from '../store/workspace'
 
 const workspaceStore = useWorkspaceStore()
-
 const inputEl = ref<HTMLInputElement | null>(null)
 
 watch(
@@ -28,27 +27,27 @@ const cancel = () => {
 
 <template>
   <div v-if="workspaceStore.inputDialogOpen" class="fixed inset-0 z-50">
-    <div class="absolute inset-0 bg-black/30" style="-webkit-app-region: no-drag" @click="cancel"></div>
+    <div class="absolute inset-0 bg-overlay" style="-webkit-app-region: no-drag" @click="cancel"></div>
     <div class="absolute inset-0 flex items-center justify-center p-6" style="-webkit-app-region: no-drag">
-      <div class="w-full max-w-md rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xl">
-        <div class="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
-          <div class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{{ workspaceStore.inputDialogTitle }}</div>
+      <div class="w-full max-w-md rounded-xl bg-panel border border-border-soft shadow-2xl shadow-black/25">
+        <div class="px-4 py-3 border-b border-border-soft">
+          <div class="text-sm font-semibold text-text-main">{{ workspaceStore.inputDialogTitle }}</div>
         </div>
         <div class="px-4 py-4">
           <input
             ref="inputEl"
             v-model="workspaceStore.inputDialogValue"
-            class="w-full px-3 py-2 rounded-lg bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-sm outline-none focus:ring-2 focus:ring-blue-500/40"
+            class="w-full px-3 py-2 rounded-lg bg-surface border border-border-soft text-text-main placeholder:text-text-subtle text-sm outline-hidden focus:border-accent focus:ring-4 focus:ring-accent-soft"
             :placeholder="workspaceStore.inputDialogPlaceholder"
             @keydown.enter.prevent="submit"
             @keydown.esc.prevent="cancel"
           />
         </div>
-        <div class="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-end gap-2">
-          <button class="px-3 py-2 rounded-lg text-sm bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700" @click="cancel">
+        <div class="px-4 py-3 border-t border-border-soft flex items-center justify-end gap-2">
+          <button class="px-3 py-2 rounded-lg text-sm bg-accent-soft hover:bg-accent-soft text-text-main" @click="cancel">
             取消
           </button>
-          <button class="px-3 py-2 rounded-lg text-sm bg-blue-600 hover:bg-blue-700 text-white" @click="submit">
+          <button class="px-3 py-2 rounded-lg text-sm bg-accent hover:bg-accent-hover text-white" @click="submit">
             确定
           </button>
         </div>
@@ -56,4 +55,3 @@ const cancel = () => {
     </div>
   </div>
 </template>
-

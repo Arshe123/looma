@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ChevronRight, Folder, FileText, Image, Video, FileType2 } from 'lucide-vue-next'
+import { ChevronRight, Folder } from 'lucide-vue-next'
+import { getIconForFile } from '@/renderer/util/fileUtil'
 import { useWorkspaceStore, type FsEntry } from '../store/workspace'
 
 const workspaceStore = useWorkspaceStore()
-
 const expanded = computed(() => workspaceStore.activeExpandedSet)
 const activeFileRel = computed(() => workspaceStore.activeFileRelativePath)
 
@@ -15,61 +15,17 @@ const getChildren = (dirRelativePath: string) => {
 
 const getParentDirFromPath = async (path: string) => {
   const isFile = await workspaceStore.isFile(path)
-  if (!isFile) return path;
+  if (!isFile) return path
   return path.split('/').slice(0, -1).join('/')
 }
 
 const isExpanded = (dirRelativePath: string) => expanded.value.has(dirRelativePath)
-
-const getIconForFile = (filename: string) => {
-  const ext = filename.split('.').pop()?.toLowerCase()
-  if (ext === 'md') return FileText
-  if (ext === 'txt') return FileType2
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext || '')) return Image
-  if (['mp4', 'webm', 'ogg'].includes(ext || '')) return Video
-  return FileText
-}
-
-const toggle = async (dirRelativePath: string) => {
-  await workspaceStore.toggleDirExpanded(dirRelativePath)
-}
-
-const removeEntry = async (relativePath: string) => {
-  if (workspaceStore.selectedPaths.includes(relativePath)) {
-    await workspaceStore.deleteEntries(workspaceStore.selectedPaths)
-  } else {
-    await workspaceStore.deleteEntries([relativePath])
-  }
-  closeMenu()
-}
-
-const renameEntry = async (relativePath: string) => {
-  await workspaceStore.renameEntry(relativePath)
-}
-
-const handleRowClick = (event: MouseEvent, row: FsEntry, isMulti: boolean) => {
-  workspaceStore.selectPath(row.relativePath, isMulti, false)
-
-  if (!isMulti) {
-    if (row.isDirectory) {
-      workspaceStore.selectDir(row.relativePath)
-      workspaceStore.toggleDirExpanded(row.relativePath)
-    } else {
-      workspaceStore.setActiveFileRelative(row.relativePath)
-    }
-  }
-}
-
-const handleRightClick = (event: MouseEvent, row: FsEntry) => {
-  event.stopPropagation()
-  workspaceStore.selectPath(row.relativePath, false, true)
-  openMenu(event, row)
-}
+const toggle = async (dirRelativePath: string) => workspaceStore.toggleDirExpanded(dirRelativePath)
 
 const menuOpen = ref(false)
 const menuX = ref(0)
 const menuY = ref(0)
-const selectedFile = ref<FsEntry>()
+const selectedFile = ref<FsEntry | null>(null)
 
 const closeMenu = () => {
   menuOpen.value = false
@@ -80,12 +36,28 @@ const openMenu = (event: MouseEvent, row: FsEntry) => {
   selectedFile.value = row
   const pad = 8
   const width = 180
-  const height = 220
-  const x = Math.min(event.clientX, window.innerWidth - width - pad)
-  const y = Math.min(event.clientY, window.innerHeight - height - pad)
-  menuX.value = Math.max(pad, x)
-  menuY.value = Math.max(pad, y)
+  const height = 260
+  menuX.value = Math.max(pad, Math.min(event.clientX, window.innerWidth - width - pad))
+  menuY.value = Math.max(pad, Math.min(event.clientY, window.innerHeight - height - pad))
   menuOpen.value = true
+}
+
+const handleRowClick = (_event: MouseEvent, row: FsEntry, isMulti: boolean) => {
+  workspaceStore.selectPath(row.relativePath, isMulti, false)
+  if (isMulti) return
+
+  if (row.isDirectory) {
+    workspaceStore.selectDir(row.relativePath)
+    workspaceStore.toggleDirExpanded(row.relativePath)
+  } else {
+    workspaceStore.setActiveFileRelative(row.relativePath)
+  }
+}
+
+const handleRightClick = (event: MouseEvent, row: FsEntry) => {
+  event.stopPropagation()
+  workspaceStore.selectPath(row.relativePath, false, true)
+  openMenu(event, row)
 }
 
 const addFile = async () => {
@@ -98,6 +70,20 @@ const addFolder = async () => {
   await workspaceStore.createFolder(undefined, selectedFile.value?.relativePath)
 }
 
+const renameEntry = async (relativePath: string) => {
+  await workspaceStore.renameEntry(relativePath)
+  closeMenu()
+}
+
+const removeEntry = async (relativePath: string) => {
+  if (workspaceStore.selectedPaths.includes(relativePath)) {
+    await workspaceStore.deleteEntries(workspaceStore.selectedPaths)
+  } else {
+    await workspaceStore.deleteEntries([relativePath])
+  }
+  closeMenu()
+}
+
 const onDragStart = (event: DragEvent, entry: FsEntry) => {
   let pathsToDrag = [entry.relativePath]
   if (workspaceStore.selectedPaths.includes(entry.relativePath)) {
@@ -105,13 +91,13 @@ const onDragStart = (event: DragEvent, entry: FsEntry) => {
   } else {
     workspaceStore.selectPath(entry.relativePath, false, false)
   }
-  
+
   event.dataTransfer?.setData('text/plain', JSON.stringify(pathsToDrag))
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-  
+
   const dragImage = document.createElement('div')
-  dragImage.textContent = pathsToDrag.length > 1 ? `移动 ${pathsToDrag.length} 个项目` : entry.name
-  dragImage.className = 'bg-blue-500 text-white px-3 py-1 rounded text-sm whitespace-nowrap fixed -top-[1000px]'
+  dragImage.textContent = pathsToDrag.length > 1 ? `Move ${pathsToDrag.length} items` : entry.name
+  dragImage.className = 'bg-accent text-white px-3 py-1 rounded text-sm whitespace-nowrap fixed -top-[1000px]'
   document.body.appendChild(dragImage)
   event.dataTransfer?.setDragImage(dragImage, 10, 10)
   setTimeout(() => document.body.removeChild(dragImage), 0)
@@ -119,33 +105,31 @@ const onDragStart = (event: DragEvent, entry: FsEntry) => {
 
 const onDropToDir = async (event: DragEvent, dirRelativePath: string) => {
   event.preventDefault()
-  
   let draggedPaths: string[] = []
+
   try {
     const data = event.dataTransfer?.getData('text/plain')
     if (data) {
       const parsed = JSON.parse(data)
       if (Array.isArray(parsed)) draggedPaths = parsed
     }
-  } catch (e) {
+  } catch {
     const raw = event.dataTransfer?.getData('text/plain')
     if (raw) draggedPaths = [raw]
   }
-  
-  if (draggedPaths.length === 0) return
 
-  dirRelativePath = await getParentDirFromPath(dirRelativePath)
-  
-  const toMove = draggedPaths.filter(from => {
-    if (!from || from === dirRelativePath) return false
+  if (draggedPaths.length === 0) return
+  const targetDir = await getParentDirFromPath(dirRelativePath)
+
+  const toMove = draggedPaths.filter((from) => {
+    if (!from || from === targetDir) return false
     const name = from.split('/').pop() || from
-    const to = (dirRelativePath ? `${dirRelativePath}/${name}` : name).replace(/\/{2,}/g, '/')
-    if (to === from) return false
-    return true
+    const to = (targetDir ? `${targetDir}/${name}` : name).replace(/\/{2,}/g, '/')
+    return to !== from
   })
-  
+
   if (toMove.length > 0) {
-    await workspaceStore.moveEntries(toMove, dirRelativePath)
+    await workspaceStore.moveEntries(toMove, targetDir)
   }
 }
 
@@ -154,45 +138,21 @@ const allowDrop = (event: DragEvent) => {
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
 }
 
-const renderEntries = (entries: FsEntry[], depth: number) => {
-  return entries.map((e) => ({ ...e, depth }))
-}
-
 const flattened = computed(() => {
-  const rootChildren = getChildren('')
   const result: Array<FsEntry & { depth: number }> = []
 
-  const walk = (dir: string, depth: number) => {
-    const children = getChildren(dir)
-    const rows = renderEntries(children, depth)
-    for (const row of rows) {
-      result.push(row)
-      if (row.isDirectory && isExpanded(row.relativePath)) {
-        walk(row.relativePath, depth + 1)
+  const walk = (entries: FsEntry[], depth: number) => {
+    for (const entry of entries) {
+      result.push({ ...entry, depth })
+      if (entry.isDirectory && isExpanded(entry.relativePath)) {
+        walk(getChildren(entry.relativePath), depth + 1)
       }
     }
   }
 
-  for (const row of renderEntries(rootChildren, 0)) {
-    result.push(row)
-    if (row.isDirectory && isExpanded(row.relativePath)) {
-      walk(row.relativePath, 1)
-    }
-  }
-
+  walk(getChildren(''), 0)
   return result
 })
-
-const onGlobalPointerDown = () => closeMenu()
-const onGlobalKeyDown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape') closeMenu()
-  if (e.key === 'Delete') {
-    const paths = workspaceStore.selectedPaths
-    if (paths.length > 0) {
-      workspaceStore.deleteEntries(paths)
-    }
-  }
-}
 
 const handleCopyPath = () => {
   if (!selectedFile.value || !workspaceStore.activeWorkspace) return
@@ -216,6 +176,14 @@ const handleRevealInExplorer = async () => {
   closeMenu()
 }
 
+const onGlobalPointerDown = () => closeMenu()
+const onGlobalKeyDown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape') closeMenu()
+  if (e.key === 'Delete' && workspaceStore.selectedPaths.length > 0) {
+    workspaceStore.deleteEntries(workspaceStore.selectedPaths)
+  }
+}
+
 onMounted(() => {
   window.addEventListener('pointerdown', onGlobalPointerDown)
   window.addEventListener('keydown', onGlobalKeyDown)
@@ -232,25 +200,22 @@ onUnmounted(() => {
     <div
       class="flex-1 overflow-y-auto px-2 pb-2 focus-scrollbar"
       @click.self="workspaceStore.clearSelection()"
-      @contextmenu.self="(e) => { workspaceStore.clearSelection(); openMenu(e, { name: '', relativePath: '', isDirectory: true, size: 0, mtimeMs: 0})}"
+      @contextmenu.self="(e) => { workspaceStore.clearSelection(); openMenu(e, { name: '', relativePath: '', isDirectory: true, size: 0, mtimeMs: 0 }) }"
       @dragover.self="allowDrop"
       @drop.self="(e) => onDropToDir(e, '')"
     >
-      <div
-        class="px-2 py-2 rounded-md text-sm text-zinc-500 dark:text-zinc-500"
-        v-if="flattened.length === 0"
-      >
+      <div v-if="flattened.length === 0" class="px-2 py-2 rounded-md text-sm text-text-subtle">
         空文件夹
       </div>
 
       <div
         v-for="row in flattened"
         :key="row.relativePath"
-        class="group flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        class="group flex items-center gap-2 py-1.5 px-2 rounded-md border-l-2 border-transparent text-text-muted hover:bg-accent-soft hover:text-text-main"
         :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
         :class="[
-          workspaceStore.selectedPaths.includes(row.relativePath) ? 'bg-blue-100/50 dark:bg-blue-900/30' : '',
-          (!workspaceStore.selectedPaths.includes(row.relativePath) && !row.isDirectory && activeFileRel === row.relativePath) ? 'bg-zinc-100 dark:bg-zinc-800' : '',
+          workspaceStore.selectedPaths.includes(row.relativePath) ? 'border-accent bg-accent-soft text-text-main' : '',
+          (!workspaceStore.selectedPaths.includes(row.relativePath) && !row.isDirectory && activeFileRel === row.relativePath) ? 'border-accent bg-accent-soft text-text-main' : '',
         ]"
         draggable="true"
         @dragstart="(e) => onDragStart(e, row)"
@@ -263,7 +228,7 @@ onUnmounted(() => {
       >
         <button
           v-if="row.isDirectory"
-          class="w-6 h-6 inline-flex items-center justify-center rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-500"
+          class="w-6 h-6 inline-flex items-center justify-center rounded hover:bg-accent-soft text-text-muted"
           @click.stop="toggle(row.relativePath)"
         >
           <ChevronRight
@@ -273,20 +238,17 @@ onUnmounted(() => {
         </button>
         <div v-else class="w-6 h-6"></div>
 
-        <Folder v-if="row.isDirectory" :size="16" class="text-blue-500 shrink-0" />
-        <component v-else :is="getIconForFile(row.name)" :size="16" class="text-zinc-400 shrink-0" />
+        <Folder v-if="row.isDirectory" :size="16" class="text-accent shrink-0" />
+        <component v-else :is="getIconForFile(row.name)" :size="16" class="text-text-subtle shrink-0" />
 
-        <div
-          class="flex-1 min-w-0 text-left text-sm truncate select-none"
-          :title="row.name"
-        >
+        <div class="flex-1 min-w-0 text-left text-sm truncate select-none" :title="row.name">
           {{ row.name }}
         </div>
       </div>
 
       <div
-        v-if="menuOpen"
-        class="fixed z-50 w-[180px] rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl py-1"
+        v-if="menuOpen && selectedFile"
+        class="fixed z-50 w-[180px] rounded-lg border border-border-soft bg-panel shadow-xl py-1 text-text-main"
         :style="{ left: `${menuX}px`, top: `${menuY}px` }"
         style="-webkit-app-region: no-drag"
         @pointerdown.stop
@@ -295,7 +257,7 @@ onUnmounted(() => {
         <button
           v-if="selectedFile.isDirectory"
           title="新建文件"
-          class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft"
           @click="addFile"
         >
           新建文件
@@ -303,37 +265,36 @@ onUnmounted(() => {
         <button
           v-if="selectedFile.isDirectory"
           title="新建文件夹"
-          class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft"
           @click="addFolder"
         >
           新建文件夹
         </button>
         <button
           v-if="workspaceStore.selectedPaths.length === 1"
-          class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-          @click="renameEntry(workspaceStore.selectedPaths[0])"
+          class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft"
           title="重命名"
+          @click="renameEntry(workspaceStore.selectedPaths[0])"
         >
-          <span>重命名</span>
+          重命名
         </button>
-
         <button
           v-if="selectedFile.relativePath !== ''"
-          class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-          @click="removeEntry(workspaceStore.selectedPaths[0])"
+          class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft"
           title="删除"
+          @click="removeEntry(workspaceStore.selectedPaths[0])"
         >
-          <span>删除</span>
+          删除
         </button>
-        <div class="h-px bg-zinc-200 dark:bg-zinc-800 my-1" v-if="selectedFile.relativePath !== ''"></div>
-        <button v-if="selectedFile.relativePath !== ''" class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCopyPath">
-          复制路径
+        <div v-if="selectedFile.relativePath !== ''" class="h-px bg-accent-soft my-1"></div>
+        <button v-if="selectedFile.relativePath !== ''" class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft" @click="handleCopyPath">
+          复制绝对路径
         </button>
-        <button v-if="selectedFile.relativePath !== ''" class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleCopyRelativePath">
+        <button v-if="selectedFile.relativePath !== ''" class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft" @click="handleCopyRelativePath">
           复制相对路径
         </button>
-        <div class="h-px bg-zinc-200 dark:bg-zinc-800 my-1" v-if="selectedFile.relativePath !== ''"></div>
-        <button v-if="selectedFile.relativePath !== ''" class="w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="handleRevealInExplorer">
+        <div v-if="selectedFile.relativePath !== ''" class="h-px bg-accent-soft my-1"></div>
+        <button v-if="selectedFile.relativePath !== ''" class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft" @click="handleRevealInExplorer">
           在文件资源管理器中显示
         </button>
       </div>

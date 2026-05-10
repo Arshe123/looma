@@ -2,7 +2,7 @@ import { app } from 'electron'
 import fs from 'fs/promises'
 import path from 'path'
 import { randomUUID } from 'crypto'
-import type { Result } from '../interfaces/Result'
+import type { Result } from '../interface/Result'
 
 export interface Workspace {
   id: string

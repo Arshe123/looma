@@ -1,7 +1,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { app } from 'electron'
-import type { Result } from '../interfaces/Result'
+import type { Result } from '../interface/Result'
 import { workspaceService } from './workspaceService'
 
 export interface WorkspaceMeta {
@@ -153,7 +153,7 @@ export const workspaceMetaService = {
     let unlock: (() => Promise<void>) | null = null
     try {
       const metaDirPath = await getMetaDirPath(workspaceId)
-      if (!metaDirPath) return { success: false, error: 'Workspace path not found' }
+      if (!metaDirPath) return { success: false, error: '工作空间路径不存在' }
       
       try {
         const stat = await fs.stat(metaDirPath)
@@ -167,7 +167,7 @@ export const workspaceMetaService = {
       } catch {}
 
       const metaPath = await getMetaPath(workspaceId)
-      if (!metaPath) return { success: false, error: 'Workspace path not found' }
+      if (!metaPath) return { success: false, error: '工作空间路径不存在' }
 
       unlock = await lockFile(metaPath)
       await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
@@ -181,7 +181,7 @@ export const workspaceMetaService = {
       return { success: true }
     } catch (error: any) {
       if (unlock) await unlock()
-      return { success: false, error: `Failed to save workspace meta: ${error?.message ?? String(error)}` }
+      return { success: false, error: `保存工作空间元数据失败: ${error?.message ?? String(error)}` }
     }
   },
 }

@@ -89,7 +89,7 @@ onMounted(() => {
     content: props.content,
     editorProps: {
       attributes: {
-        class: 'prose dark:prose-invert max-w-none focus:outline-none min-h-full p-8 markdown-body dark:markdown-body-dark',
+        class: 'prose dark:prose-invert max-w-none focus:outline-hidden min-h-full p-8 markdown-body dark:markdown-body-dark',
       },
     },
     onUpdate: ({ editor }) => {
@@ -138,7 +138,7 @@ watch(
 </script>
 
 <template>
-  <div ref="previewContainer" class="h-full w-full bg-white dark:bg-zinc-900 overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar">
+  <div ref="previewContainer" class="h-full w-full bg-panel overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar">
     <editor-content v-if="editor" :editor="editor" class="h-full" />
     
     <InlineMenu v-if="editor" :editor="editor" />
@@ -153,12 +153,18 @@ watch(
 .markdown-body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   line-height: 1.6;
-  color: #1b1b1b;
+  color: var(--text-main);
+  background-color: transparent !important;
   padding-bottom: calc(2rem + 22vh) !important;
 }
 
+.markdown-body a {
+  color: var(--accent);
+}
+
+[data-theme="dark"] .markdown-body,
 .dark .markdown-body {
-  color: #d4d4d4;
+  color: var(--text-main);
   background-color: transparent !important;
 }
 
@@ -170,7 +176,7 @@ watch(
   background-color: transparent !important;
 }
 .tiptap p.is-editor-empty:first-child::before {
-  color: #adb5bd;
+  color: var(--text-subtle);
   content: attr(data-placeholder);
   float: left;
   height: 0;
@@ -186,7 +192,7 @@ watch(
 .tiptap table td,
 .tiptap table th {
   min-width: 1em;
-  border: 1px solid #ced4da;
+  border: 1px solid var(--border-soft);
   padding: 3px 5px;
   vertical-align: top;
   box-sizing: border-box;
@@ -195,14 +201,17 @@ watch(
 .tiptap table th {
   font-weight: bold;
   text-align: left;
-  background-color: #f1f3f5;
+  background-color: var(--panel-soft);
 }
+[data-theme="dark"] .tiptap table td,
+[data-theme="dark"] .tiptap table th,
 .dark .tiptap table td,
 .dark .tiptap table th {
-  border-color: #3f3f46;
+  border-color: var(--border-soft);
 }
+[data-theme="dark"] .tiptap table th,
 .dark .tiptap table th {
-  background-color: #27272a;
+  background-color: var(--panel-soft);
 }
 .tiptap ul, .markdown-body ul {
   list-style-type: disc;

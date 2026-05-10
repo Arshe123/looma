@@ -13,10 +13,26 @@ import {
 } from './workspace-utils'
 import { executeRedoAction, executeUndoAction } from './workspace-history-service'
 import { buildWorkspaceMetaPayload } from './workspace-meta-utils'
-import type { EditorSession, FsEntry, UndoAction, Workspace } from './workspace-types'
-export type { EditorSession, FsEntry, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
+import type { EditorSession, FsEntry, ResolvedThemeName, ThemeName, UndoAction, Workspace } from './workspace-types'
+export type { EditorSession, FsEntry, ResolvedThemeName, ThemeName, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
+let systemThemeCleanup: (() => void) | null = null
+
+const isThemeName = (value: string | null): value is ThemeName =>
+  value === 'light' || value === 'dark' || value === 'system'
+
+const getStoredTheme = (): ThemeName => {
+  if (typeof localStorage === 'undefined') return 'system'
+  const stored = localStorage.getItem('theme')
+  return isThemeName(stored) ? stored : 'system'
+}
+
+const resolveThemeName = (theme: ThemeName): ResolvedThemeName => {
+  if (theme !== 'system') return theme
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'light'
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
 
 export const useWorkspaceStore = defineStore('workspace', {
   state: () => ({
@@ -41,7 +57,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     lastError: '' as string,
     undoStack: [] as UndoAction[],
     redoStack: [] as UndoAction[],
-    theme: (((typeof localStorage !== 'undefined' && localStorage.getItem('theme')) || 'light') as 'light' | 'dark'),
+    theme: getStoredTheme() as ThemeName,
+    resolvedTheme: resolveThemeName(getStoredTheme()) as ResolvedThemeName,
     hasElectronWindowAPI: false as boolean,
     watchedWorkspaceId: null as string | null,
     fsUnsub: null as null | (() => void),
@@ -119,14 +136,43 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     toggleTheme() {
-      this.theme = this.theme === 'light' ? 'dark' : 'light'
+      this.theme = this.theme === 'light' ? 'dark' : this.theme === 'dark' ? 'system' : 'light'
       if (typeof localStorage !== 'undefined') localStorage.setItem('theme', this.theme)
       this.applyTheme()
     },
     applyTheme() {
-      if (typeof document === 'undefined') return
-      if (this.theme === 'dark') document.documentElement.classList.add('dark')
-      else document.documentElement.classList.remove('dark')
+      const nextResolved = resolveThemeName(this.theme)
+      this.resolvedTheme = nextResolved
+
+      if (typeof document !== 'undefined') {
+        document.documentElement.dataset.theme = nextResolved
+        document.documentElement.classList.toggle('dark', nextResolved === 'dark')
+      }
+
+      if (systemThemeCleanup) {
+        systemThemeCleanup()
+        systemThemeCleanup = null
+      }
+
+      if (this.theme !== 'system') return
+      if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+
+      const media = window.matchMedia('(prefers-color-scheme: dark)')
+      const onChange = () => {
+        const resolved = resolveThemeName(this.theme)
+        this.resolvedTheme = resolved
+        if (typeof document === 'undefined') return
+        document.documentElement.dataset.theme = resolved
+        document.documentElement.classList.toggle('dark', resolved === 'dark')
+      }
+
+      if (typeof media.addEventListener === 'function') {
+        media.addEventListener('change', onChange)
+        systemThemeCleanup = () => media.removeEventListener('change', onChange)
+      } else {
+        media.addListener?.(onChange)
+        systemThemeCleanup = () => media.removeListener?.(onChange)
+      }
     },
 
     setBusy(isBusy: boolean, text = '') {
@@ -594,7 +640,7 @@ export const useWorkspaceStore = defineStore('workspace', {
 
       const sep = pathSep(ws.path)
       const root = ws.path.endsWith(sep) ? ws.path.slice(0, -1) : ws.path
-      this.activeFilePath = `${root}${sep}${rel.split('/').join(sep)}`
+      this.activeFilePath = root + sep + rel.split('/').join(sep)
       this.activeFileContent = ''
       this.activeFileLoadedContent = ''
       this.activeFileIsSaving = false
@@ -723,7 +769,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (r.success && r.data) {
           items.push({ trashRelativePath: r.data.trashRelativePath, restoreTo: normalizeDir(p) })
         } else {
-          this.setError(r.error || 'Failed to delete')
+          this.setError(r.error || '删除失败')
         }
       }
       this.setBusy(false)
@@ -761,7 +807,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       const items: { from: string; to: string }[] = []
       for (const fromRelative of fromRelativePaths) {
         const name = fromRelative.split('/').pop() || fromRelative
-        const toRelative = (targetDirRelativePath ? `${targetDirRelativePath}/${name}` : name).replace(/\/{2,}/g, '/')
+        const toRelative = (targetDirRelativePath ? targetDirRelativePath + '/' + name : name).replace(/\/{2,}/g, '/')
         
         if (normalizeDir(fromRelative) === normalizeDir(toRelative)) continue
         
@@ -808,10 +854,10 @@ export const useWorkspaceStore = defineStore('workspace', {
       const nextBase = ((await this.requestTextInput('重命名', base)) ?? base).trim()
       if (!nextBase || nextBase === base) return
       const dir = pathDir(from)
-      const to = dir ? `${dir}/${nextBase}` : nextBase
+      const to = dir ? dir + '/' + nextBase : nextBase
       const r = await window.electronAPI.fs.rename(ws, from, nextBase)
       if (!r.success) {
-        this.setError(r.error || 'Failed to rename')
+        this.setError(r.error || '重命名失败')
         return
       }
       

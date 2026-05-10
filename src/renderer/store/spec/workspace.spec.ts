@@ -57,10 +57,26 @@ describe('workspace store - single workspace switching', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     const electronAPI = mockElectronAPI()
+    const documentElement = {
+      dataset: {} as Record<string, string>,
+      classList: {
+        add: vi.fn(),
+        remove: vi.fn(),
+        toggle: vi.fn(),
+      },
+    }
     ;(globalThis as any).window = {
       location: { search: '' },
       electronAPI,
       confirm: vi.fn(() => false),
+      matchMedia: vi.fn(() => ({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    }
+    ;(globalThis as any).document = {
+      documentElement,
     }
     ;(globalThis as any).localStorage = {
       getItem: vi.fn(() => null),
@@ -199,5 +215,35 @@ describe('workspace store - single workspace switching', () => {
     expect(store.activeFileLoadedContent).toBe('')
     expect(store.openedFiles).toEqual(['keep/c.md'])
     expect(store.selectedPaths).toEqual(['keep'])
+  })
+
+  it('applies system theme using prefers-color-scheme', () => {
+    const store = useWorkspaceStore()
+    const root = (globalThis as any).document.documentElement
+
+    store.theme = 'system'
+    store.applyTheme()
+
+    expect(store.resolvedTheme).toBe('dark')
+    expect(root.dataset.theme).toBe('dark')
+    expect(root.classList.toggle).toHaveBeenCalledWith('dark', true)
+  })
+
+  it('cycles theme through light, dark, and system', () => {
+    const store = useWorkspaceStore()
+    const storage = (globalThis as any).localStorage
+
+    store.theme = 'light'
+    store.toggleTheme()
+    expect(store.theme).toBe('dark')
+    expect(storage.setItem).toHaveBeenLastCalledWith('theme', 'dark')
+
+    store.toggleTheme()
+    expect(store.theme).toBe('system')
+    expect(storage.setItem).toHaveBeenLastCalledWith('theme', 'system')
+
+    store.toggleTheme()
+    expect(store.theme).toBe('light')
+    expect(storage.setItem).toHaveBeenLastCalledWith('theme', 'light')
   })
 })

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
-import Editor from './Editor.vue'
-import TiptapPreview from '../preview/TiptapPreview.vue'
-import { Columns, Eye, Edit3 } from 'lucide-vue-next'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { Columns, Edit3, Eye } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../store/workspace'
+import TiptapPreview from '../preview/TiptapPreview.vue'
+import Editor from './Editor.vue'
 
 const props = defineProps<{
   filePath: string
@@ -34,7 +34,7 @@ const saveMarkdownSession = (skipSaveMeta = false) => {
     markdown: {
       viewMode: viewMode.value,
       splitRatio: splitRatio.value,
-    }
+    },
   }, skipSaveMeta)
 }
 
@@ -72,17 +72,10 @@ const startSplitResize = (e: PointerEvent) => {
 onMounted(() => {
   const session = workspaceStore.fileSessions[props.relativeFilePath]
   if (session) {
-    if (session.markdown?.viewMode) {
-      viewMode.value = session.markdown.viewMode
-    }
-    if (typeof session.markdown?.splitRatio === 'number') {
-      splitRatio.value = clampSplitRatio(session.markdown.splitRatio)
-    }
+    if (session.markdown?.viewMode) viewMode.value = session.markdown.viewMode
+    if (typeof session.markdown?.splitRatio === 'number') splitRatio.value = clampSplitRatio(session.markdown.splitRatio)
     if (session.codemirror && editorRef.value) {
-      // Small delay to ensure Editor is fully mounted and DOM has layout
-      setTimeout(() => {
-        editorRef.value?.applySnapshot(session.codemirror!)
-      }, 50)
+      setTimeout(() => editorRef.value?.applySnapshot(session.codemirror!), 50)
     }
   }
 })
@@ -112,12 +105,12 @@ defineExpose({
           viewMode: viewMode.value,
           splitRatio: splitRatio.value,
         },
-        codemirror: cmSnap
+        codemirror: cmSnap,
       }, skipSaveMeta)
     } else {
       saveMarkdownSession(skipSaveMeta)
     }
-  }
+  },
 })
 </script>
 
@@ -139,46 +132,42 @@ defineExpose({
     </div>
     <div
       v-if="viewMode === 'split'"
-      class="relative z-10 h-full w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-blue-500/40 active:bg-blue-500/60"
+      class="relative z-10 h-full w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent-soft active:bg-accent"
       style="-webkit-app-region: no-drag"
       @pointerdown="startSplitResize"
     />
-    <div v-if="viewMode !== 'editor'" class="flex-1 overflow-hidden border-l border-zinc-200 dark:border-zinc-800">
-      <TiptapPreview 
-        :content="props.content" 
-        @update:content="(v) => emit('update:content', v)"
-      />
+    <div v-if="viewMode !== 'editor'" class="flex-1 overflow-hidden border-l border-border-soft">
+      <TiptapPreview :content="props.content" @update:content="(v) => emit('update:content', v)" />
     </div>
 
-    <!-- Floating View Mode Controls -->
-    <div class="absolute bottom-6 right-6 flex items-center gap-1 bg-white/90 dark:bg-zinc-800/90 backdrop-blur-sm p-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 shadow-lg z-20">
-      <button 
+    <div class="absolute bottom-6 right-6 flex items-center gap-1 bg-panel/90 backdrop-blur-xs p-1.5 rounded-xl border border-border-soft shadow-lg z-20">
+      <button
         @click="viewMode = 'editor'"
         :class="[
           'p-2 rounded-lg transition-all duration-200',
-          viewMode === 'editor' ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700'
+          viewMode === 'editor' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'
         ]"
-        title="仅编辑"
+        title="编辑模式"
       >
         <Edit3 :size="18" />
       </button>
-      <button 
+      <button
         @click="viewMode = 'split'"
         :class="[
           'p-2 rounded-lg transition-all duration-200',
-          viewMode === 'split' ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700'
+          viewMode === 'split' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'
         ]"
-        title="分栏"
+        title="分割视图"
       >
         <Columns :size="18" />
       </button>
-      <button 
+      <button
         @click="viewMode = 'preview'"
         :class="[
           'p-2 rounded-lg transition-all duration-200',
-          viewMode === 'preview' ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700'
+          viewMode === 'preview' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'
         ]"
-        title="仅预览"
+        title="预览模式"
       >
         <Eye :size="18" />
       </button>

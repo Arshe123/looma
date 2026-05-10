@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { EditorView, basicSetup } from 'codemirror';
 import { markdown } from '@codemirror/lang-markdown';
-import { oneDark } from '@codemirror/theme-one-dark';
+import { codeFolding } from '@codemirror/language';
 import { EditorState, Compartment } from '@codemirror/state';
 import { useWorkspaceStore } from '../../store/workspace';
 
@@ -32,38 +32,123 @@ const langCompartment = new Compartment()
 const lineWrapCompartment = new Compartment()
 const customStyleCompartment = new Compartment()
 
-const getThemeExtension = () => workspaceStore.theme === 'dark' ? [oneDark] : [];
+const getThemeExtension = () => [];
 const getLangExtension = () => props.mode === 'markdown' ? [markdown()] : [];
 const getLineWrapExtension = () => props.wordWrap ? [EditorView.lineWrapping] : [];
 const BASE_BOTTOM_SPACER = '22vh'
-const getCustomStyleExtension = () => EditorView.theme({
-  '&': { height: '100%', fontSize: `${props.fontSize}px` },
-  '.cm-scroller': {
-    overflow: 'auto',
-    fontFamily: 'Consolas, Monaco, monospace',
-    scrollbarWidth: 'thin',
-    scrollbarColor: 'transparent transparent',
-  },
-  '.cm-scroller::-webkit-scrollbar': { width: '8px', height: '8px' },
-  '.cm-scroller::-webkit-scrollbar-track': { background: 'transparent' },
-  '.cm-scroller::-webkit-scrollbar-thumb': {
-    backgroundColor: 'transparent',
-    borderRadius: '4px',
-  },
-  '&:hover .cm-scroller, &.cm-focused .cm-scroller': {
-    scrollbarColor: workspaceStore.theme === 'dark' ? '#52525b transparent' : '#d4d4d8 transparent',
-  },
-  '&:hover .cm-scroller::-webkit-scrollbar-thumb, &.cm-focused .cm-scroller::-webkit-scrollbar-thumb': {
-    backgroundColor: workspaceStore.theme === 'dark' ? '#52525b' : '#d4d4d8',
-  },
-  '.cm-scroller::-webkit-scrollbar-thumb:hover': {
-    backgroundColor: workspaceStore.theme === 'dark' ? '#71717a' : '#a1a1aa',
-  },
-  '.cm-content': { 
-    padding: `10px 0 ${BASE_BOTTOM_SPACER} 0`,
-    whiteSpace: props.wordWrap ? 'pre-wrap' : 'pre'
-  },
-})
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const createFoldPlaceholder = (_view: EditorView, onclick: (event: Event) => void) => {
+  const element = document.createElement('span')
+  element.className = 'cm-foldPlaceholder'
+  element.title = 'unfold'
+  element.setAttribute('aria-label', 'folded code')
+  element.onclick = onclick
+
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  svg.setAttribute('xmlns', SVG_NS)
+  svg.setAttribute('width', '16')
+  svg.setAttribute('height', '16')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '2')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('stroke-linejoin', 'round')
+  svg.setAttribute('aria-hidden', 'true')
+
+  for (const d of ['M12 12h.01', 'M16 12h.01', 'm17 7 5 5-5 5', 'm7 7-5 5 5 5', 'M8 12h.01']) {
+    const path = document.createElementNS(SVG_NS, 'path')
+    path.setAttribute('d', d)
+    svg.appendChild(path)
+  }
+
+  element.appendChild(svg)
+  return element
+}
+const getCustomStyleExtension = () => {
+  return EditorView.theme({
+    '&': { height: '100%', fontSize: `${props.fontSize}px`, backgroundColor: 'var(--surface)', color: 'var(--text-main)' },
+    '.cm-scroller': {
+      overflow: 'auto',
+      fontFamily: 'Consolas, Monaco, monospace',
+      scrollbarWidth: 'thin',
+      scrollbarColor: 'transparent transparent',
+      backgroundColor: 'var(--surface)',
+    },
+    '.cm-scroller::-webkit-scrollbar': { width: '8px', height: '8px' },
+    '.cm-scroller::-webkit-scrollbar-track': { background: 'transparent' },
+    '.cm-scroller::-webkit-scrollbar-thumb': {
+      backgroundColor: 'transparent',
+      borderRadius: '4px',
+    },
+    '&:hover .cm-scroller, &.cm-focused .cm-scroller': {
+      scrollbarColor: 'var(--scrollbar-thumb) transparent',
+    },
+    '&:hover .cm-scroller::-webkit-scrollbar-thumb, &.cm-focused .cm-scroller::-webkit-scrollbar-thumb': {
+      backgroundColor: 'var(--scrollbar-thumb)',
+    },
+    '.cm-scroller::-webkit-scrollbar-thumb:hover': {
+      backgroundColor: 'var(--scrollbar-thumb-hover)',
+    },
+    '.cm-content': {
+      padding: `10px 0 ${BASE_BOTTOM_SPACER} 0`,
+      whiteSpace: props.wordWrap ? 'pre-wrap' : 'pre'
+    },
+    '.cm-gutters': {
+      backgroundColor: 'transparent',
+      color: 'var(--text-subtle)',
+      border: 'none',
+      minWidth: '44px',
+    },
+    '.cm-lineNumbers .cm-gutterElement': {
+      padding: '0 10px 0 8px',
+      fontSize: `${props.fontSize - 1}px`,
+      fontFamily: 'Consolas, Monaco, monospace',
+    },
+    '.cm-activeLineGutter': {
+      color: 'var(--text-main)',
+      fontWeight: '600',
+      backgroundColor: 'transparent',
+    },
+    '&.cm-focused .cm-activeLineGutter, .cm-gutters .cm-lineNumbers .cm-gutterElement.cm-activeLineGutter, .cm-gutters .cm-gutterElement.cm-activeLineGutter': {
+      backgroundColor: 'transparent',
+    },
+    '.cm-foldGutter': {
+      width: '16px',
+    },
+    '.cm-foldGutter .cm-gutterElement': {
+      opacity: 0,
+      pointerEvents: 'none',
+      transition: 'opacity .12s ease',
+      color: 'var(--text-subtle)',
+      fontSize: '12px',
+      cursor: 'pointer',
+    },
+    '& .cm-gutters:hover .cm-foldGutter .cm-gutterElement, .cm-foldGutter .cm-gutterElement:has(span[title="Unfold line"])': {
+      opacity: 1,
+      pointerEvents: 'auto',
+    },
+    '.cm-foldPlaceholder': {
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      verticalAlign: 'middle',
+      width: '18px',
+      height: '18px',
+      margin: '0 2px',
+      padding: '0',
+      backgroundColor: 'var(--panel-soft)',
+      border: '1px solid var(--border-soft)',
+      color: 'var(--text-muted)',
+      borderRadius: '4px',
+      cursor: 'pointer',
+    },
+    '.cm-foldPlaceholder svg': {
+      display: 'block',
+      flexShrink: 0,
+    },
+  })
+}
 
 const CURSOR_BOTTOM_THRESHOLD_PX = 120
 const ensureCursorComfort = (view: EditorView) => {
@@ -118,6 +203,7 @@ const createEditor = () => {
     doc: props.initialContent,
     extensions: [
       basicSetup,
+      codeFolding({ placeholderDOM: createFoldPlaceholder }),
       langCompartment.of(getLangExtension()),
       themeCompartment.of(getThemeExtension()),
       lineWrapCompartment.of(getLineWrapExtension()),
@@ -158,9 +244,9 @@ watch(
   },
 );
 
-// Re-create editor when theme, mode, or wrap settings change
+// Reconfigure editor when mode, wrapping, sizing, or resolved tokens change.
 watch(
-  () => [workspaceStore.theme, props.mode, props.fontSize, props.wordWrap],
+  () => [workspaceStore.resolvedTheme, props.mode, props.fontSize, props.wordWrap],
   () => {
     if (editor) {
       editor.dispatch({
@@ -205,7 +291,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="h-full w-full bg-white dark:bg-[#1e1e1e] border-r border-zinc-200 dark:border-zinc-800 flex flex-col">
+  <div class="h-full w-full bg-surface border-r border-border-soft flex flex-col">
     <div ref="editorContainer" class="flex-1 overflow-hidden h-full"></div>
   </div>
 </template>

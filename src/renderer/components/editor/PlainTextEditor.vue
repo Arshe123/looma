@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted } from 'vue'
-import Editor from './Editor.vue'
-import { WrapText, Minus, Plus } from 'lucide-vue-next'
+import { computed, onMounted, ref, watch } from 'vue'
+import { Minus, Plus, WrapText } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../store/workspace'
+import Editor from './Editor.vue'
 
 const props = defineProps<{
   filePath: string
@@ -24,23 +24,21 @@ const editorRef = ref<InstanceType<typeof Editor> | null>(null)
 
 onMounted(() => {
   const session = workspaceStore.fileSessions[props.relativeFilePath]
-  if (session) {
-    if (session.plaintext) {
-      fontSize.value = session.plaintext.fontSize
-      wordWrap.value = session.plaintext.wordWrap
-    }
-    if (session.codemirror && editorRef.value) {
-      setTimeout(() => {
-        editorRef.value?.applySnapshot(session.codemirror!)
-      }, 50)
-    }
+  if (!session) return
+
+  if (session.plaintext) {
+    fontSize.value = session.plaintext.fontSize
+    wordWrap.value = session.plaintext.wordWrap
+  }
+  if (session.codemirror && editorRef.value) {
+    setTimeout(() => editorRef.value?.applySnapshot(session.codemirror!), 50)
   }
 })
 
 watch([fontSize, wordWrap], ([fs, ww]) => {
   if (workspaceStore.isWorkspaceTransitioning) return
   workspaceStore.saveFileSession(props.relativeFilePath, {
-    plaintext: { fontSize: fs, wordWrap: ww }
+    plaintext: { fontSize: fs, wordWrap: ww },
   })
 })
 
@@ -48,7 +46,7 @@ const statsText = computed(() => {
   const text = localContent.value || ''
   const chars = text.length
   const lines = text.length ? text.split('\n').length : 0
-  return `${chars} 字符 · ${lines} 行`
+  return `${chars} chars | ${lines} lines`
 })
 
 watch(
@@ -85,16 +83,16 @@ defineExpose({
     if (cmSnap && props.relativeFilePath) {
       workspaceStore.saveFileSession(props.relativeFilePath, {
         plaintext: { fontSize: fontSize.value, wordWrap: wordWrap.value },
-        codemirror: cmSnap
+        codemirror: cmSnap,
       }, skipSaveMeta)
     }
-  }
+  },
 })
 </script>
 
 <template>
   <div class="h-full flex flex-col overflow-hidden relative">
-    <div class="absolute top-2 right-4 z-10 text-xs text-zinc-400 dark:text-zinc-500 bg-white/50 dark:bg-zinc-900/50 px-2 py-1 rounded backdrop-blur-sm pointer-events-none">
+    <div class="absolute top-2 right-4 z-10 text-xs text-text-subtle bg-panel/70 px-2 py-1 rounded backdrop-blur-xs pointer-events-none">
       {{ statsText }}
     </div>
 
@@ -111,37 +109,35 @@ defineExpose({
       />
     </div>
 
-    <!-- Floating View Mode Controls -->
-    <div class="absolute bottom-6 right-6 flex items-center gap-1 bg-white/90 dark:bg-zinc-800/90 backdrop-blur-sm p-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 shadow-lg z-20">
-      <div class="flex items-center gap-0.5 px-1 border-r border-zinc-200 dark:border-zinc-700 mr-0.5">
-        <button 
+    <div class="absolute bottom-6 right-6 flex items-center gap-1 bg-panel/90 backdrop-blur-xs p-1.5 rounded-xl border border-border-soft shadow-lg z-20">
+      <div class="flex items-center gap-0.5 px-1 border-r border-border-soft mr-0.5">
+        <button
           @click="decreaseFont"
-          class="p-1.5 rounded-lg transition-all duration-200 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700"
-          title="减小字号"
+          class="p-1.5 rounded-lg transition-all duration-200 text-text-muted hover:text-text-main hover:bg-accent-soft"
+          title="减小字体大小"
         >
           <Minus :size="16" />
         </button>
-        <span class="text-xs text-zinc-500 w-6 text-center select-none">{{ fontSize }}</span>
-        <button 
+        <span class="text-xs text-text-muted w-6 text-center select-none">{{ fontSize }}</span>
+        <button
           @click="increaseFont"
-          class="p-1.5 rounded-lg transition-all duration-200 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700"
-          title="增大字号"
+          class="p-1.5 rounded-lg transition-all duration-200 text-text-muted hover:text-text-main hover:bg-accent-soft"
+          title="增大字体大小"
         >
           <Plus :size="16" />
         </button>
       </div>
 
-      <button 
+      <button
         @click="toggleWrap"
         :class="[
           'p-2 rounded-lg transition-all duration-200',
-          wordWrap ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700'
+          wordWrap ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'
         ]"
-        :title="wordWrap ? '关闭自动换行' : '开启自动换行'"
+        :title="wordWrap ? '禁用换行' : '启用换行'"
       >
         <WrapText :size="18" />
       </button>
     </div>
   </div>
 </template>
-

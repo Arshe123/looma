@@ -3,11 +3,11 @@ import type { IpcMainInvokeEvent } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
-import { fileService } from './services/fileService';
-import { telemetryService } from './services/telemetryService';
-import { workspaceService } from './services/workspaceService';
-import { fileSystemService, fileWatchService } from './services/fileSystemService';
-import { workspaceMetaService } from './services/workspaceMetaService';
+import { fileService } from './service/fileService';
+import { telemetryService } from './service/telemetryService';
+import { workspaceService } from './service/workspaceService';
+import { fileSystemService, fileWatchService } from './service/fileSystemService';
+import { workspaceMetaService } from './service/workspaceMetaService';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

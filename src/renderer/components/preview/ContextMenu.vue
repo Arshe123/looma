@@ -3,7 +3,7 @@ import { ref, onMounted, onBeforeUnmount, nextTick, markRaw } from 'vue'
 import { Editor } from '@tiptap/vue-3'
 import {
   List, ListOrdered, CheckSquare, Quote, Code, Minus,
-  Bold, Italic, Strikethrough, Highlighter, CodeXml, Palette,
+  Bold, Italic, Strikethrough, Highlighter, CodeXml,
   Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, Table,
   Pilcrow, ChevronRight
 } from 'lucide-vue-next'
@@ -30,11 +30,11 @@ const textStyleIcons = [
 
 const blockStyleIcons = [
   { id: 'quote', label: '引用', icon: markRaw(Quote), action: () => props.editor.chain().focus().toggleBlockquote().run() },
-  { id: 'ul', label: '无序列表', icon: markRaw(List), action: () => props.editor.chain().focus().toggleBulletList().run() },
+  { id: 'ul', label: '项目列表', icon: markRaw(List), action: () => props.editor.chain().focus().toggleBulletList().run() },
   { id: 'ol', label: '有序列表', icon: markRaw(ListOrdered), action: () => props.editor.chain().focus().toggleOrderedList().run() },
-  { id: 'task', label: '任务框', icon: markRaw(CheckSquare), action: () => props.editor.chain().focus().toggleTaskList().run() },
+  { id: 'task', label: '任务列表', icon: markRaw(CheckSquare), action: () => props.editor.chain().focus().toggleTaskList().run() },
   { id: 'code', label: '代码块', icon: markRaw(Code), action: () => props.editor.chain().focus().toggleCodeBlock().run() },
-  { id: 'table', label: '表格', icon: markRaw(Table), action: () => {
+  { id: 'table', label: 'Table', icon: markRaw(Table), action: () => {
     if (props.editor.can().insertTable) {
       props.editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
     }
@@ -55,15 +55,6 @@ const listItems = [
     ]
   },
   { id: 'hr', label: '水平分割线', icon: markRaw(Minus), action: () => props.editor.chain().focus().setHorizontalRule().run() },
-  { id: 'color', label: '颜色选择器', icon: markRaw(Palette), action: () => {
-    const input = document.createElement('input')
-    input.type = 'color'
-    input.oninput = (e) => {
-      const color = (e.target as HTMLInputElement).value
-      props.editor.chain().focus().setColor(color).run()
-    }
-    input.click()
-  }}
 ]
 
 const handleContextMenu = (e: MouseEvent) => {
@@ -178,7 +169,7 @@ onBeforeUnmount(() => {
     <!-- Main Menu -->
     <div
       ref="menuRef"
-      class="absolute w-64 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-xl py-2 pointer-events-auto flex flex-col"
+      class="absolute w-64 bg-panel border border-border-soft rounded-lg shadow-xl py-2 pointer-events-auto flex flex-col"
       :style="{ top: `${position.top}px`, left: `${position.left}px` }"
     >
       <!-- Icon Grids Section -->
@@ -188,7 +179,7 @@ onBeforeUnmount(() => {
           <button
             v-for="item in textStyleIcons"
             :key="item.id"
-            class="flex items-center justify-center w-8 h-8 rounded bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 transition-colors"
+            class="flex items-center justify-center w-8 h-8 rounded bg-panel border border-border-soft hover:bg-accent-soft text-text-main transition-colors"
             :title="item.label"
             @click="handleAction(item.action)"
           >
@@ -196,14 +187,14 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <div class="h-px bg-zinc-100 dark:bg-zinc-800 my-1"></div>
+        <div class="h-px bg-accent-soft my-1"></div>
 
         <!-- Block Styles -->
         <div class="flex flex-wrap justify-center gap-1.5">
           <button
             v-for="item in blockStyleIcons"
             :key="item.id"
-            class="flex items-center justify-center w-8 h-8 rounded bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 transition-colors"
+            class="flex items-center justify-center w-8 h-8 rounded bg-panel border border-border-soft hover:bg-accent-soft text-text-main transition-colors"
             :title="item.label"
             @click="handleAction(item.action)"
           >
@@ -212,22 +203,22 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="h-px bg-zinc-100 dark:bg-zinc-800 my-1"></div>
+      <div class="h-px bg-accent-soft my-1"></div>
 
       <!-- List Items -->
       <div class="px-1 flex flex-col gap-0.5">
         <div
           v-for="item in listItems"
           :key="item.id"
-          class="relative flex items-center justify-between px-3 py-1.5 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer rounded mx-1 transition-colors"
+          class="relative flex items-center justify-between px-3 py-1.5 text-sm text-text-main hover:bg-accent-soft cursor-pointer rounded mx-1 transition-colors"
           @click="!item.children && handleAction(item.action)"
           @mouseenter="e => handleMouseEnter(item, e)"
         >
           <div class="flex items-center gap-3">
-            <component :is="item.icon" :size="15" class="text-zinc-500" />
+            <component :is="item.icon" :size="15" class="text-text-muted" />
             <span>{{ item.label }}</span>
           </div>
-          <ChevronRight v-if="item.children" :size="14" class="text-zinc-400" />
+          <ChevronRight v-if="item.children" :size="14" class="text-text-subtle" />
         </div>
       </div>
     </div>
@@ -236,16 +227,16 @@ onBeforeUnmount(() => {
     <div
       v-if="activeSubMenu"
       ref="subMenuRef"
-      class="fixed w-48 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-xl py-1 pointer-events-auto"
+      class="fixed w-48 bg-panel border border-border-soft rounded-lg shadow-xl py-1 pointer-events-auto"
       :style="{ top: `${subMenuPosition.top}px`, left: `${subMenuPosition.left}px` }"
     >
       <div
         v-for="subItem in listItems.find(m => m.id === activeSubMenu)?.children"
         :key="subItem.id"
-        class="flex items-center gap-3 px-4 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer transition-colors"
+        class="flex items-center gap-3 px-4 py-2 text-sm text-text-main hover:bg-accent-soft cursor-pointer transition-colors"
         @click="handleAction(subItem.action)"
       >
-        <component :is="subItem.icon" :size="16" class="text-zinc-500" />
+        <component :is="subItem.icon" :size="16" class="text-text-muted" />
         <span>{{ subItem.label }}</span>
       </div>
     </div>

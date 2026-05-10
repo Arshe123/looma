@@ -1,25 +1,22 @@
 <script setup lang="ts">
-import { defineAsyncComponent, ref, onMounted, onUnmounted, watch, computed } from 'vue';
-import { useWorkspaceStore } from '../store/workspace';
-import EditorTabs from './EditorTabs.vue';
-import EditorLoadError from './editors/EditorLoadError.vue';
-import { CheckCircle2, AlertCircle, FileText, FileQuestion } from 'lucide-vue-next';
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { FileQuestion, FileText } from 'lucide-vue-next'
+import { useWorkspaceStore } from '../store/workspace'
+import EditorLoadError from './editor/EditorLoadError.vue'
+import EditorTabs from './EditorTabs.vue'
 
-const workspaceStore = useWorkspaceStore();
-let keyHandler: ((e: KeyboardEvent) => void) | null = null;
+const workspaceStore = useWorkspaceStore()
+let keyHandler: ((e: KeyboardEvent) => void) | null = null
 
-const saveError = computed(() => (workspaceStore.activeFileSaveError ? workspaceStore.activeFileSaveError : null));
-const isSaving = computed(() => workspaceStore.activeFileIsSaving);
-
-const saveTrigger = ref(0);
-const editorReloadNonce = ref(0);
+const saveTrigger = ref(0)
+const editorReloadNonce = ref(0)
 
 const getExt = (filePath: string) => {
-  const base = (filePath || '').split(/[\\/]/).pop() || '';
-  const idx = base.lastIndexOf('.');
-  if (idx === -1) return '';
-  return base.slice(idx).toLowerCase();
-};
+  const base = (filePath || '').split(/[\\/]/).pop() || ''
+  const idx = base.lastIndexOf('.')
+  if (idx === -1) return ''
+  return base.slice(idx).toLowerCase()
+}
 
 const createAsyncEditor = (loader: () => Promise<any>) => {
   return defineAsyncComponent({
@@ -28,15 +25,15 @@ const createAsyncEditor = (loader: () => Promise<any>) => {
     delay: 0,
     timeout: 30000,
     onError: (_err, retry, fail, attempts) => {
-      if (attempts <= 1) retry();
-      else fail();
+      if (attempts <= 1) retry()
+      else fail()
     },
-  });
-};
+  })
+}
 
 const editorByExt = {
-  '.md': createAsyncEditor(() => import('./editors/MarkdownEditor.vue')),
-  '.txt': createAsyncEditor(() => import('./editors/PlainTextEditor.vue')),
+  '.md': createAsyncEditor(() => import('./editor/MarkdownEditor.vue')),
+  '.txt': createAsyncEditor(() => import('./editor/PlainTextEditor.vue')),
   '.png': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
   '.jpg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
   '.jpeg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
@@ -46,35 +43,33 @@ const editorByExt = {
   '.mp4': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
   '.webm': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
   '.ogg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
-} as const;
+} as const
 
-const activeExt = computed(() => getExt(workspaceStore.activeFilePath));
-const currentEditor = computed(() => (editorByExt as any)[activeExt.value] || null);
-const isSupportedFile = computed(() => Boolean(currentEditor.value));
-const editorKey = computed(() => `${workspaceStore.activeFilePath}:${activeExt.value}:${editorReloadNonce.value}`);
+const activeExt = computed(() => getExt(workspaceStore.activeFilePath))
+const currentEditor = computed(() => (editorByExt as any)[activeExt.value] || null)
+const isSupportedFile = computed(() => Boolean(currentEditor.value))
+const editorKey = computed(() => `${workspaceStore.activeFilePath}:${activeExt.value}:${editorReloadNonce.value}`)
 
-const currentEditorRef = ref<any>(null);
+const currentEditorRef = ref<any>(null)
 
 const handleSave = async (newContent: string) => {
-  workspaceStore.setActiveFileContent(newContent);
-  await workspaceStore.saveActiveFileContent(newContent);
-};
+  workspaceStore.setActiveFileContent(newContent)
+  await workspaceStore.saveActiveFileContent(newContent)
+}
 
 const onEditorRetry = () => {
-  editorReloadNonce.value += 1;
-};
+  editorReloadNonce.value += 1
+}
 
-// Save snapshot right before active file path changes
 watch(
   () => workspaceStore.activeFileRelativePath,
-  (newRel, oldRel) => {
-    // Only save snapshot if we are still in the same workspace as when the editor was loaded
+  (_newRel, oldRel) => {
     if (oldRel && currentEditorRef.value && typeof currentEditorRef.value.saveSnapshot === 'function' && !workspaceStore.isWorkspaceTransitioning) {
       currentEditorRef.value.saveSnapshot(true)
     }
   },
-  { immediate: true }
-);
+  { immediate: true },
+)
 
 const saveCurrentSnapshot = (e?: Event) => {
   if (workspaceStore.isWorkspaceTransitioning) return
@@ -99,23 +94,20 @@ onMounted(() => {
       return
     }
     if (e.ctrlKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
-      // Allow editor to handle its own undo natively if focused
-      if (document.activeElement?.closest('.cm-editor') || document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+      if (document.activeElement?.closest('.cm-editor') || document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return
       e.preventDefault()
       workspaceStore.undo()
       return
     }
     if (e.ctrlKey && (e.key === 'y' || e.key === 'Y')) {
-      // Allow editor to handle its own redo natively if focused
-      if (document.activeElement?.closest('.cm-editor') || document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+      if (document.activeElement?.closest('.cm-editor') || document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return
       e.preventDefault()
       workspaceStore.redo()
-      return
     }
-  };
+  }
 
   window.addEventListener('keydown', keyHandler)
-});
+})
 
 onUnmounted(() => {
   window.removeEventListener('beforeunload', saveCurrentSnapshot)
@@ -127,20 +119,16 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col flex-1 bg-white dark:bg-zinc-900 overflow-hidden">
-    <!-- Toolbar -->
+  <div class="h-full flex flex-col flex-1 overflow-hidden rounded-lg bg-panel">
     <EditorTabs v-if="workspaceStore.openedFiles.length > 0" />
 
-    <!-- Workspace View Area -->
     <main v-if="workspaceStore.activeFilePath" class="flex-1 flex overflow-hidden">
-      <div v-if="!isSupportedFile" class="flex-1 flex flex-col items-center justify-center text-zinc-400 dark:text-zinc-600 p-12 text-center bg-zinc-50 dark:bg-zinc-900/50">
-        <FileQuestion :size="64" class="mb-6 opacity-30 text-zinc-500" />
-        <h3 class="text-xl font-medium mb-2 text-zinc-600 dark:text-zinc-300">不支持的文件类型</h3>
-        <p class="max-w-md text-sm opacity-80 mb-4">
-          该文件格式暂时无法在编辑器中打开。
-        </p>
+      <div v-if="!isSupportedFile" class="flex-1 flex flex-col items-center justify-center text-text-subtle p-12 text-center bg-panel/50">
+        <FileQuestion :size="64" class="mb-6 opacity-30 text-text-muted" />
+        <h3 class="text-xl font-medium mb-2 text-text-main">不支持的文件类型</h3>
+        <p class="max-w-md text-sm opacity-80 mb-4">该文件格式暂时无法在编辑器中打开。</p>
       </div>
-      
+
       <component
         v-else
         class="w-full flex-1"
@@ -156,12 +144,12 @@ onUnmounted(() => {
         @retry="onEditorRetry"
       />
     </main>
-    
-    <div v-else class="flex-1 flex flex-col items-center justify-center text-zinc-400 dark:text-zinc-600 p-12 text-center">
+
+    <div v-else class="flex-1 flex flex-col items-center justify-center text-text-subtle p-12 text-center">
       <FileText :size="64" class="mb-6 opacity-20" />
-      <h3 class="text-xl font-medium mb-2">Welcome to your Notes</h3>
-      <p class="max-w-xs text-sm opacity-60">Select a note from the list or create a new one to get started.</p>
-      <div class="mt-6 text-sm text-zinc-500 dark:text-zinc-400">从左侧选择文件开始编辑</div>
+      <h3 class="text-xl font-medium mb-2">欢迎来到您的笔记中</h3>
+      <p class="max-w-xs text-sm opacity-60">从列表中选择一个笔记或创建一个新的笔记以开始。</p>
+      <div class="mt-6 text-sm text-text-muted">从侧边栏中选择一个文件。</div>
     </div>
   </div>
 </template>

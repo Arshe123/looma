@@ -18,7 +18,7 @@ const emit = defineEmits<{
 }>()
 
 const workspaceStore = useWorkspaceStore()
-const viewMode = ref<'split' | 'editor' | 'preview'>('split')
+const viewMode = ref<'split' | 'editor' | 'preview'>('preview')
 const splitRatio = ref(0.5)
 const splitContainerRef = ref<HTMLElement | null>(null)
 const editorRef = ref<InstanceType<typeof Editor> | null>(null)

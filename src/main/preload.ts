@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   file: {
     readMarkdown: (filePath: string) => ipcRenderer.invoke('file:readMarkdown', filePath),
     readFileBase64: (filePath: string) => ipcRenderer.invoke('file:readFileBase64', filePath),
+    getFileStats: (filePath: string) => ipcRenderer.invoke('file:getFileStats', filePath),
     writeMarkdown: (filePath: string, content: string) => ipcRenderer.invoke('file:writeMarkdown', filePath, content),
   },
   app: {

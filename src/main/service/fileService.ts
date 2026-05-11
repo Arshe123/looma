@@ -58,6 +58,15 @@ export const fileService = {
     }
   },
 
+  async getFileStats(filePath: string): Promise<Result<{ size: number }>> {
+    try {
+      const stats = await fs.stat(filePath);
+      return { success: true, data: { size: stats.size } };
+    } catch (error: any) {
+      return { success: false, error: `Failed to read file stats: ${error.message}` };
+    }
+  },
+
   async writeMarkdown(filePath: string, content: string): Promise<Result<void>> {
     try {
       await fileLock.acquire(filePath);

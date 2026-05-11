@@ -8,6 +8,7 @@ export interface ElectronAPI {
   file: {
     readMarkdown: (filePath: string) => Promise<Result<string>>;
     readFileBase64: (filePath: string) => Promise<Result<string>>;
+    getFileStats: (filePath: string) => Promise<Result<{ size: number }>>;
     writeMarkdown: (filePath: string, content: string) => Promise<Result<void>>;
   };
   app: {

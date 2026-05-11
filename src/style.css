@@ -142,8 +142,16 @@
   background-color: var(--scrollbar-thumb-hover);
 }
 
-.transition-colors,
-.transition-all,
-* {
+.transition-colors {
+  transition-property: background-color, border-color, box-shadow, opacity, color;
+}
+
+.transition-all {
   transition-property: background-color, border-color, box-shadow, opacity, transform, color;
+}
+
+.transition-colors,
+.transition-all{
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 150ms;
 }

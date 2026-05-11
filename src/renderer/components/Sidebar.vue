@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Bot, Folders, GitBranch, Monitor, Moon, Sun, UserRound } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../store/workspace'
+import AuthModal from './auth/AuthModal.vue'
+import UserMenu from './auth/UserMenu.vue'
 import FileTree from './FileTree.vue'
 
 const props = defineProps<{
@@ -10,12 +12,71 @@ const props = defineProps<{
 
 const workspaceStore = useWorkspaceStore()
 const isOpen = ref(true)
+const isMockLoggedIn = ref(true)
+const mockUsername = ref('with-you 用户')
+const authModalOpen = ref(false)
+const authModalMode = ref<'login' | 'register'>('login')
+const userMenuOpen = ref(false)
 const toolbarWidth = 56
 const panelWidth = computed(() => Math.max(0, props.width - toolbarWidth))
 
 const toggleSidebar = () => {
   isOpen.value = !isOpen.value
 }
+
+const closeAuthModal = () => {
+  authModalOpen.value = false
+}
+
+const closeUserMenu = () => {
+  userMenuOpen.value = false
+}
+
+const openAuthModal = (mode: 'login' | 'register') => {
+  closeUserMenu()
+  authModalMode.value = mode
+  authModalOpen.value = true
+}
+
+const toggleUserEntry = () => {
+  authModalOpen.value = false
+  userMenuOpen.value = !userMenuOpen.value
+}
+
+const handleLogout = () => {
+  isMockLoggedIn.value = false
+  closeUserMenu()
+}
+
+let cleanupUserEntry: (() => void) | null = null
+
+onMounted(() => {
+  const onPointerDown = (event: PointerEvent) => {
+    const target = event.target as HTMLElement | null
+    if (!target) return
+    if (target.closest('[data-user-entry]')) return
+    closeUserMenu()
+  }
+
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape') return
+    closeUserMenu()
+    closeAuthModal()
+  }
+
+  window.addEventListener('pointerdown', onPointerDown)
+  window.addEventListener('keydown', onKeyDown)
+
+  cleanupUserEntry = () => {
+    window.removeEventListener('pointerdown', onPointerDown)
+    window.removeEventListener('keydown', onKeyDown)
+  }
+})
+
+onUnmounted(() => {
+  cleanupUserEntry?.()
+  cleanupUserEntry = null
+})
 </script>
 
 <template>
@@ -46,9 +107,28 @@ const toggleSidebar = () => {
       </div>
 
       <div class="flex flex-col items-center gap-2">
-        <button class="p-2 rounded-md text-text-muted cursor-not-allowed" title="用户" disabled>
-          <UserRound :size="20" />
-        </button>
+        <div class="relative" data-user-entry>
+          <button
+            class="p-2 rounded-md text-text-subtle cursor-not-allowed"
+            :class="{ 'bg-accent-soft text-text-main': authModalOpen || userMenuOpen }"
+            title="用户（功能开发中，敬请期待）"
+            @click="toggleUserEntry"
+            disabled
+          >
+            <UserRound :size="20" />
+          </button>
+
+          <UserMenu
+            :open="userMenuOpen"
+            :isLoggedIn="isMockLoggedIn"
+            :username="mockUsername"
+            @login="openAuthModal('login')"
+            @register="openAuthModal('register')"
+            @logout="handleLogout"
+            @close="closeUserMenu"
+          />
+        </div>
+
         <button
           @click="workspaceStore.toggleTheme"
           class="p-2 rounded-md text-text-muted hover:bg-accent-soft hover:text-text-main cursor-pointer"
@@ -95,5 +175,7 @@ const toggleSidebar = () => {
         </div>
       </div>
     </div>
+
+    <AuthModal :open="authModalOpen" :initialMode="authModalMode" @close="closeAuthModal" />
   </aside>
 </template>

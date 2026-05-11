@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useWorkspaceStore } from '../../store/workspace'
 
 const props = defineProps<{
@@ -120,7 +120,7 @@ watch(() => props.filePath, () => {
 
 <template>
   <div 
-    class="w-full h-full flex items-center justify-center bg-surface p-8 overflow-hidden select-none"
+    class="relative w-full h-full flex items-center justify-center bg-zinc-100 dark:bg-zinc-950 p-8 overflow-hidden select-none"
     @wheel.prevent="onWheel"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
@@ -130,11 +130,11 @@ watch(() => props.filePath, () => {
     :style="{ cursor: isVideo(props.filePath) ? 'default' : (isDragging ? 'grabbing' : 'grab') }"
   >
     <div v-if="isLoading" class="flex flex-col items-center gap-3">
-      <div class="w-8 h-8 border-4 border-border-soft border-t-accent rounded-full animate-spin"></div>
-      <div class="text-sm text-text-muted">正在加载...</div>
+      <div class="w-8 h-8 border-4 border-zinc-300 dark:border-zinc-700 border-t-blue-500 rounded-full animate-spin"></div>
+      <div class="text-sm text-zinc-500">正在加载...</div>
     </div>
     
-    <div v-else-if="loadError" class="text-danger text-sm">
+    <div v-else-if="loadError" class="text-red-500 text-sm">
       {{ loadError }}
     </div>
     

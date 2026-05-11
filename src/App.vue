@@ -151,12 +151,3 @@ onUnmounted(() => {
     <button class="shrink-0 px-3 py-1 rounded bg-white/20 hover:bg-white/30" @click="workspaceStore.clearError()">关闭</button>
   </div>
 </template>
-
-<style>
-/* Base transitions */
-* {
-  transition-property: background-color, border-color, box-shadow, opacity, transform;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 150ms;
-}
-</style>

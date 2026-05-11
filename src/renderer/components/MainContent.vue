@@ -34,6 +34,7 @@ const createAsyncEditor = (loader: () => Promise<any>) => {
 const editorByExt = {
   '.md': createAsyncEditor(() => import('./editor/MarkdownEditor.vue')),
   '.txt': createAsyncEditor(() => import('./editor/PlainTextEditor.vue')),
+  '.ico': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
   '.png': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
   '.jpg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
   '.jpeg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),

@@ -4,6 +4,7 @@ import { FileQuestion, FileText } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../store/workspace'
 import EditorLoadError from './editor/EditorLoadError.vue'
 import EditorTabs from './EditorTabs.vue'
+import { getMediaPreviewTabs, isMediaPath } from './main-content-routing'
 
 const workspaceStore = useWorkspaceStore()
 let keyHandler: ((e: KeyboardEvent) => void) | null = null
@@ -31,25 +32,19 @@ const createAsyncEditor = (loader: () => Promise<any>) => {
   })
 }
 
+const MediaPreview = createAsyncEditor(() => import('./preview/MediaPreview.vue'))
+
 const editorByExt = {
   '.md': createAsyncEditor(() => import('./editor/MarkdownEditor.vue')),
   '.txt': createAsyncEditor(() => import('./editor/PlainTextEditor.vue')),
-  '.ico': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
-  '.png': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
-  '.jpg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
-  '.jpeg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
-  '.gif': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
-  '.webp': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
-  '.svg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
-  '.mp4': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
-  '.webm': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
-  '.ogg': createAsyncEditor(() => import('./preview/MediaPreview.vue')),
 } as const
 
 const activeExt = computed(() => getExt(workspaceStore.activeFilePath))
 const currentEditor = computed(() => (editorByExt as any)[activeExt.value] || null)
-const isSupportedFile = computed(() => Boolean(currentEditor.value))
+const isActiveMedia = computed(() => isMediaPath(workspaceStore.activeFilePath))
+const isSupportedFile = computed(() => isActiveMedia.value || Boolean(currentEditor.value))
 const editorKey = computed(() => `${workspaceStore.activeFilePath}:${activeExt.value}:${editorReloadNonce.value}`)
+const mediaPreviewTabs = computed(() => getMediaPreviewTabs(workspaceStore.openedFiles, workspaceStore.activeWorkspace?.path || ''))
 
 const currentEditorRef = ref<any>(null)
 
@@ -124,26 +119,36 @@ onUnmounted(() => {
     <EditorTabs v-if="workspaceStore.openedFiles.length > 0" />
 
     <main v-if="workspaceStore.activeFilePath" class="flex-1 flex overflow-hidden">
-      <div v-if="!isSupportedFile" class="flex-1 flex flex-col items-center justify-center text-text-subtle p-12 text-center bg-panel/50">
-        <FileQuestion :size="64" class="mb-6 opacity-30 text-text-muted" />
-        <h3 class="text-xl font-medium mb-2 text-text-main">不支持的文件类型</h3>
-        <p class="max-w-md text-sm opacity-80 mb-4">该文件格式暂时无法在编辑器中打开。</p>
-      </div>
+      <div class="relative flex-1 overflow-hidden">
+        <div v-if="!isSupportedFile" class="h-full w-full flex flex-col items-center justify-center text-text-subtle p-12 text-center bg-panel/50">
+          <FileQuestion :size="64" class="mb-6 opacity-30 text-text-muted" />
+          <h3 class="text-xl font-medium mb-2 text-text-main">不支持的文件类型</h3>
+          <p class="max-w-md text-sm opacity-80 mb-4">该文件格式暂时无法在编辑器中打开。</p>
+        </div>
 
-      <component
-        v-else
-        class="w-full flex-1"
-        :is="currentEditor"
-        :key="editorKey"
-        ref="currentEditorRef"
-        :filePath="workspaceStore.activeFilePath"
-        :relativeFilePath="workspaceStore.activeFileRelativePath"
-        :content="workspaceStore.activeFileContent"
-        :saveTrigger="saveTrigger"
-        @update:content="(v) => workspaceStore.setActiveFileContent(v)"
-        @save="handleSave"
-        @retry="onEditorRetry"
-      />
+        <component
+          v-else-if="currentEditor && !isActiveMedia"
+          class="h-full w-full"
+          :is="currentEditor"
+          :key="editorKey"
+          ref="currentEditorRef"
+          :filePath="workspaceStore.activeFilePath"
+          :relativeFilePath="workspaceStore.activeFileRelativePath"
+          :content="workspaceStore.activeFileContent"
+          :saveTrigger="saveTrigger"
+          @update:content="(v) => workspaceStore.setActiveFileContent(v)"
+          @save="handleSave"
+          @retry="onEditorRetry"
+        />
+
+        <MediaPreview
+          v-for="tab in mediaPreviewTabs"
+          v-show="isActiveMedia && tab.relativePath === workspaceStore.activeFileRelativePath"
+          :key="tab.relativePath"
+          class="absolute inset-0 h-full w-full"
+          :filePath="tab.filePath"
+        />
+      </div>
     </main>
 
     <div v-else class="flex-1 flex flex-col items-center justify-center text-text-subtle p-12 text-center">

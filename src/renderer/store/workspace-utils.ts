@@ -1,4 +1,4 @@
-export const SUPPORTED_FILE_EXTS = new Set(['md', 'txt', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'mp4', 'webm', 'ogg'])
+export const SUPPORTED_FILE_EXTS = new Set(['md', 'txt', 'ico', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'mp4', 'webm', 'ogg'])
 export const EDITABLE_TEXT_EXTS = new Set(['md', 'txt'])
 
 export const normalizeDir = (p: string) => {

@@ -1,11 +1,23 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ChevronRight } from 'lucide-vue-next'
 import { useWorkspaceStore, type FsEntry } from '../store/workspace'
+import { FILE_TREE_CREATE_FILE_EVENT, getCreateTargetDir } from './util/file-tree-utils'
 
 const workspaceStore = useWorkspaceStore()
 const expanded = computed(() => workspaceStore.activeExpandedSet)
 const activeFileRel = computed(() => workspaceStore.activeFileRelativePath)
+
+type InlineEditMode = 'create-file' | 'create-folder' | 'rename'
+type InlineEditState = {
+  mode: InlineEditMode
+  parentDir: string
+  targetPath: string
+  value: string
+}
+type FlatEntryRow = { kind: 'entry'; key: string; entry: FsEntry; depth: number }
+type FlatInlineCreateRow = { kind: 'inline-create'; key: string; depth: number; parentDir: string }
+type FlatRow = FlatEntryRow | FlatInlineCreateRow
 
 const getChildren = (dirRelativePath: string) => {
   const key = workspaceStore.keyOfDir(dirRelativePath)
@@ -42,6 +54,19 @@ const menuOpen = ref(false)
 const menuX = ref(0)
 const menuY = ref(0)
 const selectedFile = ref<FsEntry | null>(null)
+const inlineEdit = ref<InlineEditState | null>(null)
+const inlineInput = ref<HTMLInputElement | null>(null)
+
+const inlineEditValue = computed({
+  get: () => inlineEdit.value?.value ?? '',
+  set: (value: string) => {
+    if (inlineEdit.value) inlineEdit.value.value = value
+  },
+})
+
+const setInlineInput = (el: Element | null) => {
+  inlineInput.value = el instanceof HTMLInputElement ? el : null
+}
 
 const closeMenu = () => {
   menuOpen.value = false
@@ -52,7 +77,7 @@ const openMenu = (event: MouseEvent, row: FsEntry) => {
   selectedFile.value = row
   const pad = 8
   const width = 180
-  const height = 260
+  const height = 320
   menuX.value = Math.max(pad, Math.min(event.clientX, window.innerWidth - width - pad))
   menuY.value = Math.max(pad, Math.min(event.clientY, window.innerHeight - height - pad))
   menuOpen.value = true
@@ -76,19 +101,93 @@ const handleRightClick = (event: MouseEvent, row: FsEntry) => {
   openMenu(event, row)
 }
 
-const addFile = async () => {
+const focusInlineInput = async () => {
+  await nextTick()
+  inlineInput.value?.focus()
+  inlineInput.value?.select()
+}
+
+const ensureDirExpanded = async (dirRelativePath: string) => {
+  if (!dirRelativePath) return
+  if (!isExpanded(dirRelativePath)) {
+    await workspaceStore.toggleDirExpanded(dirRelativePath)
+  } else if (workspaceStore.activeWorkspaceId && !workspaceStore.dirEntries[workspaceStore.keyOfDir(dirRelativePath)]) {
+    await workspaceStore.loadDir(workspaceStore.activeWorkspaceId, dirRelativePath)
+  }
+}
+
+const startCreateFileInDir = async (parentDir: string) => {
+  await ensureDirExpanded(parentDir)
+  inlineEdit.value = { mode: 'create-file', parentDir, targetPath: '', value: 'Untitled.md' }
+  await focusInlineInput()
+}
+
+const startCreateFile = async (entry: FsEntry | null) => {
   closeMenu()
-  await workspaceStore.createMarkdown(undefined, selectedFile.value?.relativePath)
+  await startCreateFileInDir(getCreateTargetDir(entry))
+}
+
+const startCreateFileFromCurrentDir = async () => {
+  closeMenu()
+  await startCreateFileInDir(workspaceStore.getCurrentDir())
+}
+
+const startCreateFolder = async (entry: FsEntry | null) => {
+  closeMenu()
+  const parentDir = getCreateTargetDir(entry)
+  await ensureDirExpanded(parentDir)
+  inlineEdit.value = { mode: 'create-folder', parentDir, targetPath: '', value: 'New Folder' }
+  await focusInlineInput()
+}
+
+const pathBaseName = (relativePath: string) => relativePath.split('/').filter(Boolean).pop() || relativePath
+
+const startRename = async (relativePath: string) => {
+  closeMenu()
+  const row = flattened.value.find((item): item is FlatEntryRow => item.kind === 'entry' && item.entry.relativePath === relativePath)
+  inlineEdit.value = {
+    mode: 'rename',
+    parentDir: row ? getCreateTargetDir(row.entry) : '',
+    targetPath: relativePath,
+    value: row?.entry.name || pathBaseName(relativePath),
+  }
+  await focusInlineInput()
+}
+
+const cancelInlineEdit = () => {
+  inlineEdit.value = null
+}
+
+const withMarkdownExtension = (name: string) => (name.includes('.') ? name : `${name}.md`)
+
+const submitInlineEdit = async () => {
+  const edit = inlineEdit.value
+  if (!edit) return
+
+  inlineEdit.value = null
+  const value = edit.value.trim()
+  if (!value) return
+
+  if (edit.mode === 'rename') {
+    if (value === pathBaseName(edit.targetPath)) return
+    await workspaceStore.renameEntry(edit.targetPath, value)
+  } else if (edit.mode === 'create-file') {
+    await workspaceStore.createMarkdown(withMarkdownExtension(value), edit.parentDir)
+  } else {
+    await workspaceStore.createFolder(value, edit.parentDir)
+  }
+}
+
+const addFile = async () => {
+  await startCreateFile(selectedFile.value)
 }
 
 const addFolder = async () => {
-  closeMenu()
-  await workspaceStore.createFolder(undefined, selectedFile.value?.relativePath)
+  await startCreateFolder(selectedFile.value)
 }
 
 const renameEntry = async (relativePath: string) => {
-  await workspaceStore.renameEntry(relativePath)
-  closeMenu()
+  await startRename(relativePath)
 }
 
 const removeEntry = async (relativePath: string) => {
@@ -154,19 +253,56 @@ const allowDrop = (event: DragEvent) => {
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
 }
 
-const flattened = computed(() => {
-  const result: Array<FsEntry & { depth: number }> = []
+const isCreatingInDir = (dirRelativePath: string) => {
+  const edit = inlineEdit.value
+  return Boolean(edit && (edit.mode === 'create-file' || edit.mode === 'create-folder') && edit.parentDir === dirRelativePath)
+}
 
-  const walk = (entries: FsEntry[], depth: number) => {
+const isRenaming = (relativePath: string) => {
+  const edit = inlineEdit.value
+  return Boolean(edit && edit.mode === 'rename' && edit.targetPath === relativePath)
+}
+
+const isRowDraggable = (row: FlatRow): row is FlatEntryRow =>
+  row.kind === 'entry' && !isRenaming(row.entry.relativePath)
+
+const handleRowDragStart = (event: DragEvent, row: FlatRow) => {
+  if (!isRowDraggable(row)) {
+    event.preventDefault()
+    return
+  }
+
+  onDragStart(event, row.entry)
+}
+
+const getRowClass = (row: FlatRow) => {
+  if (row.kind === 'inline-create') return 'border-accent bg-accent-soft text-text-main'
+
+  return [
+    workspaceStore.selectedPaths.includes(row.entry.relativePath) ? 'border-accent bg-accent-soft text-text-main' : '',
+    (!workspaceStore.selectedPaths.includes(row.entry.relativePath) && !row.entry.isDirectory && activeFileRel.value === row.entry.relativePath) ? 'border-accent bg-accent-soft text-text-main' : '',
+  ]
+}
+
+const flattened = computed((): FlatRow[] => {
+  const result: FlatRow[] = []
+
+  const insertCreateRow = (dirRelativePath: string, depth: number) => {
+    if (!isCreatingInDir(dirRelativePath)) return
+    result.push({ kind: 'inline-create', key: `inline-create:${dirRelativePath}`, depth, parentDir: dirRelativePath })
+  }
+
+  const walk = (dirRelativePath: string, entries: FsEntry[], depth: number) => {
+    insertCreateRow(dirRelativePath, depth)
     for (const entry of entries.filter(shouldShowEntry)) {
-      result.push({ ...entry, depth })
+      result.push({ kind: 'entry', key: entry.relativePath, entry, depth })
       if (entry.isDirectory && isExpanded(entry.relativePath)) {
-        walk(getChildren(entry.relativePath), depth + 1)
+        walk(entry.relativePath, getChildren(entry.relativePath), depth + 1)
       }
     }
   }
 
-  walk(getChildren(''), 0)
+  walk('', getChildren(''), 0)
   return result
 })
 
@@ -195,19 +331,29 @@ const handleRevealInExplorer = async () => {
 const onGlobalPointerDown = () => closeMenu()
 const onGlobalKeyDown = (e: KeyboardEvent) => {
   if (e.key === 'Escape') closeMenu()
+  if (e.key === 'F2' && workspaceStore.selectedPaths.length === 1 && !inlineEdit.value) {
+    e.preventDefault()
+    startRename(workspaceStore.selectedPaths[0]).catch(console.error)
+  }
   if (e.key === 'Delete' && workspaceStore.selectedPaths.length > 0) {
     workspaceStore.deleteEntries(workspaceStore.selectedPaths)
   }
 }
 
+const onCreateFileRequest = () => {
+  startCreateFileFromCurrentDir().catch(console.error)
+}
+
 onMounted(() => {
   window.addEventListener('pointerdown', onGlobalPointerDown)
   window.addEventListener('keydown', onGlobalKeyDown)
+  window.addEventListener(FILE_TREE_CREATE_FILE_EVENT, onCreateFileRequest)
 })
 
 onUnmounted(() => {
   window.removeEventListener('pointerdown', onGlobalPointerDown)
   window.removeEventListener('keydown', onGlobalKeyDown)
+  window.removeEventListener(FILE_TREE_CREATE_FILE_EVENT, onCreateFileRequest)
 })
 </script>
 
@@ -226,43 +372,68 @@ onUnmounted(() => {
 
       <div
         v-for="row in flattened"
-        :key="row.relativePath"
+        :key="row.key"
         class="group flex items-center gap-2 py-1.5 px-2 rounded-md border-l-2 border-transparent text-text-muted hover:bg-accent-soft hover:text-text-main"
         :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
-        :class="[
-          workspaceStore.selectedPaths.includes(row.relativePath) ? 'border-accent bg-accent-soft text-text-main' : '',
-          (!workspaceStore.selectedPaths.includes(row.relativePath) && !row.isDirectory && activeFileRel === row.relativePath) ? 'border-accent bg-accent-soft text-text-main' : '',
-        ]"
-        draggable="true"
-        @dragstart="(e) => onDragStart(e, row)"
-        @click.exact="handleRowClick($event, row, false)"
-        @click.ctrl.exact="handleRowClick($event, row, true)"
-        @click.meta.exact="handleRowClick($event, row, true)"
-        @contextmenu="(e) => handleRightClick(e, row)"
-        @dragover.capture="allowDrop"
-        @drop.capture.stop="(e) => onDropToDir(e, row.relativePath)"
+        :class="getRowClass(row)"
+        :draggable="isRowDraggable(row)"
+        @dragstart="(e) => handleRowDragStart(e, row)"
+        @click.exact="row.kind === 'entry' && handleRowClick($event, row.entry, false)"
+        @click.ctrl.exact="row.kind === 'entry' && handleRowClick($event, row.entry, true)"
+        @click.meta.exact="row.kind === 'entry' && handleRowClick($event, row.entry, true)"
+        @contextmenu="(e) => row.kind === 'entry' && handleRightClick(e, row.entry)"
+        @dragover.capture="(e) => row.kind === 'entry' && allowDrop(e)"
+        @drop.capture.stop="(e) => row.kind === 'entry' && onDropToDir(e, row.entry.relativePath)"
       >
-        <button
-          v-if="row.isDirectory"
-          class="w-6 h-6 inline-flex items-center justify-center rounded hover:bg-accent-soft text-text-muted"
-          @click.stop="toggle(row.relativePath)"
-        >
-          <ChevronRight
-            :size="14"
-            :class="['transition-transform', isExpanded(row.relativePath) ? 'rotate-90' : 'rotate-0']"
+        <template v-if="row.kind === 'inline-create'">
+          <div class="w-6 h-6"></div>
+          <input
+            :ref="setInlineInput"
+            v-model="inlineEditValue"
+            class="flex-1 min-w-0 rounded border border-accent bg-panel px-1.5 py-0.5 text-sm text-text-main outline-none"
+            @click.stop
+            @pointerdown.stop
+            @keydown.enter.prevent.stop="submitInlineEdit"
+            @keydown.esc.prevent.stop="cancelInlineEdit"
+            @blur="submitInlineEdit"
           />
-        </button>
-        <div v-else class="w-6 h-6"></div>
+        </template>
+        <template v-else>
+          <button
+            v-if="row.entry.isDirectory"
+            class="w-6 h-6 inline-flex items-center justify-center rounded hover:bg-accent-soft text-text-muted"
+            @click.stop="toggle(row.entry.relativePath)"
+          >
+            <ChevronRight
+              :size="14"
+              :class="['transition-transform', isExpanded(row.entry.relativePath) ? 'rotate-90' : 'rotate-0']"
+            />
+          </button>
+          <div v-else class="w-6 h-6"></div>
 
-        <div class="flex-1 min-w-0 text-left text-sm truncate select-none" :title="row.name">
-          {{ getDisplayName(row) }}
-        </div>
-        <div
-          v-if="getDisplayExt(row) && getDisplayExt(row) !== '.md'"
-          class="shrink-0 rounded-md bg-panel-soft px-1.5 py-0.5 text-[11px] leading-4 text-text-muted select-none"
-        >
-          {{ getDisplayExt(row) }}
-        </div>
+          <input
+            v-if="isRenaming(row.entry.relativePath)"
+            :ref="setInlineInput"
+            v-model="inlineEditValue"
+            class="flex-1 min-w-0 rounded border border-accent bg-panel px-1.5 py-0.5 text-sm text-text-main outline-none"
+            @click.stop
+            @pointerdown.stop
+            @keydown.enter.prevent.stop="submitInlineEdit"
+            @keydown.esc.prevent.stop="cancelInlineEdit"
+            @blur="submitInlineEdit"
+          />
+          <template v-else>
+            <div class="flex-1 min-w-0 text-left text-sm truncate select-none" :title="row.entry.name">
+              {{ getDisplayName(row.entry) }}
+            </div>
+            <div
+              v-if="getDisplayExt(row.entry) && getDisplayExt(row.entry) !== '.md'"
+              class="shrink-0 rounded-md bg-panel-soft px-1.5 py-0.5 text-[11px] leading-4 text-text-muted select-none"
+            >
+              {{ getDisplayExt(row.entry) }}
+            </div>
+          </template>
+        </template>
       </div>
 
       <div
@@ -274,7 +445,6 @@ onUnmounted(() => {
         @contextmenu.prevent
       >
         <button
-          v-if="selectedFile.isDirectory"
           title="新建文件"
           class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft"
           @click="addFile"
@@ -282,7 +452,6 @@ onUnmounted(() => {
           新建文件
         </button>
         <button
-          v-if="selectedFile.isDirectory"
           title="新建文件夹"
           class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft"
           @click="addFolder"
@@ -291,11 +460,12 @@ onUnmounted(() => {
         </button>
         <button
           v-if="workspaceStore.selectedPaths.length === 1"
-          class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft"
+          class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft flex items-center justify-between gap-3"
           title="重命名"
           @click="renameEntry(workspaceStore.selectedPaths[0])"
         >
-          重命名
+          <span>重命名</span>
+          <span class="text-xs text-text-subtle">F2</span>
         </button>
         <button
           v-if="selectedFile.relativePath !== ''"

@@ -4,7 +4,8 @@ import { FileQuestion, FileText } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../store/workspace'
 import EditorLoadError from './editor/EditorLoadError.vue'
 import EditorTabs from './EditorTabs.vue'
-import { getMediaPreviewTabs, isMediaPath } from './main-content-routing'
+import { getMediaPreviewTabs, isMediaPath } from './util/main-content-routing'
+import { FILE_TREE_CREATE_FILE_EVENT } from './util/file-tree-utils'
 
 const workspaceStore = useWorkspaceStore()
 let keyHandler: ((e: KeyboardEvent) => void) | null = null
@@ -86,7 +87,7 @@ onMounted(() => {
     }
     if (e.ctrlKey && !e.shiftKey && (e.key === 'n' || e.key === 'N')) {
       e.preventDefault()
-      workspaceStore.createMarkdown()
+      window.dispatchEvent(new CustomEvent(FILE_TREE_CREATE_FILE_EVENT))
       return
     }
     if (e.ctrlKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {

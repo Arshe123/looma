@@ -846,12 +846,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     },
 
-    async renameEntry(relativePath: string) {
+    async renameEntry(relativePath: string, nextBaseValue?: string) {
       const ws = this.activeWorkspaceId
       if (!ws) return
       const from = normalizeDir(relativePath)
       const base = pathBase(from)
-      const nextBase = ((await this.requestTextInput('重命名', base)) ?? base).trim()
+      const nextBase = ((nextBaseValue ?? (await this.requestTextInput('重命名', base))) ?? base).trim()
       if (!nextBase || nextBase === base) return
       const dir = pathDir(from)
       const to = dir ? dir + '/' + nextBase : nextBase

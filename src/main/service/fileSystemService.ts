@@ -146,11 +146,18 @@ export const fileSystemService = {
 
       const newNameTrimmed = newName.trim()
       if (!newNameTrimmed) return { success: false, error: '新名称不能为空' }
-      const newPath = path.join(path.dirname(targetResolved.target), newNameTrimmed)
-      if (await pathExists(newPath)) {
+      const oldPath = path.resolve(targetResolved.target)
+      const newPath = path.resolve(path.dirname(oldPath), newNameTrimmed)
+      const isCaseOnlyRename = process.platform === 'win32' && oldPath.toLowerCase() === newPath.toLowerCase()
+
+      if (oldPath === newPath) {
+        return { success: true, data: toPosix(path.relative(targetResolved.root, oldPath)) }
+      }
+
+      if (!isCaseOnlyRename && await pathExists(newPath)) {
         return { success: false, error: '新名称已存在' }
       }
-      await safeRename(targetResolved.target, newPath)
+      await safeRename(oldPath, newPath)
       return { success: true, data: toPosix(path.relative(targetResolved.root, newPath)) }
     } catch (error: any) {
       return { success: false, error: `重命名失败: ${error?.message ?? String(error)}` }

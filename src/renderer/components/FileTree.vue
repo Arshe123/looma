@@ -2,7 +2,16 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ChevronRight } from 'lucide-vue-next'
 import { useWorkspaceStore, type FsEntry } from '../store/workspace'
-import { FILE_TREE_CREATE_FILE_EVENT, getCreateTargetDir } from './util/file-tree-utils'
+import {
+  FILE_TREE_CREATE_FILE_EVENT,
+  INLINE_MARKDOWN_FILENAME,
+  buildCreateMarkdownName,
+  buildRenameName,
+  getCreateTargetDir,
+  getEntryDisplayExt,
+  getEntryDisplayName,
+  getRenameInputName,
+} from './util/file-tree-utils'
 
 const workspaceStore = useWorkspaceStore()
 const expanded = computed(() => workspaceStore.activeExpandedSet)
@@ -13,6 +22,8 @@ type InlineEditState = {
   mode: InlineEditMode
   parentDir: string
   targetPath: string
+  targetName?: string
+  targetIsDirectory?: boolean
   value: string
 }
 type FlatEntryRow = { kind: 'entry'; key: string; entry: FsEntry; depth: number }
@@ -28,21 +39,6 @@ const getParentDirFromPath = async (path: string) => {
   const isFile = await workspaceStore.isFile(path)
   if (!isFile) return path
   return path.split('/').slice(0, -1).join('/')
-}
-
-const getDisplayExt = (row: FsEntry) => {
-  if (row.isDirectory) return ''
-  const name = row.name || ''
-  const dotIndex = name.lastIndexOf('.')
-  if (dotIndex === name.length - 1) return ''
-  return name.slice(dotIndex)
-}
-
-const getDisplayName = (row: FsEntry) => {
-  if (row.isDirectory) return row.name
-  const ext = getDisplayExt(row)
-  if (row.name.length === ext.length) return row.name
-  return ext ? row.name.slice(0, -ext.length) : row.name
 }
 
 const shouldShowEntry = (entry: FsEntry) => entry.name === '.gitignore' || !entry.name.startsWith('.')
@@ -118,7 +114,7 @@ const ensureDirExpanded = async (dirRelativePath: string) => {
 
 const startCreateFileInDir = async (parentDir: string) => {
   await ensureDirExpanded(parentDir)
-  inlineEdit.value = { mode: 'create-file', parentDir, targetPath: '', value: 'Untitled.md' }
+  inlineEdit.value = { mode: 'create-file', parentDir, targetPath: '', value: INLINE_MARKDOWN_FILENAME }
   await focusInlineInput()
 }
 
@@ -145,11 +141,18 @@ const pathBaseName = (relativePath: string) => relativePath.split('/').filter(Bo
 const startRename = async (relativePath: string) => {
   closeMenu()
   const row = flattened.value.find((item): item is FlatEntryRow => item.kind === 'entry' && item.entry.relativePath === relativePath)
+  const fallbackEntry = {
+    name: pathBaseName(relativePath),
+    isDirectory: Boolean(workspaceStore.dirEntries[workspaceStore.keyOfDir(relativePath)]),
+  }
+  const entry = row?.entry || fallbackEntry
   inlineEdit.value = {
     mode: 'rename',
     parentDir: row ? getCreateTargetDir(row.entry) : '',
     targetPath: relativePath,
-    value: row?.entry.name || pathBaseName(relativePath),
+    targetName: entry.name,
+    targetIsDirectory: entry.isDirectory,
+    value: getRenameInputName(entry),
   }
   await focusInlineInput()
 }
@@ -157,8 +160,6 @@ const startRename = async (relativePath: string) => {
 const cancelInlineEdit = () => {
   inlineEdit.value = null
 }
-
-const withMarkdownExtension = (name: string) => (name.includes('.') ? name : `${name}.md`)
 
 const submitInlineEdit = async () => {
   const edit = inlineEdit.value
@@ -169,10 +170,15 @@ const submitInlineEdit = async () => {
   if (!value) return
 
   if (edit.mode === 'rename') {
-    if (value === pathBaseName(edit.targetPath)) return
-    await workspaceStore.renameEntry(edit.targetPath, value)
+    const entry = {
+      name: edit.targetName || pathBaseName(edit.targetPath),
+      isDirectory: Boolean(edit.targetIsDirectory),
+    }
+    const nextName = buildRenameName(entry, value)
+    if (nextName === entry.name) return
+    await workspaceStore.renameEntry(edit.targetPath, nextName)
   } else if (edit.mode === 'create-file') {
-    await workspaceStore.createMarkdown(withMarkdownExtension(value), edit.parentDir)
+    await workspaceStore.createMarkdown(buildCreateMarkdownName(value), edit.parentDir)
   } else {
     await workspaceStore.createFolder(value, edit.parentDir)
   }
@@ -184,10 +190,6 @@ const addFile = async () => {
 
 const addFolder = async () => {
   await startCreateFolder(selectedFile.value)
-}
-
-const renameEntry = async (relativePath: string) => {
-  await startRename(relativePath)
 }
 
 const removeEntry = async (relativePath: string) => {
@@ -424,13 +426,13 @@ onUnmounted(() => {
           />
           <template v-else>
             <div class="flex-1 min-w-0 text-left text-sm truncate select-none" :title="row.entry.name">
-              {{ getDisplayName(row.entry) }}
+              {{ getEntryDisplayName(row.entry) }}
             </div>
             <div
-              v-if="getDisplayExt(row.entry) && getDisplayExt(row.entry) !== '.md'"
+              v-if="getEntryDisplayExt(row.entry) && getEntryDisplayExt(row.entry) !== '.md'"
               class="shrink-0 rounded-md bg-panel-soft px-1.5 py-0.5 text-[11px] leading-4 text-text-muted select-none"
             >
-              {{ getDisplayExt(row.entry) }}
+              {{ getEntryDisplayExt(row.entry) }}
             </div>
           </template>
         </template>
@@ -462,7 +464,7 @@ onUnmounted(() => {
           v-if="workspaceStore.selectedPaths.length === 1"
           class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft flex items-center justify-between gap-3"
           title="重命名"
-          @click="renameEntry(workspaceStore.selectedPaths[0])"
+          @click="startRename(workspaceStore.selectedPaths[0])"
         >
           <span>重命名</span>
           <span class="text-xs text-text-subtle">F2</span>

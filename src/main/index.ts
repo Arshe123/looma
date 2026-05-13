@@ -356,7 +356,7 @@ ipcMain.handle('fs:createFile', async (_, workspaceId: string, parentDirRelative
   return await fileSystemService.createFile(workspacePath, parentDirRelativePath, name);
 });
 
-ipcMain.handle('fs:rename', async (_, workspaceId: string, targetRelativePath: string, newName: string) => {
+ipcMain.handle('fs:rename', async (_, workspaceId: string, targetRelativePath: string, newName: string) => {  
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
   return await fileSystemService.rename(workspacePath, targetRelativePath, newName);

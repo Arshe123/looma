@@ -215,7 +215,24 @@ export const fileSystemService = {
   async emptyTrash(workspaceId: string): Promise<Result<void>> {
     try {
       const trashDir = getTrashDir(workspaceId)
-      await fs.rm(trashDir, { recursive: true, force: true })
+      if (!(await pathExists(trashDir))) return { success: true }
+
+      const entries = await fs.readdir(trashDir)
+      const failures: string[] = []
+
+      for (const entry of entries) {
+        const target = path.join(trashDir, entry)
+        try {
+          await shell.trashItem(target)
+        } catch (error: any) {
+          failures.push(`${entry}: ${error?.message ?? String(error)}`)
+        }
+      }
+
+      if (failures.length > 0) {
+        return { success: false, error: `清空回收站失败: ${failures.join('; ')}` }
+      }
+
       return { success: true }
     } catch (error: any) {
       return { success: false, error: `清空回收站失败: ${error?.message ?? String(error)}` }

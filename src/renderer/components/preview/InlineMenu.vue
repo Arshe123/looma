@@ -126,7 +126,7 @@ const scrollToSelected = () => {
 }
 
 const handleKeyDown = (event: KeyboardEvent) => {
-  if (event.key === 'Enter' && event.shiftKey) {
+  if (event.key === 'Enter' && event.shiftKey && event.ctrlKey) {
     event.preventDefault()
     event.stopImmediatePropagation()
     togglePanel()

@@ -6,6 +6,7 @@ import EditorLoadError from './editor/EditorLoadError.vue'
 import EditorTabs from './EditorTabs.vue'
 import { getMediaPreviewTabs, isMediaPath } from './util/main-content-routing'
 import { FILE_TREE_CREATE_FILE_EVENT } from './util/file-tree-utils'
+import { isTextEditingTarget } from './util/editing-target'
 
 const workspaceStore = useWorkspaceStore()
 let keyHandler: ((e: KeyboardEvent) => void) | null = null
@@ -91,13 +92,13 @@ onMounted(() => {
       return
     }
     if (e.ctrlKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
-      if (document.activeElement?.closest('.cm-editor') || document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return
+      if (isTextEditingTarget(e.target) || isTextEditingTarget(document.activeElement)) return
       e.preventDefault()
       workspaceStore.undo()
       return
     }
     if (e.ctrlKey && (e.key === 'y' || e.key === 'Y')) {
-      if (document.activeElement?.closest('.cm-editor') || document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return
+      if (isTextEditingTarget(e.target) || isTextEditingTarget(document.activeElement)) return
       e.preventDefault()
       workspaceStore.redo()
     }

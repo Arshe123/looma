@@ -62,7 +62,7 @@ const safeRename = async (oldPath: string, newPath: string) => {
 }
 
 const getTrashDir = (workspaceId: string) => {
-  return path.join(app.getPath('appData'), 'workspace-meta', 'with-you', 'trash', workspaceId)
+  return path.join(app.getPath('appData'), 'workspace-meta', 'looma', 'trash', workspaceId)
 }
 
 export const fileSystemService = {
@@ -229,7 +229,7 @@ const defaultWatchIgnored = [
   '**/node_modules/**',
   '**/dist/**',
   '**/build/**',
-  '**/.with-you/**',
+  '**/.looma/**',
 ]
 
 export const fileWatchService = {

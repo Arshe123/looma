@@ -28,11 +28,11 @@ const setWindowTitleForWorkspace = async (workspaceId: string | null, targetWind
   const win = targetWindow ?? mainWindow ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
   if (!win) return;
   if (!workspaceId) {
-    win.setTitle('With You');
+    win.setTitle('looma');
     return;
   }
   const ws = await getWorkspaceById(workspaceId);
-  win.setTitle(ws?.name || 'With You');
+  win.setTitle(ws?.name || 'looma');
 };
 
 const buildAppMenu = (win: BrowserWindow) => {
@@ -140,7 +140,7 @@ function createWindow(initialWorkspaceId?: string) {
   });
 
   mainWindow = win;
-  win.setIcon(path.join(__dirname, '../public/logo.png'));
+  win.setIcon(path.join(__dirname, '../public/looma.png'));
 
   win.on('closed', () => {
     if (mainWindow === win) {

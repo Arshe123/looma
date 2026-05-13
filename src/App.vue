@@ -9,7 +9,7 @@ import CommandPalette from './renderer/components/CommandPalette.vue';
 
 const workspaceStore = useWorkspaceStore();
 
-const SIDEBAR_WIDTH_KEY = 'with-you.sidebarWidth'
+const SIDEBAR_WIDTH_KEY = 'looma.sidebarWidth'
 const defaultSidebarWidth = 320
 const minSidebarWidth = 56
 const minMainContentWidth = 360

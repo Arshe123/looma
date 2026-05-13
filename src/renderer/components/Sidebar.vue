@@ -13,7 +13,7 @@ const props = defineProps<{
 const workspaceStore = useWorkspaceStore()
 const isOpen = ref(true)
 const isMockLoggedIn = ref(true)
-const mockUsername = ref('with-you 用户')
+const mockUsername = ref('looma 用户')
 const authModalOpen = ref(false)
 const authModalMode = ref<'login' | 'register'>('login')
 const userMenuOpen = ref(false)
@@ -153,16 +153,16 @@ onUnmounted(() => {
         <div class="flex-1 overflow-hidden">
           <div v-if="workspaceStore.workspaces.length === 0" class="p-4">
             <div class="text-sm font-semibold text-text-main">暂未打开工作空间。请从本地文件夹开始使用</div>
-            <div class="mt-2 text-xs text-text-muted">请选择一个本地文件夹作为您的工作空间。</div>
+            <div class="mt-2 text-xs text-text-muted">请选择或创建一个本地文件夹作为您的工作空间。</div>
             <div class="mt-4 grid grid-cols-1 gap-2">
               <button
-                class="w-full px-3 py-2 rounded-lg bg-accent-soft hover:bg-accent-soft text-text-main text-sm"
+                class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
                 @click="workspaceStore.openWorkspaceInNewWindowFlow()"
               >
                 打开工作空间 (Ctrl+O)
               </button>
               <button
-                class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm"
+                class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
                 @click="workspaceStore.newWorkspaceInNewWindowFlow()"
               >
                 新建工作空间 (Ctrl+Shift+N)

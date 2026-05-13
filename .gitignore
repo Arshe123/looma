@@ -25,7 +25,7 @@ dist-electron
 .vite
 .trae
 out/
-.with-you
+.looma
 
 # local config
 .npmrc

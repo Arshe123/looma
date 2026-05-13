@@ -14,7 +14,6 @@ const panelPosition = ref({ top: 0, left: 0 })
 const selectedIndex = ref(0)
 
 const formats = [
-    { id: 'h1', label: '一级标题', icon: markRaw(Heading1), action: () => props.editor.chain().focus().toggleHeading({ level: 1 }).run() },
     { id: 'h2', label: '二级标题', icon: markRaw(Heading2), action: () => props.editor.chain().focus().toggleHeading({ level: 2 }).run() },
     { id: 'h3', label: '三级标题', icon: markRaw(Heading3), action: () => props.editor.chain().focus().toggleHeading({ level: 3 }).run() },
     { id: 'h4', label: '四级标题', icon: markRaw(Heading4), action: () => props.editor.chain().focus().toggleHeading({ level: 4 }).run() },

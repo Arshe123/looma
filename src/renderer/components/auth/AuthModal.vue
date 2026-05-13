@@ -20,7 +20,7 @@ const showConfirmPassword = ref(false)
 
 const authTitle = computed(() => (authMode.value === 'login' ? '登录' : '注册'))
 const authDescription = computed(() =>
-  authMode.value === 'login' ? '欢迎回来，登录以继续使用 with-you' : '创建账号，开启你的 with-you 之旅',
+  authMode.value === 'login' ? '欢迎回来，登录以继续使用 looma' : '创建账号，开启你的 looma 之旅',
 )
 
 const close = () => {

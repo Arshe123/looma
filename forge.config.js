@@ -7,7 +7,7 @@ const { FuseV1Options, FuseVersion } = electronFuses;
 export default {
   packagerConfig: {
     asar: true,
-    icon: './public/logo.ico',
+    icon: './public/looma.ico',
   },
   rebuildConfig: {},
   makers: [
@@ -24,7 +24,7 @@ export default {
       name: '@electron-forge/maker-deb',
       config: {
         options: {
-          icon: './public/logo.ico',
+          icon: './public/looma.ico',
         },
       },
     },

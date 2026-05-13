@@ -19,7 +19,7 @@ interface WorkspaceState {
 }
 
 const getMetaRootDir = () => {
-  return path.join(app.getPath('appData'), 'workspace-meta', 'with-you')
+  return path.join(app.getPath('appData'), 'workspace-meta', 'looma')
 }
 
 const getWorkspacesJsonPath = () => {

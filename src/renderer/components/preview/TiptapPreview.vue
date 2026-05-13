@@ -172,6 +172,92 @@ watch(
   margin-bottom: 0.6em;
 }
 
+.tiptap h1::after,
+.tiptap h2::after,
+.tiptap h3::after,
+.tiptap h4::after,
+.tiptap h5::after,
+.tiptap h6::after,
+.markdown-body h1::after,
+.markdown-body h2::after,
+.markdown-body h3::after,
+.markdown-body h4::after,
+.markdown-body h5::after,
+.markdown-body h6::after {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.3rem;
+  min-width: 1.35rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  color: var(--text-muted);
+  background: var(--panel-soft);
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1.2;
+  vertical-align: middle;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+  user-select: none;
+}
+
+.tiptap h1:hover::after,
+.tiptap h2:hover::after,
+.tiptap h3:hover::after,
+.tiptap h4:hover::after,
+.tiptap h5:hover::after,
+.tiptap h6:hover::after,
+.tiptap h1:focus-within::after,
+.tiptap h2:focus-within::after,
+.tiptap h3:focus-within::after,
+.tiptap h4:focus-within::after,
+.tiptap h5:focus-within::after,
+.tiptap h6:focus-within::after,
+.markdown-body h1:hover::after,
+.markdown-body h2:hover::after,
+.markdown-body h3:hover::after,
+.markdown-body h4:hover::after,
+.markdown-body h5:hover::after,
+.markdown-body h6:hover::after,
+.markdown-body h1:focus-within::after,
+.markdown-body h2:focus-within::after,
+.markdown-body h3:focus-within::after,
+.markdown-body h4:focus-within::after,
+.markdown-body h5:focus-within::after,
+.markdown-body h6:focus-within::after {
+  visibility: visible;
+  opacity: 1;
+}
+
+.tiptap h1::after,
+.markdown-body h1::after {
+  content: "H1";
+}
+.tiptap h2::after,
+.markdown-body h2::after {
+  content: "H2";
+}
+.tiptap h3::after,
+.markdown-body h3::after {
+  content: "H3";
+}
+.tiptap h4::after,
+.markdown-body h4::after {
+  content: "H4";
+}
+.tiptap h5::after,
+.markdown-body h5::after {
+  content: "H5";
+}
+.tiptap h6::after,
+.markdown-body h6::after {
+  content: "H6";
+}
+
 .markdown-body-dark {
   background-color: transparent !important;
 }

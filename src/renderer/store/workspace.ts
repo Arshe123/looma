@@ -11,7 +11,7 @@ import {
   removePathsAndDescendants,
   resolveCurrentDir,
 } from './workspace-utils'
-import { executeRedoAction, executeUndoAction } from './workspace-history-service'
+import { executeRedoAction, executeUndoAction, type HistoryEffects } from './workspace-history-service'
 import { buildWorkspaceMetaPayload } from './workspace-meta-utils'
 import type { EditorSession, FsEntry, ResolvedThemeName, ThemeName, UndoAction, Workspace } from './workspace-types'
 export type { EditorSession, FsEntry, ResolvedThemeName, ThemeName, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
@@ -245,6 +245,68 @@ export const useWorkspaceStore = defineStore('workspace', {
         return next
       })
       return changed
+    },
+
+    async applyHistoryEffects(effects: HistoryEffects, options: { reopenRestored?: boolean } = {}) {
+      let shouldSaveMeta = false
+
+      if (effects.removedPaths?.length) {
+        const removedPaths = effects.removedPaths
+        const isActiveFileRemoved = removedPaths.some((path) => isSameOrChildPath(path, this.activeFileRelativePath))
+        if (isActiveFileRemoved) {
+          this.resetActiveFileState()
+        }
+
+        if (this.syncOpenedFilesAfterRemoval(removedPaths)) {
+          shouldSaveMeta = true
+        }
+
+        await this.syncSelectionAfterRemoval(removedPaths)
+      }
+
+      if (effects.movedItems?.length) {
+        const movedItems = effects.movedItems
+        const activeBeforeMove = this.activeFileRelativePath
+        const activeAfterMove = activeBeforeMove ? remapByMoves(activeBeforeMove, movedItems) : activeBeforeMove
+
+        if (this.syncOpenedFilesAfterMove(movedItems)) {
+          shouldSaveMeta = true
+        }
+
+        const nextSelectedPaths = this.selectedPaths.map((path) => remapByMoves(path, movedItems))
+        if (nextSelectedPaths.some((path, index) => path !== this.selectedPaths[index])) {
+          this.selectedPaths = nextSelectedPaths
+          shouldSaveMeta = true
+        }
+
+        const nextExpandedDirs = this.expandedDirs.map((path) => remapByMoves(path, movedItems))
+        if (nextExpandedDirs.some((path, index) => path !== this.expandedDirs[index])) {
+          this.expandedDirs = nextExpandedDirs
+          shouldSaveMeta = true
+        }
+
+        if (activeAfterMove && activeAfterMove !== activeBeforeMove) {
+          this.setActiveFileRelative(activeAfterMove)
+          shouldSaveMeta = true
+        }
+      }
+
+      if (options.reopenRestored && effects.restoredPaths?.length) {
+        const restoredFile = effects.restoredPaths.find(isSupportedPath)
+        if (restoredFile) {
+          this.setActiveFileRelative(restoredFile)
+          shouldSaveMeta = true
+        }
+      }
+
+      if (shouldSaveMeta) {
+        await this.saveWorkspaceMeta()
+      }
+    },
+
+    async refreshHistoryDirs(workspaceId: string, effects?: HistoryEffects | null) {
+      const currentDir = this.getCurrentDir()
+      await this.refreshDirs(workspaceId, [currentDir, ...(effects?.affectedDirs || [])])
     },
 
     selectPath(path: string, multi: boolean = false, rightClick: boolean = false) {
@@ -869,6 +931,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
 
       if (this.activeFileRelativePath === from) this.setActiveFileRelative(to)
+      this.undoStack.unshift({ type: 'move', items: [{ from, to }] })
+      this.redoStack = []
     },
 
     async undo() {
@@ -876,16 +940,15 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!action) return
       const ws = this.activeWorkspaceId
       if (!ws) return
-      const nextRedoAction = await executeUndoAction(action, {
+      const historyResult = await executeUndoAction(action, {
         workspaceId: ws,
         api: window.electronAPI,
         setBusy: (isBusy, text) => this.setBusy(isBusy, text),
-        createMarkdown: (title) => this.createMarkdown(title),
-        pathBase,
       })
-      if (nextRedoAction) this.redoStack.unshift(nextRedoAction)
-      const currentDir = this.getCurrentDir()
-      if (this.activeWorkspaceId) await this.loadDir(this.activeWorkspaceId, currentDir)
+      if (!historyResult) return
+      this.redoStack.unshift(historyResult.action)
+      await this.applyHistoryEffects(historyResult.effects)
+      if (this.activeWorkspaceId) await this.refreshHistoryDirs(this.activeWorkspaceId, historyResult.effects)
     },
 
     async redo() {
@@ -893,16 +956,15 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!action) return
       const ws = this.activeWorkspaceId
       if (!ws) return
-      const nextUndoAction = await executeRedoAction(action, {
+      const historyResult = await executeRedoAction(action, {
         workspaceId: ws,
         api: window.electronAPI,
         setBusy: (isBusy, text) => this.setBusy(isBusy, text),
-        createMarkdown: (title) => this.createMarkdown(title),
-        pathBase,
       })
-      if (nextUndoAction) this.undoStack.unshift(nextUndoAction)
-      const currentDir = this.getCurrentDir()
-      if (this.activeWorkspaceId) await this.loadDir(this.activeWorkspaceId, currentDir)
+      if (!historyResult) return
+      this.undoStack.unshift(historyResult.action)
+      await this.applyHistoryEffects(historyResult.effects, { reopenRestored: action.type === 'restore' })
+      if (this.activeWorkspaceId) await this.refreshHistoryDirs(this.activeWorkspaceId, historyResult.effects)
     },
 
     attachFsEvents() {

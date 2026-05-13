@@ -18,6 +18,7 @@ import 'github-markdown-css/github-markdown-light.css'
 import 'highlight.js/styles/github-dark.css'
 import InlineMenu from './InlineMenu.vue'
 import ContextMenu from './ContextMenu.vue'
+import { replaceExternalMarkdownContent } from './tiptap-content-sync'
 
 const props = defineProps<{
   content: string
@@ -119,7 +120,7 @@ watch(
     
     isUpdatingFromExternal = true
     const { from, to } = editor.value.state.selection
-    editor.value.commands.setContent(newContent, { emitUpdate: false })
+    replaceExternalMarkdownContent(editor.value as any, newContent)
     
     // Try to restore selection if possible
     try {

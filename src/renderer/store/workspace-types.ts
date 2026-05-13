@@ -39,5 +39,6 @@ export type ThemeName = ResolvedThemeName | 'system'
 
 export type UndoAction =
   | { type: 'create'; relativePath: string }
+  | { type: 'restore'; trashRelativePath: string; restoreTo: string }
   | { type: 'move'; items: { from: string; to: string }[] }
   | { type: 'delete'; items: { trashRelativePath: string; restoreTo: string }[] }

@@ -10,7 +10,6 @@
     "build:preload": "node scripts/build-preload.mjs",
     "dev:renderer": "vite",
     "dev": "npm run build:preload && node scripts/dev.mjs",
-    "build": "vue-tsc -b && vite build && npm run build:preload && electron-builder",
     "preview": "vite preview",
     "check": "vue-tsc -b",
     "lint": "eslint . --ext .ts,.vue",

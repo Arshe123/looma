@@ -69,7 +69,6 @@ npm run build
 | --- | --- |
 | `npm run dev` | 构建 preload 后启动 Electron 开发环境 |
 | `npm run dev:renderer` | 启动 Vite 渲染进程开发服务 |
-| `npm run build` | 类型检查、构建前端、构建 preload 并打包应用 |
 | `npm run preview` | 预览 Vite 构建结果 |
 | `npm run check` | 运行 TypeScript/Vue 类型检查 |
 | `npm run lint` | 运行 ESLint |

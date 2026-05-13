@@ -12,6 +12,7 @@ import {
   getEntryDisplayName,
   getRenameInputName,
 } from './util/file-tree-utils'
+import { handleFileTreeGlobalKeyDown } from './util/file-tree-shortcuts'
 
 const workspaceStore = useWorkspaceStore()
 const expanded = computed(() => workspaceStore.activeExpandedSet)
@@ -332,14 +333,15 @@ const handleRevealInExplorer = async () => {
 
 const onGlobalPointerDown = () => closeMenu()
 const onGlobalKeyDown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape') closeMenu()
-  if (e.key === 'F2' && workspaceStore.selectedPaths.length === 1 && !inlineEdit.value) {
-    e.preventDefault()
-    startRename(workspaceStore.selectedPaths[0]).catch(console.error)
-  }
-  if (e.key === 'Delete' && workspaceStore.selectedPaths.length > 0) {
-    workspaceStore.deleteEntries(workspaceStore.selectedPaths)
-  }
+  handleFileTreeGlobalKeyDown({
+    event: e,
+    selectedPaths: workspaceStore.selectedPaths,
+    hasInlineEdit: Boolean(inlineEdit.value),
+    activeElement: document.activeElement,
+    closeMenu,
+    startRename,
+    deleteEntries: (paths) => workspaceStore.deleteEntries(paths),
+  })
 }
 
 const onCreateFileRequest = () => {

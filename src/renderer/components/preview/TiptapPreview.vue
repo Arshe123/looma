@@ -6,8 +6,6 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import Placeholder from '@tiptap/extension-placeholder'
 import { Highlight } from '@tiptap/extension-highlight'
-import { TextStyle } from '@tiptap/extension-text-style'
-import { Color } from '@tiptap/extension-color'
 import { TableRow } from '@tiptap/extension-table-row'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableCell } from '@tiptap/extension-table-cell'
@@ -49,8 +47,6 @@ onMounted(() => {
       TaskList,
       TaskItem.configure({ nested: true }),
       Highlight,
-      TextStyle,
-      Color,
       EnhancedTable.configure({
         resizable: true,
         renderWrapper: true,

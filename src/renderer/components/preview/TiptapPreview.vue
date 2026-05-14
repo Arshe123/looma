@@ -8,7 +8,6 @@ import Placeholder from '@tiptap/extension-placeholder'
 import { Highlight } from '@tiptap/extension-highlight'
 import { TextStyle } from '@tiptap/extension-text-style'
 import { Color } from '@tiptap/extension-color'
-import { Table } from '@tiptap/extension-table'
 import { TableRow } from '@tiptap/extension-table-row'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableCell } from '@tiptap/extension-table-cell'
@@ -17,7 +16,10 @@ import 'github-markdown-css/github-markdown-light.css'
 import 'highlight.js/styles/github-dark.css'
 import InlineMenu from './InlineMenu.vue'
 import ContextMenu from './ContextMenu.vue'
-import { replaceExternalMarkdownContent } from './tiptap-content-sync'
+import TableToolbar from './TableToolbar.vue'
+import { replaceExternalMarkdownContent } from '../util/tiptap-content-sync'
+import { destroyTiptapEditorSafely } from '../util/tiptap-editor-lifecycle'
+import { EnhancedTable } from '../util/tiptap-table-utils'
 
 const props = defineProps<{
   content: string
@@ -29,6 +31,7 @@ const emit = defineEmits<{
 
 let isUpdatingFromExternal = false
 let lastEmittedContent = ''
+let isUnmounting = false
 
 const editor = shallowRef<Editor | null>(null)
 
@@ -48,7 +51,11 @@ onMounted(() => {
       Highlight,
       TextStyle,
       Color,
-      Table.configure({ resizable: true }),
+      EnhancedTable.configure({
+        resizable: true,
+        renderWrapper: true,
+        cellMinWidth: 96,
+      }),
       TableRow,
       TableHeader,
       TableCell,
@@ -67,6 +74,7 @@ onMounted(() => {
       },
     },
     onUpdate: ({ editor }) => {
+      if (isUnmounting || editor.isDestroyed) return
       if (isUpdatingFromExternal) return
       const markdown = (editor.storage as any).markdown.getMarkdown()
       lastEmittedContent = markdown
@@ -76,15 +84,17 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (editor.value) {
-    editor.value.destroy()
-  }
+  isUnmounting = true
+  const currentEditor = editor.value
+  editor.value = null
+  destroyTiptapEditorSafely(currentEditor)
 })
 
 watch(
   () => props.content,
   (newContent) => {
     if (!editor.value) return
+    if (isUnmounting || editor.value.isDestroyed) return
     if (newContent === lastEmittedContent) return
     
     isUpdatingFromExternal = true
@@ -113,6 +123,7 @@ watch(
     
     <InlineMenu v-if="editor" :editor="editor" />
     <ContextMenu v-if="editor" :editor="editor" />
+    <TableToolbar v-if="editor" :editor="editor" />
   </div>
 </template>
 
@@ -273,26 +284,72 @@ watch(
   height: 0;
   pointer-events: none;
 }
-.tiptap table {
-  border-collapse: collapse;
-  table-layout: fixed;
+.tiptap .tableWrapper,
+.markdown-body .tableWrapper {
   width: 100%;
-  margin: 0;
-  overflow: hidden;
+  margin: 0.95em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
+
+.tiptap table,
+.markdown-body table {
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  table-layout: auto;
+  overflow: visible;
+}
+
 .tiptap table td,
-.tiptap table th {
-  min-width: 1em;
+.tiptap table th,
+.markdown-body table td,
+.markdown-body table th {
+  min-width: 7.5rem;
   border: 1px solid var(--border-soft);
-  padding: 3px 5px;
+  padding: 0.5rem 0.65rem;
   vertical-align: top;
+  white-space: nowrap;
   box-sizing: border-box;
   position: relative;
+  background: var(--panel);
+}
+
+.tiptap table td p,
+.tiptap table th p,
+.markdown-body table td p,
+.markdown-body table th p {
+  margin: 0;
+  white-space: inherit;
 }
 .tiptap table th {
   font-weight: bold;
   text-align: left;
   background-color: var(--panel-soft);
+}
+.tiptap table .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  pointer-events: none;
+}
+.tiptap table .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: -1px;
+  z-index: 2;
+  width: 4px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.tiptap.resize-cursor,
+.tiptap.resize-cursor * {
+  cursor: col-resize;
 }
 [data-theme="dark"] .tiptap table td,
 [data-theme="dark"] .tiptap table th,

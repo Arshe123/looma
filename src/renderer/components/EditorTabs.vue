@@ -204,7 +204,7 @@ onUnmounted(() => {
         <div v-if="workspaceStore.activeFileRelativePath === relPath && workspaceStore.hasUnsavedChanges" class="w-2 h-2 rounded-full bg-text-subtle group-hover:hidden"></div>
 
         <button
-          class="w-5 h-5 flex items-center justify-center rounded hover:bg-accent-soft opacity-0 group-hover:opacity-100 transition-opacity"
+          class="w-5 h-5 flex items-center justify-center rounded hover:bg-accent-soft opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
           :class="{ 'opacity-100': workspaceStore.activeFileRelativePath === relPath && !workspaceStore.hasUnsavedChanges }"
           @click="(e) => closeTab(e, relPath)"
         >
@@ -222,27 +222,27 @@ onUnmounted(() => {
       @pointerdown.stop
       @contextmenu.prevent
     >
-      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleCloseTab">
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCloseTab">
         关闭
       </button>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleCloseRightTabs">
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCloseRightTabs">
         关闭右侧标签页
       </button>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleCloseSavedTabs">
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCloseSavedTabs">
         关闭已保存标签页
       </button>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleCloseAllTabs">
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCloseAllTabs">
         关闭全部标签页
       </button>
       <div class="h-px bg-accent-soft my-1"></div>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleCopyPath">
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCopyPath">
         复制路径
       </button>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleCopyRelativePath">
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCopyRelativePath">
         复制相对路径
       </button>
       <div class="h-px bg-accent-soft my-1"></div>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft" @click="handleRevealInExplorer">
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleRevealInExplorer">
         在文件资源管理器中显示
       </button>
     </div>

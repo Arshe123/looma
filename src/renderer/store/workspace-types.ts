@@ -25,6 +25,13 @@ export interface EditorSession {
   }
 }
 
+export type SidebarPanelId = 'files' | 'outline'
+
+export interface SidebarPanelState {
+  id: SidebarPanelId
+  size: number
+}
+
 export interface WorkspaceMeta {
   expandedDirs: string[]
   selectedPaths: string[]
@@ -32,6 +39,7 @@ export interface WorkspaceMeta {
   openedFiles?: string[]
   activeFile?: string
   fileSessions?: Record<string, EditorSession>
+  sidebarPanels?: SidebarPanelState[]
 }
 
 export type ResolvedThemeName = 'light' | 'dark'

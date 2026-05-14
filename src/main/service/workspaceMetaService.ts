@@ -10,6 +10,7 @@ export interface WorkspaceMeta {
   openedFiles?: string[]
   activeFile?: string
   fileSessions?: Record<string, any>
+  sidebarPanels?: { id: 'files' | 'outline'; size: number }[]
 }
 
 const META_DIR_NAME = '.looma'
@@ -95,6 +96,7 @@ export const workspaceMetaService = {
         openedFiles: Array.isArray(parsed.openedFiles) ? parsed.openedFiles : [],
         activeFile: typeof parsed.activeFile === 'string' ? parsed.activeFile : undefined,
         fileSessions: typeof parsed.fileSessions === 'object' && parsed.fileSessions ? parsed.fileSessions : {},
+        sidebarPanels: Array.isArray(parsed.sidebarPanels) ? parsed.sidebarPanels : undefined,
       }
       
       return {

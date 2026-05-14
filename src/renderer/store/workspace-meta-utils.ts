@@ -1,5 +1,5 @@
 import { normalizeDir } from './workspace-utils'
-import type { EditorSession, WorkspaceMeta } from './workspace-types'
+import type { EditorSession, SidebarPanelState, WorkspaceMeta } from './workspace-types'
 
 interface BuildWorkspaceMetaInput {
   expandedDirs: string[]
@@ -8,6 +8,7 @@ interface BuildWorkspaceMetaInput {
   openedFiles: string[]
   activeFileRelativePath: string
   fileSessions: Record<string, EditorSession>
+  sidebarPanels?: SidebarPanelState[]
 }
 
 const cloneNoteOrder = (noteOrder: Record<string, string[]>) => {
@@ -38,6 +39,7 @@ export const buildWorkspaceMetaPayload = (input: BuildWorkspaceMetaInput) => {
     openedFiles: input.openedFiles.map(normalizeDir),
     activeFile: input.activeFileRelativePath || undefined,
     fileSessions: JSON.parse(JSON.stringify(cleanedSessions)),
+    sidebarPanels: input.sidebarPanels?.map((panel) => ({ id: panel.id, size: panel.size })),
   }
   return { cleanedSessions, meta }
 }

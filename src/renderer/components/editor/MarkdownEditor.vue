@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { Columns, Edit3, Eye } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../store/workspace'
+import type { MarkdownOutlineItem } from '../util/markdown-outline'
 import TiptapPreview from '../preview/TiptapPreview.vue'
 import Editor from './Editor.vue'
 
@@ -22,6 +23,7 @@ const viewMode = ref<'split' | 'editor' | 'preview'>('preview')
 const splitRatio = ref(0.5)
 const splitContainerRef = ref<HTMLElement | null>(null)
 const editorRef = ref<InstanceType<typeof Editor> | null>(null)
+const previewRef = ref<InstanceType<typeof TiptapPreview> | null>(null)
 let isResizingSplit = false
 let previousBodyCursor = ''
 let previousBodyUserSelect = ''
@@ -96,6 +98,14 @@ watch(
 )
 
 defineExpose({
+  scrollToHeading(target: MarkdownOutlineItem) {
+    if (viewMode.value !== 'editor') {
+      previewRef.value?.scrollToHeading(target)
+    }
+    if (viewMode.value !== 'preview') {
+      editorRef.value?.scrollToLine(target.line)
+    }
+  },
   saveSnapshot(skipSaveMeta = false) {
     if (workspaceStore.isWorkspaceTransitioning) return
     const cmSnap = editorRef.value?.getSnapshot()
@@ -137,7 +147,7 @@ defineExpose({
       @pointerdown="startSplitResize"
     />
     <div v-if="viewMode !== 'editor'" class="flex-1 overflow-hidden border-l border-border-soft">
-      <TiptapPreview :content="props.content" @update:content="(v) => emit('update:content', v)" />
+      <TiptapPreview ref="previewRef" :content="props.content" @update:content="(v) => emit('update:content', v)" />
     </div>
 
     <div class="absolute bottom-6 right-6 flex items-center gap-1 bg-panel/90 backdrop-blur-xs p-1.5 rounded-xl border border-border-soft shadow-lg z-20">

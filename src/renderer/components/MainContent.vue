@@ -5,6 +5,7 @@ import { useWorkspaceStore } from '../store/workspace'
 import EditorLoadError from './editor/EditorLoadError.vue'
 import EditorTabs from './EditorTabs.vue'
 import { getMediaPreviewTabs, isMediaPath } from './util/main-content-routing'
+import type { MarkdownOutlineItem } from './util/markdown-outline'
 import { FILE_TREE_CREATE_FILE_EVENT } from './util/file-tree-utils'
 import { isTextEditingTarget } from './util/editing-target'
 
@@ -59,6 +60,12 @@ const onEditorRetry = () => {
   editorReloadNonce.value += 1
 }
 
+const jumpToHeading = (event: Event) => {
+  const detail = (event as CustomEvent<MarkdownOutlineItem>).detail
+  if (!detail || !currentEditorRef.value || typeof currentEditorRef.value.scrollToHeading !== 'function') return
+  currentEditorRef.value.scrollToHeading(detail)
+}
+
 watch(
   () => workspaceStore.activeFileRelativePath,
   (_newRel, oldRel) => {
@@ -80,6 +87,7 @@ const saveCurrentSnapshot = (e?: Event) => {
 onMounted(() => {
   window.addEventListener('beforeunload', saveCurrentSnapshot)
   window.addEventListener('request-save-snapshot', saveCurrentSnapshot)
+  window.addEventListener('looma:jump-to-heading', jumpToHeading)
   keyHandler = (e: KeyboardEvent) => {
     if (e.ctrlKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
       e.preventDefault()
@@ -110,6 +118,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('beforeunload', saveCurrentSnapshot)
   window.removeEventListener('request-save-snapshot', saveCurrentSnapshot)
+  window.removeEventListener('looma:jump-to-heading', jumpToHeading)
   saveCurrentSnapshot()
   if (keyHandler) window.removeEventListener('keydown', keyHandler)
   keyHandler = null

@@ -17,6 +17,7 @@ import InlineMenu from './InlineMenu.vue'
 import ContextMenu from './ContextMenu.vue'
 import TableToolbar from './TableToolbar.vue'
 import CodeBlockView from './CodeBlockView.vue'
+import type { MarkdownOutlineItem } from '../util/markdown-outline'
 import { replaceExternalMarkdownContent } from '../util/tiptap-content-sync'
 import { destroyTiptapEditorSafely } from '../util/tiptap-editor-lifecycle'
 import { EnhancedTable } from '../util/tiptap-table-utils'
@@ -34,6 +35,7 @@ let lastEmittedContent = ''
 let isUnmounting = false
 
 const editor = shallowRef<Editor | null>(null)
+const previewContainerRef = shallowRef<HTMLElement | null>(null)
 const lowlight = createLowlight(common)
 const CodeBlockWithHeader = CodeBlockLowlight.extend({
   addNodeView() {
@@ -123,11 +125,22 @@ watch(
   }
 )
 
+defineExpose({
+  scrollToHeading(target: MarkdownOutlineItem) {
+    const container = previewContainerRef.value
+    if (!container) return
+    const headings = Array.from(container.querySelectorAll<HTMLElement>('.tiptap h1, .tiptap h2, .tiptap h3, .tiptap h4, .tiptap h5, .tiptap h6'))
+    const heading = headings[target.index]
+    if (!heading) return
+    heading.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  },
+})
+
 
 </script>
 
 <template>
-  <div class="h-full w-full bg-panel overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar">
+  <div ref="previewContainerRef" class="h-full w-full bg-panel overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar">
     <editor-content v-if="editor" :editor="editor" class="h-full" />
     
     <InlineMenu v-if="editor" :editor="editor" />

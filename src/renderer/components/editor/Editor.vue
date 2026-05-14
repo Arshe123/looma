@@ -292,6 +292,16 @@ defineExpose({
         editor.scrollDOM.scrollTop = snap.scrollTop;
       }
     });
+  },
+  scrollToLine(line: number) {
+    if (!editor) return;
+    const safeLine = Math.min(Math.max(Math.round(line || 1), 1), editor.state.doc.lines);
+    const lineInfo = editor.state.doc.line(safeLine);
+    editor.dispatch({
+      selection: { anchor: lineInfo.from },
+      effects: EditorView.scrollIntoView(lineInfo.from, { y: 'start' }),
+    });
+    editor.focus();
   }
 });
 </script>

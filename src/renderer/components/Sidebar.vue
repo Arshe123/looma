@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Bot, Folders, GitBranch, Monitor, Moon, Sun, UserRound } from 'lucide-vue-next'
+import { Bot, Folders, GitBranch, GripVertical, Monitor, Moon, Sun, TableOfContents, UserRound } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../store/workspace'
+import type { SidebarPanelId, SidebarPanelState } from '../store/workspace'
+import { resizeSidebarPanels } from '../store/sidebar-panels'
+import { parseMarkdownOutline, type MarkdownOutlineItem } from './util/markdown-outline'
 import AuthModal from './auth/AuthModal.vue'
 import UserMenu from './auth/UserMenu.vue'
 import FileTree from './FileTree.vue'
@@ -11,17 +14,98 @@ const props = defineProps<{
 }>()
 
 const workspaceStore = useWorkspaceStore()
-const isOpen = ref(true)
 const isMockLoggedIn = ref(true)
 const mockUsername = ref('looma 用户')
 const authModalOpen = ref(false)
 const authModalMode = ref<'login' | 'register'>('login')
 const userMenuOpen = ref(false)
 const toolbarWidth = 56
+const panelContainerRef = ref<HTMLElement | null>(null)
+const draggedPanelIndex = ref<number | null>(null)
 const panelWidth = computed(() => Math.max(0, props.width - toolbarWidth))
+const isOpen = computed(() => workspaceStore.sidebarPanels.length > 0)
+const isMarkdownActive = computed(() => workspaceStore.activeFileRelativePath.toLowerCase().endsWith('.md'))
+const outlineItems = computed(() => {
+  if (!isMarkdownActive.value) return []
+  return parseMarkdownOutline(workspaceStore.activeFileContent)
+})
 
-const toggleSidebar = () => {
-  isOpen.value = !isOpen.value
+let resizingPanelIndex = -1
+let resizingStartY = 0
+let resizingStartPanels: SidebarPanelState[] = []
+let resizingContainerHeight = 0
+let previousBodyCursor = ''
+let previousBodyUserSelect = ''
+
+const panelTitles: Record<SidebarPanelId, string> = {
+  files: '文件树',
+  outline: '大纲',
+}
+
+const isPanelOpen = (id: SidebarPanelId) => workspaceStore.sidebarPanels.some((panel) => panel.id === id)
+
+const togglePanel = (id: SidebarPanelId) => {
+  if (id === 'outline' && !isMarkdownActive.value && !isPanelOpen(id)) return
+  workspaceStore.toggleSidebarPanel(id)
+}
+
+const stopPanelResize = () => {
+  if (resizingPanelIndex === -1) return
+  resizingPanelIndex = -1
+  resizingStartPanels = []
+  resizingContainerHeight = 0
+  document.body.style.cursor = previousBodyCursor
+  document.body.style.userSelect = previousBodyUserSelect
+  window.removeEventListener('pointermove', onPanelResizeMove)
+  window.removeEventListener('pointerup', stopPanelResize)
+  window.removeEventListener('pointercancel', stopPanelResize)
+  workspaceStore.persistSidebarPanels()
+}
+
+const onPanelResizeMove = (event: PointerEvent) => {
+  if (resizingPanelIndex === -1 || resizingContainerHeight <= 0) return
+  const deltaRatio = (event.clientY - resizingStartY) / resizingContainerHeight
+  workspaceStore.sidebarPanels = resizeSidebarPanels(resizingStartPanels, resizingPanelIndex, deltaRatio)
+}
+
+const startPanelResize = (event: PointerEvent, index: number) => {
+  if (event.button !== 0) return
+  event.preventDefault()
+  resizingPanelIndex = index
+  resizingStartY = event.clientY
+  resizingStartPanels = workspaceStore.sidebarPanels.map((panel) => ({ ...panel }))
+  resizingContainerHeight = panelContainerRef.value?.getBoundingClientRect().height || 0
+  previousBodyCursor = document.body.style.cursor
+  previousBodyUserSelect = document.body.style.userSelect
+  document.body.style.cursor = 'row-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('pointermove', onPanelResizeMove)
+  window.addEventListener('pointerup', stopPanelResize)
+  window.addEventListener('pointercancel', stopPanelResize)
+}
+
+const startPanelDrag = (event: DragEvent, index: number) => {
+  draggedPanelIndex.value = index
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(index))
+  }
+}
+
+const onPanelDragOver = (event: DragEvent, index: number) => {
+  event.preventDefault()
+  const fromIndex = draggedPanelIndex.value
+  if (fromIndex === null || fromIndex === index) return
+  workspaceStore.reorderSidebarPanels(fromIndex, index)
+  draggedPanelIndex.value = index
+}
+
+const stopPanelDrag = () => {
+  draggedPanelIndex.value = null
+}
+
+const jumpToHeading = (item: MarkdownOutlineItem) => {
+  window.dispatchEvent(new CustomEvent('looma:jump-to-heading', { detail: item }))
 }
 
 const closeAuthModal = () => {
@@ -74,6 +158,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  stopPanelResize()
   cleanupUserEntry?.()
   cleanupUserEntry = null
 })
@@ -87,14 +172,30 @@ onUnmounted(() => {
     <div class="w-14 h-full flex flex-col justify-between py-2">
       <div class="flex flex-col items-center gap-2">
         <button
-          @click="toggleSidebar"
+          @click="togglePanel('files')"
           :class="[
             'p-2 rounded-md text-text-muted cursor-pointer',
-            isOpen ? 'bg-accent-soft text-text-main' : 'hover:bg-accent-soft hover:text-text-main'
+            isPanelOpen('files') ? 'bg-accent-soft text-text-main' : 'hover:bg-accent-soft hover:text-text-main'
           ]"
-          :title="isOpen ? '收起文件树' : '展开文件树'"
+          :title="isPanelOpen('files') ? '关闭文件树' : '打开文件树'"
         >
           <Folders :size="20" />
+        </button>
+
+        <button
+          @click="togglePanel('outline')"
+          :disabled="!isMarkdownActive && !isPanelOpen('outline')"
+          :class="[
+            'p-2 rounded-md',
+            isPanelOpen('outline')
+              ? 'bg-accent-soft text-text-main cursor-pointer'
+              : isMarkdownActive
+                ? 'text-text-muted hover:bg-accent-soft hover:text-text-main cursor-pointer'
+                : 'text-text-subtle cursor-not-allowed'
+          ]"
+          :title="isMarkdownActive ? (isPanelOpen('outline') ? '关闭大纲' : '打开大纲') : '大纲仅支持 Markdown 文件'"
+        >
+          <TableOfContents :size="20" />
         </button>
 
         <button class="p-2 rounded-md text-text-subtle cursor-not-allowed" title="AI Assistant (Coming Soon)" disabled>
@@ -142,37 +243,85 @@ onUnmounted(() => {
     </div>
 
     <div
-      :class="['h-full overflow-hidden bg-panel rounded-lg', isOpen ?? 'w-0']"
+      class="h-full overflow-hidden bg-panel rounded-lg"
       :style="{ width: isOpen ? `${panelWidth}px` : '0px' }"
     >
-      <div v-if="isOpen" class="h-full flex flex-col">
-        <div class="px-3 py-2 border-border-soft">
-          <div class="text-xs font-semibold text-text-muted uppercase tracking-wider">文件树</div>
-        </div>
-
-        <div class="flex-1 overflow-hidden">
-          <div v-if="workspaceStore.workspaces.length === 0" class="p-4">
-            <div class="text-sm font-semibold text-text-main">暂未打开工作空间。请从本地文件夹开始使用</div>
-            <div class="mt-2 text-xs text-text-muted">请选择或创建一个本地文件夹作为您的工作空间。</div>
-            <div class="mt-4 grid grid-cols-1 gap-2">
-              <button
-                class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
-                @click="workspaceStore.openWorkspaceInNewWindowFlow()"
-              >
-                打开工作空间 (Ctrl+O)
-              </button>
-              <button
-                class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
-                @click="workspaceStore.newWorkspaceInNewWindowFlow()"
-              >
-                新建工作空间 (Ctrl+Shift+N)
-              </button>
+      <div v-if="isOpen" ref="panelContainerRef" class="h-full flex flex-col min-h-0">
+        <template v-for="(panel, index) in workspaceStore.sidebarPanels" :key="panel.id">
+          <section
+            class="min-h-0 flex flex-col overflow-hidden"
+            :style="{ flex: `${panel.size} 1 0` }"
+            @dragover="(event) => onPanelDragOver(event, index)"
+            @drop.prevent="stopPanelDrag"
+          >
+            <div
+              class="h-9 shrink-0 px-3 flex items-center gap-2 border-border-soft text-xs font-semibold text-text-muted uppercase tracking-wider cursor-grab active:cursor-grabbing"
+              draggable="true"
+              @dragstart="(event) => startPanelDrag(event, index)"
+              @dragend="stopPanelDrag"
+            >
+              <GripVertical :size="14" class="text-text-subtle" />
+              <span>{{ panelTitles[panel.id] }}</span>
             </div>
-          </div>
-          <div v-if="workspaceStore.activeWorkspaceId" class="h-full pt-2">
-            <FileTree />
-          </div>
-        </div>
+
+            <div class="flex-1 min-h-0 overflow-hidden">
+              <template v-if="panel.id === 'files'">
+                <div v-if="workspaceStore.workspaces.length === 0" class="p-4">
+                  <div class="text-sm font-semibold text-text-main">暂未打开工作空间。请从本地文件夹开始使用</div>
+                  <div class="mt-2 text-xs text-text-muted">请选择或创建一个本地文件夹作为您的工作空间。</div>
+                  <div class="mt-4 grid grid-cols-1 gap-2">
+                    <button
+                      class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
+                      @click="workspaceStore.openWorkspaceInNewWindowFlow()"
+                    >
+                      打开工作空间 (Ctrl+O)
+                    </button>
+                    <button
+                      class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
+                      @click="workspaceStore.newWorkspaceInNewWindowFlow()"
+                    >
+                      新建工作空间 (Ctrl+Shift+N)
+                    </button>
+                  </div>
+                </div>
+                <div v-if="workspaceStore.activeWorkspaceId" class="h-full pt-2">
+                  <FileTree />
+                </div>
+              </template>
+
+              <template v-else-if="panel.id === 'outline'">
+                <div v-if="!isMarkdownActive" class="h-full p-4 text-sm text-text-muted">
+                  大纲仅支持 Markdown 文件。
+                </div>
+                <div v-else-if="outlineItems.length === 0" class="h-full p-4 text-sm text-text-muted">
+                  当前 Markdown 文件暂无标题。
+                </div>
+                <div v-else class="h-full overflow-y-auto focus-scrollbar py-2">
+                  <button
+                    v-for="item in outlineItems"
+                    :key="item.id"
+                    class="group w-full min-h-8 pr-3 py-1.5 flex items-start gap-2 text-left text-sm text-text-muted hover:bg-accent-soft hover:text-text-main cursor-pointer"
+                    :style="{ paddingLeft: `${10 + (item.level - 1) * 12}px` }"
+                    :title="item.text"
+                    @click="jumpToHeading(item)"
+                  >
+                    <span class="mt-[0.2rem] w-5 shrink-0 text-[10px] font-semibold text-text-subtle group-hover:text-text-muted">
+                      H{{ item.level }}
+                    </span>
+                    <span class="min-w-0 flex-1 truncate">{{ item.text }}</span>
+                  </button>
+                </div>
+              </template>
+            </div>
+          </section>
+
+          <div
+            v-if="index < workspaceStore.sidebarPanels.length - 1"
+            class="h-1 shrink-0 cursor-row-resize bg-transparent hover:bg-accent-soft active:bg-accent"
+            style="-webkit-app-region: no-drag"
+            @pointerdown="(event) => startPanelResize(event, index)"
+          />
+        </template>
       </div>
     </div>
 

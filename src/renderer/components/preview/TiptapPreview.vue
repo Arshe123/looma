@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { shallowRef, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { Editor, EditorContent } from '@tiptap/vue-3'
+import { Editor, EditorContent, VueNodeViewRenderer } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
+import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -10,11 +11,12 @@ import { TableRow } from '@tiptap/extension-table-row'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableCell } from '@tiptap/extension-table-cell'
 import { Markdown } from 'tiptap-markdown'
+import { common, createLowlight } from 'lowlight'
 import 'github-markdown-css/github-markdown-light.css'
-import 'highlight.js/styles/github-dark.css'
 import InlineMenu from './InlineMenu.vue'
 import ContextMenu from './ContextMenu.vue'
 import TableToolbar from './TableToolbar.vue'
+import CodeBlockView from './CodeBlockView.vue'
 import { replaceExternalMarkdownContent } from '../util/tiptap-content-sync'
 import { destroyTiptapEditorSafely } from '../util/tiptap-editor-lifecycle'
 import { EnhancedTable } from '../util/tiptap-table-utils'
@@ -32,17 +34,25 @@ let lastEmittedContent = ''
 let isUnmounting = false
 
 const editor = shallowRef<Editor | null>(null)
+const lowlight = createLowlight(common)
+const CodeBlockWithHeader = CodeBlockLowlight.extend({
+  addNodeView() {
+    return VueNodeViewRenderer(CodeBlockView)
+  },
+})
 
 onMounted(() => {
   editor.value = new Editor({
     extensions: [
       StarterKit.configure({
-        codeBlock: {
-          exitOnTripleEnter: false,
-          exitOnArrowDown: true,
-        },
+        codeBlock: false,
         bulletList: { keepMarks: true, keepAttributes: false },
         orderedList: { keepMarks: true, keepAttributes: false },
+      }),
+      CodeBlockWithHeader.configure({
+        lowlight,
+        exitOnTripleEnter: false,
+        exitOnArrowDown: true,
       }),
       TaskList,
       TaskItem.configure({ nested: true }),

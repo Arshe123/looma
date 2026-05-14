@@ -13,6 +13,7 @@ import {
   getRenameInputName,
 } from './util/file-tree-utils'
 import { handleFileTreeGlobalKeyDown } from './util/file-tree-shortcuts'
+import { appendTreeGuides, type TreeGuidedRow } from './util/tree-row-guides'
 
 const workspaceStore = useWorkspaceStore()
 const expanded = computed(() => workspaceStore.activeExpandedSet)
@@ -27,8 +28,11 @@ type InlineEditState = {
   targetIsDirectory?: boolean
   value: string
 }
-type FlatEntryRow = { kind: 'entry'; key: string; entry: FsEntry; depth: number }
-type FlatInlineCreateRow = { kind: 'inline-create'; key: string; depth: number; parentDir: string }
+type FlatEntryRowBase = { kind: 'entry'; key: string; entry: FsEntry; depth: number }
+type FlatInlineCreateRowBase = { kind: 'inline-create'; key: string; depth: number; parentDir: string }
+type FlatRowBase = FlatEntryRowBase | FlatInlineCreateRowBase
+type FlatEntryRow = TreeGuidedRow<FlatEntryRowBase>
+type FlatInlineCreateRow = TreeGuidedRow<FlatInlineCreateRowBase>
 type FlatRow = FlatEntryRow | FlatInlineCreateRow
 
 const getChildren = (dirRelativePath: string) => {
@@ -288,7 +292,7 @@ const getRowClass = (row: FlatRow) => {
 }
 
 const flattened = computed((): FlatRow[] => {
-  const result: FlatRow[] = []
+  const result: FlatRowBase[] = []
 
   const insertCreateRow = (dirRelativePath: string, depth: number) => {
     if (!isCreatingInDir(dirRelativePath)) return
@@ -306,7 +310,7 @@ const flattened = computed((): FlatRow[] => {
   }
 
   walk('', getChildren(''), 0)
-  return result
+  return appendTreeGuides(result)
 })
 
 const handleCopyPath = () => {
@@ -377,7 +381,7 @@ onUnmounted(() => {
       <div
         v-for="row in flattened"
         :key="row.key"
-        class="group flex items-center gap-2 py-1.5 px-2 rounded-md border-l-2 border-transparent text-text-muted hover:bg-accent-soft hover:text-text-main"
+        class="group relative flex items-center gap-2 py-1.5 px-2 rounded-md border-l-2 border-transparent text-text-muted hover:bg-accent-soft hover:text-text-main"
         :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
         :class="getRowClass(row)"
         :draggable="isRowDraggable(row)"
@@ -389,6 +393,13 @@ onUnmounted(() => {
         @dragover.capture="(e) => row.kind === 'entry' && allowDrop(e)"
         @drop.capture.stop="(e) => row.kind === 'entry' && onDropToDir(e, row.entry.relativePath)"
       >
+        <span
+          v-for="(continues, guideIndex) in row.guides"
+          :key="guideIndex"
+          class="pointer-events-none absolute top-0 border-l border-border-soft"
+          :class="continues ? 'h-full' : 'h-1/2'"
+          :style="{ left: `${8 + guideIndex * 14 + 7}px` }"
+        ></span>
         <template v-if="row.kind === 'inline-create'">
           <div class="w-6 h-6"></div>
           <input

@@ -10,6 +10,7 @@ export interface WorkspaceMeta {
   openedFiles?: string[]
   activeFile?: string
   fileSessions?: Record<string, any>
+  activeSidebarPanel?: 'files' | 'outline' | null
   sidebarPanels?: { id: 'files' | 'outline'; size: number }[]
 }
 
@@ -96,6 +97,10 @@ export const workspaceMetaService = {
         openedFiles: Array.isArray(parsed.openedFiles) ? parsed.openedFiles : [],
         activeFile: typeof parsed.activeFile === 'string' ? parsed.activeFile : undefined,
         fileSessions: typeof parsed.fileSessions === 'object' && parsed.fileSessions ? parsed.fileSessions : {},
+        activeSidebarPanel:
+          parsed.activeSidebarPanel === null || parsed.activeSidebarPanel === 'files' || parsed.activeSidebarPanel === 'outline'
+            ? parsed.activeSidebarPanel
+            : undefined,
         sidebarPanels: Array.isArray(parsed.sidebarPanels) ? parsed.sidebarPanels : undefined,
       }
       

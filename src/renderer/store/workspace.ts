@@ -1,10 +1,8 @@
 import { defineStore } from 'pinia'
 import {
-  DEFAULT_SIDEBAR_PANELS,
-  normalizeSidebarPanels,
-  resizeSidebarPanels,
-  reorderSidebarPanels,
-  toggleSidebarPanel,
+  DEFAULT_ACTIVE_SIDEBAR_PANEL,
+  resolveActiveSidebarPanel,
+  toggleActiveSidebarPanel,
 } from './sidebar-panels'
 import {
   isEditableTextPath,
@@ -19,8 +17,10 @@ import {
   resolveCurrentDir,
 } from './workspace-utils'
 import { executeRedoAction, executeUndoAction, type HistoryEffects } from './workspace-history-service'
-import { buildWorkspaceMetaPayload } from './workspace-meta-utils'
-import type { EditorSession, FsEntry, ResolvedThemeName, SidebarPanelId, SidebarPanelState, ThemeName, UndoAction, Workspace } from './workspace-types'
+import {
+  buildWorkspaceMetaPayload,
+} from './workspace-meta-utils'
+import type { EditorSession, FsEntry, ResolvedThemeName, SidebarPanelId, ThemeName, UndoAction, Workspace } from './workspace-types'
 export type { EditorSession, FsEntry, ResolvedThemeName, SidebarPanelId, SidebarPanelState, ThemeName, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
@@ -52,7 +52,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeFileIsSaving: false as boolean,
     activeFileSaveError: '' as string,
     openedFiles: [] as string[],
-    sidebarPanels: DEFAULT_SIDEBAR_PANELS.map((panel) => ({ ...panel })) as SidebarPanelState[],
+    activeSidebarPanel: DEFAULT_ACTIVE_SIDEBAR_PANEL as SidebarPanelId | null,
     fileSessions: {} as Record<string, EditorSession>,
     selectedPaths: [] as string[],
     expandedDirs: [] as string[],
@@ -211,27 +211,13 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.lastError = ''
     },
 
-    setSidebarPanels(panels: SidebarPanelState[]) {
-      this.sidebarPanels = panels.length > 0 ? normalizeSidebarPanels(panels) : []
+    setActiveSidebarPanel(id: SidebarPanelId | null) {
+      this.activeSidebarPanel = id
       this.saveWorkspaceMeta().catch(() => {})
     },
 
     toggleSidebarPanel(id: SidebarPanelId) {
-      this.sidebarPanels = toggleSidebarPanel(this.sidebarPanels, id)
-      this.saveWorkspaceMeta().catch(() => {})
-    },
-
-    resizeSidebarPanels(beforeIndex: number, deltaRatio: number) {
-      this.sidebarPanels = resizeSidebarPanels(this.sidebarPanels, beforeIndex, deltaRatio)
-    },
-
-    persistSidebarPanels() {
-      this.sidebarPanels = this.sidebarPanels.length > 0 ? normalizeSidebarPanels(this.sidebarPanels) : []
-      this.saveWorkspaceMeta().catch(() => {})
-    },
-
-    reorderSidebarPanels(fromIndex: number, toIndex: number) {
-      this.sidebarPanels = reorderSidebarPanels(this.sidebarPanels, fromIndex, toIndex)
+      this.activeSidebarPanel = toggleActiveSidebarPanel(this.activeSidebarPanel, id)
       this.saveWorkspaceMeta().catch(() => {})
     },
 
@@ -477,7 +463,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.resetActiveFileState()
       this.watchedWorkspaceId = null
       this.openedFiles = []
-      this.sidebarPanels = DEFAULT_SIDEBAR_PANELS.map((panel) => ({ ...panel }))
+      this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
       this.selectedPaths = []
       this.expandedDirs = []
       this.noteOrder = {}
@@ -569,7 +555,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.selectedPaths = []
         this.noteOrder = {}
         this.openedFiles = []
-        this.sidebarPanels = DEFAULT_SIDEBAR_PANELS.map((panel) => ({ ...panel }))
+        this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
         this.fileSessions = {}
         return
       }
@@ -578,7 +564,10 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.noteOrder = metaResult.data.noteOrder || {}
       this.openedFiles = Array.isArray(metaResult.data.openedFiles) ? metaResult.data.openedFiles.map(normalizeDir) : []
       this.fileSessions = metaResult.data.fileSessions || {}
-      this.sidebarPanels = normalizeSidebarPanels(metaResult.data.sidebarPanels)
+      this.activeSidebarPanel = resolveActiveSidebarPanel(
+        metaResult.data.activeSidebarPanel,
+        metaResult.data.sidebarPanels,
+      )
       
       // Restore active file
       if (metaResult.data.activeFile && this.openedFiles.includes(metaResult.data.activeFile)) {
@@ -602,7 +591,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         selectedPaths: this.selectedPaths,
         noteOrder: this.noteOrder,
         openedFiles: this.openedFiles,
-        sidebarPanels: this.sidebarPanels,
+        activeSidebarPanel: this.activeSidebarPanel,
         activeFileRelativePath: this.activeFileRelativePath,
         fileSessions: this.fileSessions,
       })

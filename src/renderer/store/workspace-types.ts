@@ -39,6 +39,7 @@ export interface WorkspaceMeta {
   openedFiles?: string[]
   activeFile?: string
   fileSessions?: Record<string, EditorSession>
+  activeSidebarPanel?: SidebarPanelId | null
   sidebarPanels?: SidebarPanelState[]
 }
 

@@ -18,6 +18,7 @@ export interface WorkspaceMetaPayload {
   openedFiles?: string[];
   activeFile?: string;
   fileSessions?: Record<string, any>;
+  activeSidebarPanel?: SidebarPanelId | null;
   sidebarPanels?: SidebarPanelState[];
 }
 

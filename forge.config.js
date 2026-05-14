@@ -6,19 +6,28 @@ const { FuseV1Options, FuseVersion } = electronFuses;
 
 export default {
   packagerConfig: {
+    name: 'looma',
     asar: true,
-    icon: './public/looma.ico',
+    icon: './public/looma',
   },
   rebuildConfig: {},
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
       config: {
-      },
+        name: 'looma',
+        setupIcon: './public/looma.ico'
+      }
     },
     {
       name: '@electron-forge/maker-zip',
       platforms: ['win32', 'darwin'],
+    },
+    {
+      name: '@electron-forge/maker-dmg',
+      config: {
+        icon: './public/looma.icns'
+      }
     },
     {
       name: '@electron-forge/maker-deb',

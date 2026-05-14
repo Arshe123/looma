@@ -9,6 +9,9 @@ import { workspaceService } from './service/workspaceService';
 import { fileSystemService, fileWatchService } from './service/fileSystemService';
 import { workspaceMetaService } from './service/workspaceMetaService';
 
+app.setAppUserModelId('com.looma')
+app.setName('looma');
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 

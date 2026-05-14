@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { shallowRef, watch, onMounted, onBeforeUnmount, nextTick, ref } from 'vue'
+import { shallowRef, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Editor, EditorContent } from '@tiptap/vue-3'
-import type { Editor as CoreEditor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
@@ -32,41 +31,15 @@ let isUpdatingFromExternal = false
 let lastEmittedContent = ''
 
 const editor = shallowRef<Editor | null>(null)
-const previewContainer = ref<HTMLElement | null>(null)
-const CURSOR_BOTTOM_THRESHOLD_PX = 120
-
-const ensureCursorComfort = (instance: CoreEditor) => {
-  if (!instance.isFocused) return
-  if (!previewContainer.value) return
-
-  const containerRect = previewContainer.value.getBoundingClientRect()
-  const pos = instance.state.selection.$head.pos
-
-  let cursorRect: { top: number; bottom: number; left: number; right: number } | null = null
-  try {
-    cursorRect = instance.view.coordsAtPos(pos)
-  } catch (e) {
-    if (pos > 0) {
-      try {
-        cursorRect = instance.view.coordsAtPos(pos - 1)
-      } catch {
-        cursorRect = null
-      }
-    }
-  }
-  if (!cursorRect) return
-
-  const distanceToBottom = containerRect.bottom - cursorRect.bottom
-  if (distanceToBottom < CURSOR_BOTTOM_THRESHOLD_PX) {
-    const delta = CURSOR_BOTTOM_THRESHOLD_PX - distanceToBottom
-    previewContainer.value.scrollTop += Math.ceil(delta)
-  }
-}
 
 onMounted(() => {
   editor.value = new Editor({
     extensions: [
       StarterKit.configure({
+        codeBlock: {
+          exitOnTripleEnter: false,
+          exitOnArrowDown: true,
+        },
         bulletList: { keepMarks: true, keepAttributes: false },
         orderedList: { keepMarks: true, keepAttributes: false },
       }),
@@ -94,14 +67,10 @@ onMounted(() => {
       },
     },
     onUpdate: ({ editor }) => {
-      ensureCursorComfort(editor)
       if (isUpdatingFromExternal) return
       const markdown = (editor.storage as any).markdown.getMarkdown()
       lastEmittedContent = markdown
       emit('update:content', markdown)
-    },
-    onSelectionUpdate: ({ editor }) => {
-      ensureCursorComfort(editor)
     },
   })
 })
@@ -139,7 +108,7 @@ watch(
 </script>
 
 <template>
-  <div ref="previewContainer" class="h-full w-full bg-panel overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar">
+  <div class="h-full w-full bg-panel overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar">
     <editor-content v-if="editor" :editor="editor" class="h-full" />
     
     <InlineMenu v-if="editor" :editor="editor" />
@@ -171,6 +140,41 @@ watch(
 
 .markdown-body p {
   margin-bottom: 0.6em;
+}
+
+.tiptap pre,
+.markdown-body pre {
+  margin: 0.85em 0;
+  padding: 0.85rem 1rem;
+  min-height: 2.75rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  color: var(--text-main);
+  background: var(--panel-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.92em;
+  line-height: 1.55;
+}
+
+.tiptap pre code,
+.markdown-body pre code {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  tab-size: 2;
+}
+
+.tiptap pre code:empty::before {
+  content: "\200b";
+}
+
+.tiptap pre code br.ProseMirror-trailingBreak {
+  display: inline;
 }
 
 .tiptap h1::after,

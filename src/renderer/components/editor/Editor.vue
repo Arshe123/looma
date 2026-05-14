@@ -35,6 +35,11 @@ const customStyleCompartment = new Compartment()
 const getThemeExtension = () => [];
 const getLangExtension = () => props.mode === 'markdown' ? [markdown()] : [];
 const getLineWrapExtension = () => props.wordWrap ? [EditorView.lineWrapping] : [];
+const editorContentAttributes = EditorView.contentAttributes.of({
+  spellcheck: 'false',
+  autocorrect: 'off',
+  autocapitalize: 'off',
+})
 const BASE_BOTTOM_SPACER = '22vh'
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const createFoldPlaceholder = (_view: EditorView, onclick: (event: Event) => void) => {
@@ -208,6 +213,7 @@ const createEditor = () => {
       themeCompartment.of(getThemeExtension()),
       lineWrapCompartment.of(getLineWrapExtension()),
       customStyleCompartment.of(getCustomStyleExtension()),
+      editorContentAttributes,
       updateListener,
       blurHandler,
     ],

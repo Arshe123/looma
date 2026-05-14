@@ -67,6 +67,9 @@ onMounted(() => {
     editorProps: {
       attributes: {
         class: 'prose dark:prose-invert max-w-none focus:outline-hidden min-h-full p-8 markdown-body dark:markdown-body-dark',
+        spellcheck: 'false',
+        autocorrect: 'off',
+        autocapitalize: 'off',
       },
     },
     onUpdate: ({ editor }) => {

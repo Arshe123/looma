@@ -24,12 +24,6 @@ export default {
       platforms: ['win32', 'darwin'],
     },
     {
-      name: '@electron-forge/maker-dmg',
-      config: {
-        icon: './public/looma.icns'
-      }
-    },
-    {
       name: '@electron-forge/maker-deb',
       config: {
         options: {

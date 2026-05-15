@@ -7,6 +7,7 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import Placeholder from '@tiptap/extension-placeholder'
 import { Highlight } from '@tiptap/extension-highlight'
+import Image from '@tiptap/extension-image'
 import { TableRow } from '@tiptap/extension-table-row'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableCell } from '@tiptap/extension-table-cell'
@@ -67,6 +68,10 @@ onMounted(() => {
       TableRow,
       TableHeader,
       TableCell,
+      Image.configure({
+        inline: false,
+        allowBase64: true,
+      }),
       Placeholder.configure({
         placeholder: 'Shift + ctrl + Enter 唤起菜单，或直接输入 Markdown...',
       }),
@@ -173,6 +178,15 @@ defineExpose({
 
 .markdown-body p {
   margin-bottom: 0.6em;
+}
+
+.tiptap img,
+.markdown-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.85em 0;
+  border-radius: 6px;
 }
 
 .tiptap pre,

@@ -4,11 +4,12 @@
   "author": "arshe",
   "description": "A convenient note app",
   "private": true,
-  "version": "0.7.1",
+  "version": "0.7.2",
   "type": "module",
   "main": "dist-electron/index.js",
   "scripts": {
     "build:preload": "node scripts/build-preload.mjs",
+    "build": "npm run build:preload && vite build",
     "dev:renderer": "vite",
     "dev": "npm run build:preload && node scripts/dev.mjs",
     "preview": "vite preview",
@@ -16,6 +17,8 @@
     "lint": "eslint . --ext .ts,.vue",
     "lint:fix": "eslint . --ext .ts,.vue --fix",
     "test": "vitest",
+    "prepackage": "npm run build",
+    "premake": "npm run build",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make"

@@ -277,6 +277,40 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     },
 
+    async ensureFileParentDirsExpanded(relativePath: string) {
+      const ws = this.activeWorkspaceId
+      if (!ws) return
+
+      const parentDir = pathDir(relativePath)
+      if (!parentDir) return
+
+      const ancestors = parentDir
+        .split('/')
+        .map((_, index, parts) => parts.slice(0, index + 1).join('/'))
+
+      const expanded = new Set(this.expandedDirs.map(normalizeDir))
+      let changed = false
+
+      for (const dir of ancestors) {
+        if (!expanded.has(dir)) {
+          expanded.add(dir)
+          changed = true
+        }
+      }
+
+      if (changed) {
+        this.expandedDirs = Array.from(expanded)
+      }
+
+      for (const dir of ancestors) {
+        await this.loadDir(ws, dir)
+      }
+
+      if (changed) {
+        await this.saveWorkspaceMeta()
+      }
+    },
+
     async syncSelectionAfterRemoval(removedPaths: string[]) {
       const remaining = removePathsAndDescendants(this.selectedPaths, removedPaths)
       if (remaining.length !== this.selectedPaths.length) {

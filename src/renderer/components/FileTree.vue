@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
 import { ChevronRight } from 'lucide-vue-next'
 import { useWorkspaceStore, type FsEntry } from '../store/workspace'
 import {
   FILE_TREE_CREATE_FILE_EVENT,
+  FILE_TREE_REVEAL_ACTIVE_FILE_EVENT,
   INLINE_MARKDOWN_FILENAME,
   buildCreateMarkdownName,
   buildRenameName,
@@ -57,6 +59,7 @@ const menuY = ref(0)
 const selectedFile = ref<FsEntry | null>(null)
 const inlineEdit = ref<InlineEditState | null>(null)
 const inlineInput = ref<HTMLInputElement | null>(null)
+const rowElements = new Map<string, HTMLElement>()
 
 const inlineEditValue = computed({
   get: () => inlineEdit.value?.value ?? '',
@@ -67,6 +70,21 @@ const inlineEditValue = computed({
 
 const setInlineInput = (el: Element | null) => {
   inlineInput.value = el instanceof HTMLInputElement ? el : null
+}
+
+const setRowElement = (relativePath: string, el: Element | ComponentPublicInstance | null) => {
+  if (el instanceof HTMLElement) {
+    rowElements.set(relativePath, el)
+  } else {
+    rowElements.delete(relativePath)
+  }
+}
+
+const revealActiveFileRow = async (relativePath: string) => {
+  if (!relativePath) return
+  await workspaceStore.ensureFileParentDirsExpanded(relativePath)
+  await nextTick()
+  rowElements.get(relativePath)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 }
 
 const closeMenu = () => {
@@ -352,16 +370,27 @@ const onCreateFileRequest = () => {
   startCreateFileFromCurrentDir().catch(console.error)
 }
 
+const onRevealActiveFileRequest = () => {
+  revealActiveFileRow(activeFileRel.value).catch(console.error)
+}
+
 onMounted(() => {
   window.addEventListener('pointerdown', onGlobalPointerDown)
   window.addEventListener('keydown', onGlobalKeyDown)
   window.addEventListener(FILE_TREE_CREATE_FILE_EVENT, onCreateFileRequest)
+  window.addEventListener(FILE_TREE_REVEAL_ACTIVE_FILE_EVENT, onRevealActiveFileRequest)
 })
+
+watch(activeFileRel, (relativePath) => {
+  revealActiveFileRow(relativePath).catch(console.error)
+}, { immediate: true })
 
 onUnmounted(() => {
   window.removeEventListener('pointerdown', onGlobalPointerDown)
   window.removeEventListener('keydown', onGlobalKeyDown)
   window.removeEventListener(FILE_TREE_CREATE_FILE_EVENT, onCreateFileRequest)
+  window.removeEventListener(FILE_TREE_REVEAL_ACTIVE_FILE_EVENT, onRevealActiveFileRequest)
+  rowElements.clear()
 })
 </script>
 
@@ -381,6 +410,7 @@ onUnmounted(() => {
       <div
         v-for="row in flattened"
         :key="row.key"
+        :ref="(el) => row.kind === 'entry' && setRowElement(row.entry.relativePath, el)"
         class="group relative flex items-center gap-2 py-1.5 px-2 rounded-md border-l-2 border-transparent text-text-muted hover:bg-accent-soft hover:text-text-main"
         :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
         :class="getRowClass(row)"

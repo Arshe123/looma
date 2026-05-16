@@ -2,6 +2,7 @@
 import { useWorkspaceStore } from '../store/workspace'
 import { X } from 'lucide-vue-next'
 import { ref, onMounted, onUnmounted } from 'vue'
+import { FILE_TREE_REVEAL_ACTIVE_FILE_EVENT } from './util/file-tree-utils'
 
 const workspaceStore = useWorkspaceStore()
 
@@ -36,6 +37,7 @@ const selectTab = (relPath: string) => {
   if (workspaceStore.activeFileRelativePath !== relPath) {
     workspaceStore.setActiveFileRelative(relPath)
   }
+  window.dispatchEvent(new CustomEvent(FILE_TREE_REVEAL_ACTIVE_FILE_EVENT))
 }
 
 let draggedIndex = -1

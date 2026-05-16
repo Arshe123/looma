@@ -186,12 +186,24 @@ onUnmounted(() => {
               </button>
             </div>
           </div>
-          <div v-if="workspaceStore.activeWorkspaceId" class="h-full pt-2">
-            <FileTree />
+          <div v-if="workspaceStore.activeWorkspaceId" class="h-full min-h-0 flex flex-col">
+            <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main">
+              文件
+            </div>
+            <div class="min-h-0 flex-1 pt-2">
+              <FileTree />
+            </div>
           </div>
         </template>
 
-        <OutlinePanel v-else-if="workspaceStore.activeSidebarPanel === 'outline'" />
+        <div v-else-if="workspaceStore.activeSidebarPanel === 'outline'" class="h-full min-h-0 flex flex-col">
+          <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main">
+            大纲
+          </div>
+          <div class="min-h-0 flex-1">
+            <OutlinePanel />
+          </div>
+        </div>
       </div>
     </div>
 

@@ -2,8 +2,10 @@ export type TreeGuideRow = {
   depth: number
 }
 
+export type TreeGuide = 'continue' | 'end' | 'none'
+
 export type TreeGuidedRow<T extends TreeGuideRow> = T & {
-  guides: boolean[]
+  guides: TreeGuide[]
 }
 
 const hasFollowingSiblingAtDepth = <T extends TreeGuideRow>(
@@ -22,9 +24,11 @@ const hasFollowingSiblingAtDepth = <T extends TreeGuideRow>(
 
 export const appendTreeGuides = <T extends TreeGuideRow>(rows: T[]): TreeGuidedRow<T>[] =>
   rows.map((row, rowIndex) => {
-    const guides = Array.from({ length: row.depth }, (_, guideDepth) =>
-      hasFollowingSiblingAtDepth(rows, rowIndex, guideDepth),
-    )
+    const guides = Array.from({ length: row.depth }, (_, guideDepth): TreeGuide => {
+      if (hasFollowingSiblingAtDepth(rows, rowIndex, guideDepth)) return 'continue'
+      if (row.depth === guideDepth + 1) return 'end'
+      return 'none'
+    })
 
     return { ...row, guides }
   })

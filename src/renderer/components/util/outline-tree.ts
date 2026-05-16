@@ -1,5 +1,5 @@
 import type { MarkdownOutlineItem } from './markdown-outline'
-import { appendTreeGuides } from './tree-row-guides'
+import { appendTreeGuides, type TreeGuide } from './tree-row-guides'
 
 export type OutlineTreeNode = {
   item: MarkdownOutlineItem
@@ -11,7 +11,7 @@ export type OutlineFlatRow = {
   item: MarkdownOutlineItem
   children: OutlineTreeNode[]
   depth: number
-  guides: boolean[]
+  guides: TreeGuide[]
 }
 
 const updateDepth = (node: OutlineTreeNode, depth: number) => {

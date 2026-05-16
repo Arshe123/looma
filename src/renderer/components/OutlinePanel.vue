@@ -73,10 +73,10 @@ const jumpToHeading = (item: MarkdownOutlineItem) => {
         :title="row.item.text"
       >
         <span
-          v-for="(continues, guideIndex) in row.guides"
+          v-for="(guide, guideIndex) in row.guides"
           :key="guideIndex"
           class="pointer-events-none absolute top-0 border-l border-border-soft"
-          :class="continues ? 'h-full' : 'h-1/2'"
+          :class="guide === 'none' ? 'hidden' : guide === 'continue' ? 'h-full' : 'h-1/2'"
           :style="{ left: `${10 + guideIndex * 14 + 7}px` }"
         ></span>
         <button

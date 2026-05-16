@@ -394,10 +394,10 @@ onUnmounted(() => {
         @drop.capture.stop="(e) => row.kind === 'entry' && onDropToDir(e, row.entry.relativePath)"
       >
         <span
-          v-for="(continues, guideIndex) in row.guides"
+          v-for="(guide, guideIndex) in row.guides"
           :key="guideIndex"
           class="pointer-events-none absolute top-0 border-l border-border-soft"
-          :class="continues ? 'h-full' : 'h-1/2'"
+          :class="guide === 'none' ? 'hidden' : guide === 'continue' ? 'h-full' : 'h-1/2'"
           :style="{ left: `${8 + guideIndex * 14 + 7}px` }"
         ></span>
         <template v-if="row.kind === 'inline-create'">

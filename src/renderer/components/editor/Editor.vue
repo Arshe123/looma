@@ -5,6 +5,13 @@ import { markdown } from '@codemirror/lang-markdown';
 import { codeFolding } from '@codemirror/language';
 import { EditorState, Compartment } from '@codemirror/state';
 import { useWorkspaceStore } from '../../store/workspace';
+import {
+  findBestTextAnchor,
+  getScrollRatio,
+  lineTextAtOffset,
+  setScrollRatio,
+  type ScrollSyncState,
+} from '../util/editor-scroll-sync';
 
 const props = withDefaults(defineProps<{
   initialContent: string;
@@ -18,7 +25,10 @@ const props = withDefaults(defineProps<{
   wordWrap: true,
 });
 
-const emit = defineEmits(['change', 'save']);
+const emit = defineEmits<{
+  (e: 'change', value: string): void
+  (e: 'save', value: string): void
+}>();
 
 const editorContainer = ref<HTMLElement | null>(null);
 const workspaceStore = useWorkspaceStore();
@@ -225,6 +235,44 @@ const createEditor = () => {
   });
 };
 
+const getEditorScrollState = (): ScrollSyncState => {
+  if (!editor) return { ratio: 0 }
+  const rect = editor.scrollDOM.getBoundingClientRect()
+  const sourceOffset = editor.posAtCoords({ x: rect.left + 52, y: rect.top + 4 }) ?? editor.state.selection.main.head
+  return {
+    ratio: getScrollRatio(editor.scrollDOM),
+    sourceOffset,
+    sourceLineText: lineTextAtOffset(editor.state.doc.toString(), sourceOffset),
+  }
+}
+
+const scrollToSourceOffset = (sourceOffset: number) => {
+  if (!editor) return false
+  const docLength = editor.state.doc.length
+  const safeOffset = Math.min(Math.max(Math.round(sourceOffset), 0), docLength)
+  editor.dispatch({
+    effects: EditorView.scrollIntoView(safeOffset, { y: 'start' }),
+  })
+  return true
+}
+
+const scrollToSourceLineText = (sourceLineText: string) => {
+  if (!editor) return false
+  const content = editor.state.doc.toString()
+  const lines = content.split('\n')
+  const index = findBestTextAnchor(lines, sourceLineText)
+  if (index < 0) return false
+  const line = editor.state.doc.line(index + 1)
+  return scrollToSourceOffset(line.from)
+}
+
+const applyEditorScrollState = (state: ScrollSyncState) => {
+  if (!editor) return
+  if (typeof state.sourceOffset === 'number' && scrollToSourceOffset(state.sourceOffset)) return
+  if (state.sourceLineText && scrollToSourceLineText(state.sourceLineText)) return
+  setScrollRatio(editor.scrollDOM, state.ratio)
+}
+
 onMounted(() => {
   createEditor();
 });
@@ -275,6 +323,12 @@ defineExpose({
       head: editor.state.selection.main.head,
       scrollTop: editor.scrollDOM.scrollTop
     }
+  },
+  getScrollState() {
+    return getEditorScrollState()
+  },
+  applyScrollState(state: ScrollSyncState) {
+    applyEditorScrollState(state)
   },
   applySnapshot(snap: { anchor: number, head: number, scrollTop: number }) {
     if (!editor || !snap) return;

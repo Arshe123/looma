@@ -17,6 +17,7 @@ const closeTab = (e: Event | null, relPath: string) => {
   const idx = workspaceStore.openedFiles.indexOf(relPath)
   if (idx > -1) {
     workspaceStore.openedFiles.splice(idx, 1)
+    workspaceStore.removeOpenedTextFileStates([relPath])
     workspaceStore.saveWorkspaceMeta().catch(() => {})
     
     if (workspaceStore.activeFileRelativePath === relPath) {
@@ -107,6 +108,7 @@ const handleCloseRightTabs = () => {
     const toRemove = workspaceStore.openedFiles.slice(idx + 1)
     if (toRemove.length > 0) {
       workspaceStore.openedFiles.splice(idx + 1)
+      workspaceStore.removeOpenedTextFileStates(toRemove)
       workspaceStore.saveWorkspaceMeta().catch(() => {})
       if (toRemove.includes(workspaceStore.activeFileRelativePath)) {
         workspaceStore.setActiveFileRelative(contextMenuTab.value)
@@ -121,8 +123,11 @@ const handleCloseSavedTabs = () => {
   const activeRel = workspaceStore.activeFileRelativePath
   
   if (activeUnsaved && activeRel) {
+    const toRemove = workspaceStore.openedFiles.filter((rel) => rel !== activeRel)
     workspaceStore.openedFiles = [activeRel]
+    workspaceStore.removeOpenedTextFileStates(toRemove)
   } else {
+    workspaceStore.removeOpenedTextFileStates(workspaceStore.openedFiles)
     workspaceStore.openedFiles = []
     workspaceStore.setActiveFileRelative('')
   }
@@ -131,6 +136,7 @@ const handleCloseSavedTabs = () => {
 }
 
 const handleCloseAllTabs = () => {
+  workspaceStore.removeOpenedTextFileStates(workspaceStore.openedFiles)
   workspaceStore.openedFiles = []
   workspaceStore.setActiveFileRelative('')
   workspaceStore.saveWorkspaceMeta().catch(() => {})

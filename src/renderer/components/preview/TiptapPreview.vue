@@ -22,6 +22,12 @@ import type { MarkdownOutlineItem } from '../util/markdown-outline'
 import { replaceExternalMarkdownContent } from '../util/tiptap-content-sync'
 import { destroyTiptapEditorSafely } from '../util/tiptap-editor-lifecycle'
 import { EnhancedTable } from '../util/tiptap-table-utils'
+import {
+  findBestTextAnchor,
+  getScrollRatio,
+  setScrollRatio,
+  type ScrollSyncState,
+} from '../util/editor-scroll-sync'
 
 const props = defineProps<{
   content: string
@@ -43,6 +49,93 @@ const CodeBlockWithHeader = CodeBlockLowlight.extend({
     return VueNodeViewRenderer(CodeBlockView)
   },
 })
+
+const getScrollableBlocks = () => {
+  const container = previewContainerRef.value
+  if (!container) return []
+  return Array.from(container.querySelectorAll<HTMLElement>(
+    '.tiptap h1, .tiptap h2, .tiptap h3, .tiptap h4, .tiptap h5, .tiptap h6, .tiptap p, .tiptap li, .tiptap pre, .tiptap blockquote, .tiptap td, .tiptap th',
+  )).filter((element) => (element.textContent || '').trim())
+}
+
+const getTopVisibleBlock = () => {
+  const container = previewContainerRef.value
+  if (!container) return null
+  const containerRect = container.getBoundingClientRect()
+  return getScrollableBlocks().find((element) => {
+    const rect = element.getBoundingClientRect()
+    return rect.bottom > containerRect.top + 4
+  }) || null
+}
+
+const getTextOffsetBeforePos = (pos: number) => {
+  if (!editor.value) return 0
+  return editor.value.state.doc.textBetween(0, pos, '\n', '\n').length
+}
+
+const findPosForTextOffset = (textOffset: number) => {
+  const currentEditor = editor.value
+  if (!currentEditor) return null
+  const target = Math.max(0, Math.round(textOffset))
+  let seen = 0
+  let result: number | null = null
+
+  currentEditor.state.doc.descendants((node, pos) => {
+    if (!node.isText || typeof node.text !== 'string') return true
+    const nextSeen = seen + node.text.length
+    if (target <= nextSeen) {
+      result = pos + Math.max(0, target - seen)
+      return false
+    }
+    seen = nextSeen
+    return true
+  })
+
+  return result ?? currentEditor.state.doc.content.size
+}
+
+const getPreviewScrollState = (): ScrollSyncState => {
+  const container = previewContainerRef.value
+  const currentEditor = editor.value
+  if (!container || !currentEditor) return { ratio: 0 }
+
+  const rect = container.getBoundingClientRect()
+  const posInfo = currentEditor.view.posAtCoords({ left: rect.left + 32, top: rect.top + 4 })
+  const topBlock = getTopVisibleBlock()
+  const textOffset = posInfo ? getTextOffsetBeforePos(posInfo.pos) : undefined
+  return {
+    ratio: getScrollRatio(container),
+    textOffset,
+    sourceLineText: topBlock?.textContent || undefined,
+  }
+}
+
+const scrollToBlockText = (sourceLineText: string) => {
+  const blocks = getScrollableBlocks()
+  const index = findBestTextAnchor(blocks.map((block) => block.textContent || ''), sourceLineText)
+  const block = index >= 0 ? blocks[index] : null
+  if (!block) return false
+  block.scrollIntoView({ block: 'start' })
+  return true
+}
+
+const scrollToTextOffset = (textOffset: number) => {
+  const currentEditor = editor.value
+  if (!currentEditor) return false
+  const pos = findPosForTextOffset(textOffset)
+  if (typeof pos !== 'number') return false
+  currentEditor.commands.setTextSelection(pos)
+  currentEditor.commands.scrollIntoView()
+  return true
+}
+
+const applyPreviewScrollState = (state: ScrollSyncState) => {
+  const container = previewContainerRef.value
+  if (!container) return
+  if (state.sourceLineText && scrollToBlockText(state.sourceLineText)) return
+  if (typeof state.textOffset === 'number' && scrollToTextOffset(state.textOffset)) return
+  setScrollRatio(container, state.ratio)
+}
 
 onMounted(() => {
   editor.value = new Editor({
@@ -138,6 +231,12 @@ defineExpose({
     const heading = headings[target.index]
     if (!heading) return
     heading.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  },
+  getScrollState() {
+    return getPreviewScrollState()
+  },
+  applyScrollState(state: ScrollSyncState) {
+    applyPreviewScrollState(state)
   },
 })
 

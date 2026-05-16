@@ -20,8 +20,8 @@ import { executeRedoAction, executeUndoAction, type HistoryEffects } from './wor
 import {
   buildWorkspaceMetaPayload,
 } from './workspace-meta-utils'
-import type { EditorSession, FsEntry, ResolvedThemeName, SidebarPanelId, ThemeName, UndoAction, Workspace } from './workspace-types'
-export type { EditorSession, FsEntry, ResolvedThemeName, SidebarPanelId, SidebarPanelState, ThemeName, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
+import type { EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SidebarPanelId, ThemeName, UndoAction, Workspace } from './workspace-types'
+export type { EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SidebarPanelId, SidebarPanelState, ThemeName, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
 let systemThemeCleanup: (() => void) | null = null
@@ -51,6 +51,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeFileLoadedContent: '' as string,
     activeFileIsSaving: false as boolean,
     activeFileSaveError: '' as string,
+    openedTextFileContents: {} as Record<string, OpenTextFileState>,
     openedFiles: [] as string[],
     activeSidebarPanel: DEFAULT_ACTIVE_SIDEBAR_PANEL as SidebarPanelId | null,
     fileSessions: {} as Record<string, EditorSession>,
@@ -230,6 +231,41 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeFileSaveError = ''
     },
 
+    resolveAbsolutePath(relativePath: string) {
+      const ws = this.activeWorkspace
+      const rel = normalizeDir(relativePath)
+      if (!ws || !rel) return ''
+      const sep = pathSep(ws.path)
+      const root = ws.path.endsWith(sep) ? ws.path.slice(0, -1) : ws.path
+      return root + sep + rel.split('/').join(sep)
+    },
+
+    mirrorActiveTextFileState(relativePath: string) {
+      const rel = normalizeDir(relativePath)
+      if (rel !== this.activeFileRelativePath) return
+      const state = this.openedTextFileContents[rel]
+      if (!state) return
+      this.activeFileContent = state.content
+      this.activeFileLoadedContent = state.loadedContent
+      this.activeFileIsSaving = state.isSaving
+      this.activeFileSaveError = state.saveError
+    },
+
+    removeOpenedTextFileStates(relativePaths: string[]) {
+      for (const path of relativePaths) {
+        const rel = normalizeDir(path)
+        delete this.openedTextFileContents[rel]
+      }
+    },
+
+    remapOpenedTextFileStates(items: { from: string; to: string }[]) {
+      const nextStates: Record<string, OpenTextFileState> = {}
+      for (const [relPath, state] of Object.entries(this.openedTextFileContents)) {
+        nextStates[remapByMoves(relPath, items)] = state
+      }
+      this.openedTextFileContents = nextStates
+    },
+
     getCurrentDir() {
       return resolveCurrentDir(this.selectedPaths, this.dirEntries)
     },
@@ -252,6 +288,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     syncOpenedFilesAfterRemoval(removedPaths: string[]) {
       const prevLen = this.openedFiles.length
       this.openedFiles = removePathsAndDescendants(this.openedFiles, removedPaths)
+      this.removeOpenedTextFileStates(removedPaths)
       return this.openedFiles.length !== prevLen
     },
 
@@ -262,6 +299,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (next !== of) changed = true
         return next
       })
+      this.remapOpenedTextFileStates(items)
       return changed
     },
 
@@ -463,6 +501,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.resetActiveFileState()
       this.watchedWorkspaceId = null
       this.openedFiles = []
+      this.openedTextFileContents = {}
       this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
       this.selectedPaths = []
       this.expandedDirs = []
@@ -555,6 +594,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.selectedPaths = []
         this.noteOrder = {}
         this.openedFiles = []
+        this.openedTextFileContents = {}
         this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
         this.fileSessions = {}
         return
@@ -564,6 +604,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.noteOrder = metaResult.data.noteOrder || {}
       this.openedFiles = Array.isArray(metaResult.data.openedFiles) ? metaResult.data.openedFiles.map(normalizeDir) : []
       this.fileSessions = metaResult.data.fileSessions || {}
+      this.openedTextFileContents = {}
       this.activeSidebarPanel = resolveActiveSidebarPanel(
         metaResult.data.activeSidebarPanel,
         metaResult.data.sidebarPanels,
@@ -725,69 +766,108 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.saveWorkspaceMeta().catch(() => {})
       }
 
-      const sep = pathSep(ws.path)
-      const root = ws.path.endsWith(sep) ? ws.path.slice(0, -1) : ws.path
-      this.activeFilePath = root + sep + rel.split('/').join(sep)
-      this.activeFileContent = ''
-      this.activeFileLoadedContent = ''
-      this.activeFileIsSaving = false
-      this.activeFileSaveError = ''
-      this.loadActiveFileContent().catch(() => {})
+      this.activeFilePath = this.resolveAbsolutePath(rel)
+      const existing = this.openedTextFileContents[rel]
+      if (existing) {
+        this.mirrorActiveTextFileState(rel)
+      } else {
+        this.activeFileContent = ''
+        this.activeFileLoadedContent = ''
+        this.activeFileIsSaving = false
+        this.activeFileSaveError = ''
+      }
+      this.loadTextFileContent(rel).catch(() => {})
     },
 
-    setActiveFileContent(content: string) {
-      this.activeFileContent = content
+    setActiveFileContent(content: string, relativePath?: string) {
+      const rel = normalizeDir(relativePath ?? this.activeFileRelativePath)
+      if (!rel) return
+      const existing = this.openedTextFileContents[rel]
+      this.openedTextFileContents[rel] = {
+        content,
+        loadedContent: existing?.loadedContent ?? '',
+        isSaving: existing?.isSaving ?? false,
+        saveError: existing?.saveError ?? '',
+      }
+      if (rel === this.activeFileRelativePath) {
+        this.activeFileContent = content
+      }
     },
 
     async loadActiveFileContent() {
-      if (!this.activeFilePath) {
-        this.activeFileContent = ''
-        this.activeFileLoadedContent = ''
-        this.activeFileSaveError = ''
-        return
-      }
-      if (!this.isSupportedActiveFile) {
-        this.activeFileContent = ''
-        this.activeFileLoadedContent = ''
-        this.activeFileSaveError = ''
-        return
-      }
-      if (!isEditableTextPath(this.activeFilePath)) {
-        // We do not load media file contents into state.activeFileContent
-        this.activeFileContent = ''
-        this.activeFileLoadedContent = ''
-        this.activeFileSaveError = ''
-        return
-      }
-
-      const r = await window.electronAPI.file.readMarkdown(this.activeFilePath)
-      if (!r.success || r.data === undefined) {
-        this.setError(r.error || 'Failed to load file')
-        this.activeFileContent = ''
-        this.activeFileLoadedContent = ''
-        return
-      }
-      this.activeFileContent = r.data
-      this.activeFileLoadedContent = r.data
-      this.activeFileSaveError = ''
+      await this.loadTextFileContent(this.activeFileRelativePath)
     },
 
-    async saveActiveFileContent(content?: string) {
-      if (!this.activeFilePath) return { success: true as const }
-      if (!this.isSupportedActiveFile) return { success: true as const }
-      if (!isEditableTextPath(this.activeFilePath)) return { success: true as const } // Don't save media files
+    async loadTextFileContent(relativePath: string) {
+      const rel = normalizeDir(relativePath)
+      const absPath = this.resolveAbsolutePath(rel)
+      const existing = this.openedTextFileContents[rel]
+      if (existing && existing.content !== existing.loadedContent) {
+        this.mirrorActiveTextFileState(rel)
+        return
+      }
+      if (!absPath || !isSupportedPath(absPath) || !isEditableTextPath(absPath)) {
+        if (rel === this.activeFileRelativePath) {
+          this.activeFileContent = ''
+          this.activeFileLoadedContent = ''
+          this.activeFileSaveError = ''
+        }
+        return
+      }
+
+      const r = await window.electronAPI.file.readMarkdown(absPath)
+      if (!r.success || r.data === undefined) {
+        this.setError(r.error || 'Failed to load file')
+        if (rel === this.activeFileRelativePath) {
+          this.activeFileContent = ''
+          this.activeFileLoadedContent = ''
+        }
+        return
+      }
+      this.openedTextFileContents[rel] = {
+        content: r.data,
+        loadedContent: r.data,
+        isSaving: false,
+        saveError: '',
+      }
+      this.mirrorActiveTextFileState(rel)
+    },
+
+    async saveActiveFileContent(content?: string, relativePath?: string) {
+      const rel = normalizeDir(relativePath ?? this.activeFileRelativePath)
+      const absPath = this.resolveAbsolutePath(rel)
+      if (!absPath) return { success: true as const }
+      if (!isSupportedPath(absPath)) return { success: true as const }
+      if (!isEditableTextPath(absPath)) return { success: true as const } // Don't save media files
       
-      const next = content ?? this.activeFileContent
-      this.activeFileIsSaving = true
-      this.activeFileSaveError = ''
-      const r = await window.electronAPI.file.writeMarkdown(this.activeFilePath, next)
-      this.activeFileIsSaving = false
+      const currentState = this.openedTextFileContents[rel]
+      const next = content ?? currentState?.content ?? (rel === this.activeFileRelativePath ? this.activeFileContent : '')
+      this.openedTextFileContents[rel] = {
+        content: next,
+        loadedContent: currentState?.loadedContent ?? '',
+        isSaving: true,
+        saveError: '',
+      }
+      this.mirrorActiveTextFileState(rel)
+      const r = await window.electronAPI.file.writeMarkdown(absPath, next)
+      const latestState = this.openedTextFileContents[rel]
       if (!r.success) {
-        this.activeFileSaveError = r.error || 'Failed to save file'
+        this.openedTextFileContents[rel] = {
+          content: latestState?.content ?? next,
+          loadedContent: latestState?.loadedContent ?? '',
+          isSaving: false,
+          saveError: r.error || 'Failed to save file',
+        }
+        this.mirrorActiveTextFileState(rel)
         return r
       }
-      this.activeFileContent = next
-      this.activeFileLoadedContent = next
+      this.openedTextFileContents[rel] = {
+        content: next,
+        loadedContent: next,
+        isSaving: false,
+        saveError: '',
+      }
+      this.mirrorActiveTextFileState(rel)
       return r
     },
 

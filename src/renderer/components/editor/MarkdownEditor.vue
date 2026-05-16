@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Columns, Edit3, Eye } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../../store/workspace'
 import type { MarkdownOutlineItem } from '../util/markdown-outline'
 import TiptapPreview from '../preview/TiptapPreview.vue'
 import Editor from './Editor.vue'
+import type { ScrollSyncState } from '../util/editor-scroll-sync'
 
 const props = defineProps<{
   filePath: string
@@ -27,6 +28,7 @@ const previewRef = ref<InstanceType<typeof TiptapPreview> | null>(null)
 let isResizingSplit = false
 let previousBodyCursor = ''
 let previousBodyUserSelect = ''
+let isSyncingScroll = false
 
 const clampSplitRatio = (ratio: number) => Math.min(Math.max(ratio, 0.2), 0.8)
 
@@ -69,6 +71,41 @@ const startSplitResize = (e: PointerEvent) => {
   window.addEventListener('pointermove', onSplitResizeMove)
   window.addEventListener('pointerup', stopSplitResize)
   window.addEventListener('pointercancel', stopSplitResize)
+}
+
+const withScrollSync = (fn: () => void) => {
+  if (isSyncingScroll) return
+  isSyncingScroll = true
+  fn()
+  requestAnimationFrame(() => {
+    isSyncingScroll = false
+  })
+}
+
+const getCurrentScrollState = () => {
+  if (viewMode.value === 'preview') return previewRef.value?.getScrollState?.()
+  return editorRef.value?.getScrollState?.() || previewRef.value?.getScrollState?.()
+}
+
+const syncVisibleViewsFrom = (state?: ScrollSyncState | null) => {
+  if (!state) return
+  withScrollSync(() => {
+    if (viewMode.value !== 'preview') {
+      editorRef.value?.applyScrollState?.(state)
+    }
+    if (viewMode.value !== 'editor') {
+      previewRef.value?.applyScrollState?.(state)
+    }
+  })
+}
+
+const setViewMode = (nextMode: 'split' | 'editor' | 'preview') => {
+  if (viewMode.value === nextMode) return
+  const state = getCurrentScrollState()
+  viewMode.value = nextMode
+  nextTick(() => {
+    requestAnimationFrame(() => syncVisibleViewsFrom(state))
+  })
 }
 
 onMounted(() => {
@@ -127,7 +164,7 @@ defineExpose({
 <template>
   <div ref="splitContainerRef" class="h-full w-full relative flex overflow-hidden">
     <div
-      v-if="viewMode !== 'preview'"
+      v-show="viewMode !== 'preview'"
       class="overflow-hidden"
       :class="viewMode === 'split' ? 'shrink-0' : 'flex-1'"
       :style="viewMode === 'split' ? { flexBasis: `${splitRatio * 100}%` } : undefined"
@@ -141,18 +178,22 @@ defineExpose({
       />
     </div>
     <div
-      v-if="viewMode === 'split'"
+      v-show="viewMode === 'split'"
       class="relative z-10 h-full w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent-soft active:bg-accent"
       style="-webkit-app-region: no-drag"
       @pointerdown="startSplitResize"
     />
-    <div v-if="viewMode !== 'editor'" class="flex-1 overflow-hidden border-l border-border-soft">
-      <TiptapPreview ref="previewRef" :content="props.content" @update:content="(v) => emit('update:content', v)" />
+    <div v-show="viewMode !== 'editor'" class="flex-1 overflow-hidden" :class="{ 'border-l border-border-soft': viewMode === 'split' }">
+      <TiptapPreview
+        ref="previewRef"
+        :content="props.content"
+        @update:content="(v) => emit('update:content', v)"
+      />
     </div>
 
     <div class="absolute bottom-6 right-6 flex items-center gap-1 bg-panel/90 backdrop-blur-xs p-1.5 rounded-xl border border-border-soft shadow-lg z-20">
       <button
-        @click="viewMode = 'editor'"
+        @click="setViewMode('editor')"
         :class="[
           'p-2 rounded-lg transition-all duration-200',
           viewMode === 'editor' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'
@@ -162,7 +203,7 @@ defineExpose({
         <Edit3 :size="18" />
       </button>
       <button
-        @click="viewMode = 'split'"
+        @click="setViewMode('split')"
         :class="[
           'p-2 rounded-lg transition-all duration-200',
           viewMode === 'split' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'
@@ -172,7 +213,7 @@ defineExpose({
         <Columns :size="18" />
       </button>
       <button
-        @click="viewMode = 'preview'"
+        @click="setViewMode('preview')"
         :class="[
           'p-2 rounded-lg transition-all duration-200',
           viewMode === 'preview' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'

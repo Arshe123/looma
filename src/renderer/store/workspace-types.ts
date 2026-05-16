@@ -25,6 +25,13 @@ export interface EditorSession {
   }
 }
 
+export interface OpenTextFileState {
+  content: string
+  loadedContent: string
+  isSaving: boolean
+  saveError: string
+}
+
 export type SidebarPanelId = 'files' | 'outline'
 
 export interface SidebarPanelState {

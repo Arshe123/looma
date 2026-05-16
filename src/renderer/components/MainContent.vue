@@ -4,10 +4,11 @@ import { FileQuestion, FileText } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../store/workspace'
 import EditorLoadError from './editor/EditorLoadError.vue'
 import EditorTabs from './EditorTabs.vue'
-import { getMediaPreviewTabs, isMediaPath } from './util/main-content-routing'
+import { getMediaPreviewTabs, isMediaPath, resolveWorkspaceFilePath } from './util/main-content-routing'
 import type { MarkdownOutlineItem } from './util/markdown-outline'
 import { FILE_TREE_CREATE_FILE_EVENT } from './util/file-tree-utils'
 import { isTextEditingTarget } from './util/editing-target'
+import { isEditableTextPath } from '../store/workspace-utils'
 
 const workspaceStore = useWorkspaceStore()
 let keyHandler: ((e: KeyboardEvent) => void) | null = null
@@ -46,14 +47,37 @@ const activeExt = computed(() => getExt(workspaceStore.activeFilePath))
 const currentEditor = computed(() => (editorByExt as any)[activeExt.value] || null)
 const isActiveMedia = computed(() => isMediaPath(workspaceStore.activeFilePath))
 const isSupportedFile = computed(() => isActiveMedia.value || Boolean(currentEditor.value))
-const editorKey = computed(() => `${workspaceStore.activeFilePath}:${activeExt.value}:${editorReloadNonce.value}`)
 const mediaPreviewTabs = computed(() => getMediaPreviewTabs(workspaceStore.openedFiles, workspaceStore.activeWorkspace?.path || ''))
+const textEditorTabs = computed(() => {
+  const workspacePath = workspaceStore.activeWorkspace?.path || ''
+  return workspaceStore.openedFiles
+    .filter(isEditableTextPath)
+    .map((relativePath) => {
+      const ext = getExt(relativePath)
+      return {
+        relativePath,
+        filePath: resolveWorkspaceFilePath(workspacePath, relativePath),
+        component: (editorByExt as any)[ext] || null,
+        content: workspaceStore.openedTextFileContents[relativePath]?.content || '',
+      }
+    })
+    .filter((tab) => tab.component && tab.filePath)
+})
 
-const currentEditorRef = ref<any>(null)
+const editorRefs = ref<Record<string, any>>({})
+const currentEditorRef = computed(() => editorRefs.value[workspaceStore.activeFileRelativePath] || null)
 
-const handleSave = async (newContent: string) => {
-  workspaceStore.setActiveFileContent(newContent)
-  await workspaceStore.saveActiveFileContent(newContent)
+const setEditorRef = (relativePath: string, el: any) => {
+  if (el) {
+    editorRefs.value[relativePath] = el
+  } else {
+    delete editorRefs.value[relativePath]
+  }
+}
+
+const handleSave = async (newContent: string, relativePath = workspaceStore.activeFileRelativePath) => {
+  workspaceStore.setActiveFileContent(newContent, relativePath)
+  await workspaceStore.saveActiveFileContent(newContent, relativePath)
 }
 
 const onEditorRetry = () => {
@@ -71,6 +95,18 @@ watch(
   (_newRel, oldRel) => {
     if (oldRel && currentEditorRef.value && typeof currentEditorRef.value.saveSnapshot === 'function' && !workspaceStore.isWorkspaceTransitioning) {
       currentEditorRef.value.saveSnapshot(true)
+    }
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [workspaceStore.activeWorkspace?.path || '', workspaceStore.openedFiles.join('\0')] as const,
+  () => {
+    for (const relPath of workspaceStore.openedFiles) {
+      if (isEditableTextPath(relPath)) {
+        workspaceStore.loadTextFileContent(relPath).catch(() => {})
+      }
     }
   },
   { immediate: true },
@@ -137,20 +173,23 @@ onUnmounted(() => {
           <p class="max-w-md text-sm opacity-80 mb-4">该文件格式暂时无法在编辑器中打开。</p>
         </div>
 
-        <component
-          v-else-if="currentEditor && !isActiveMedia"
-          class="h-full w-full"
-          :is="currentEditor"
-          :key="editorKey"
-          ref="currentEditorRef"
-          :filePath="workspaceStore.activeFilePath"
-          :relativeFilePath="workspaceStore.activeFileRelativePath"
-          :content="workspaceStore.activeFileContent"
-          :saveTrigger="saveTrigger"
-          @update:content="(v) => workspaceStore.setActiveFileContent(v)"
-          @save="handleSave"
-          @retry="onEditorRetry"
-        />
+        <template v-if="textEditorTabs.length > 0">
+          <component
+            v-for="tab in textEditorTabs"
+            v-show="!isActiveMedia && tab.relativePath === workspaceStore.activeFileRelativePath"
+            class="absolute inset-0 h-full w-full"
+            :is="tab.component"
+            :key="`${tab.relativePath}:${editorReloadNonce}`"
+            :ref="(el) => setEditorRef(tab.relativePath, el)"
+            :filePath="tab.filePath"
+            :relativeFilePath="tab.relativePath"
+            :content="tab.content"
+            :saveTrigger="tab.relativePath === workspaceStore.activeFileRelativePath ? saveTrigger : 0"
+            @update:content="(v) => workspaceStore.setActiveFileContent(v, tab.relativePath)"
+            @save="(v) => handleSave(v, tab.relativePath)"
+            @retry="onEditorRetry"
+          />
+        </template>
 
         <MediaPreview
           v-for="tab in mediaPreviewTabs"

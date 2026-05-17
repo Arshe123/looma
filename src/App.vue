@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
-import { useWorkspaceStore } from './renderer/store/workspace';
-import TopBar from './renderer/components/TopBar.vue';
-import InputDialog from './renderer/components/InputDialog.vue';
-import Sidebar from './renderer/components/Sidebar.vue';
-import MainContent from './renderer/components/MainContent.vue';
-import CommandPalette from './renderer/components/CommandPalette.vue';
+import { useWorkspaceStore } from '@/store/workspace';
+import { useSettingsStore } from '@/store/settings';
+import TopBar from '@/components/TopBar.vue';
+import InputDialog from '@/components/InputDialog.vue';
+import Sidebar from '@/components/Sidebar.vue';
+import MainContent from '@/components/MainContent.vue';
+import CommandPalette from '@/components/CommandPalette.vue';
 
 const workspaceStore = useWorkspaceStore();
+const settingsStore = useSettingsStore();
 
 const SIDEBAR_WIDTH_KEY = 'looma.sidebarWidth'
 const defaultSidebarWidth = 320
@@ -78,6 +80,7 @@ const startSidebarResize = (e: PointerEvent) => {
 
 onMounted(() => {
   workspaceStore.init();
+  settingsStore.load();
   window.addEventListener('resize', onWindowResize)
 
   keyHandler = (e: KeyboardEvent) => {

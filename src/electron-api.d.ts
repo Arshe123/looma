@@ -1,8 +1,4 @@
-export interface Result<T = void> {
-  success: boolean;
-  data?: T;
-  error?: string;
-}
+import type { Result } from '@/common/interface/Result'
 
 export type SidebarPanelId = 'files' | 'outline';
 
@@ -20,6 +16,12 @@ export interface WorkspaceMetaPayload {
   fileSessions?: Record<string, any>;
   activeSidebarPanel?: SidebarPanelId | null;
   sidebarPanels?: SidebarPanelState[];
+}
+
+export interface AppSettingsPayload {
+  inlineMenu: {
+    items: string[];
+  };
 }
 
 export interface ElectronAPI {
@@ -53,6 +55,10 @@ export interface ElectronAPI {
   workspaceMeta: {
     get: (workspaceId: string) => Promise<Result<WorkspaceMetaPayload>>;
     set: (workspaceId: string, meta: WorkspaceMetaPayload) => Promise<Result<void>>;
+  };
+  appSettings: {
+    get: () => Promise<Result<AppSettingsPayload>>;
+    set: (settings: AppSettingsPayload) => Promise<Result<void>>;
   };
   fs: {
     listDir: (workspaceId: string, dirRelativePath: string) => Promise<Result<Array<{ name: string; relativePath: string; isDirectory: boolean; size: number; mtimeMs: number }>>>;

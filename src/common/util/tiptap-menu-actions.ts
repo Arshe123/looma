@@ -33,7 +33,8 @@ import {
   moveCurrentRow,
 } from './tiptap-table-utils'
 import type { MenuAction, MenuActionId, TableMenuActionId } from '@/common/type/MenuAction'
-import type { AppSettings } from '@/common/interface/AppSettings'
+import type { AppSettings } from '../interface/AppSettings'
+export type { AppSettings } from '../interface/AppSettings'
 
 export const DEFAULT_INLINE_MENU_ACTION_IDS = [
   'h2',

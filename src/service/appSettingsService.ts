@@ -1,11 +1,11 @@
 import fs from 'fs/promises'
 import path from 'path'
-import type { Result } from '@/common/interface/Result'
+import type { Result } from '../common/interface/Result'
 import {
   defaultAppSettings,
   normalizeAppSettings,
-} from '@/common/util/tiptap-menu-actions'
-import type { AppSettings } from '@/common/interface/AppSettings'
+} from '../common/util/tiptap-menu-actions'
+import type { AppSettings } from '../common/interface/AppSettings'
 
 export { defaultAppSettings }
 

@@ -3,12 +3,12 @@ import type { IpcMainInvokeEvent } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
-import { fileService } from './service/fileService';
-import { telemetryService } from './service/telemetryService';
-import { workspaceService } from './service/workspaceService';
-import { fileSystemService, fileWatchService } from './service/fileSystemService';
-import { workspaceMetaService } from './service/workspaceMetaService';
-import { createAppSettingsService, makeAppSettingsPath } from './service/appSettingsService';
+import { fileService } from './file/fileService';
+import { telemetryService } from './user/telemetryService';
+import { workspaceService } from './workspace/workspaceService';
+import { fileSystemService, fileWatchService } from './file/fileSystemService';
+import { workspaceMetaService } from '@/service/workspace/workspaceMetaService';
+import { createAppSettingsService, makeAppSettingsPath } from '@/service/app/appSettingsService';
 
 app.setAppUserModelId('com.looma')
 app.setName('looma');

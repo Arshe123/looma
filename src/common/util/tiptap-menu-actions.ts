@@ -35,7 +35,7 @@ import {
 import type { MenuAction, MenuActionId, TableMenuActionId } from '@/common/type/MenuAction'
 import { DEFAULT_INLINE_MENU_ACTION_IDS } from '@/common/constant/MenuConst'
 
-interface AppSettings {
+export interface AppSettings {
   inlineMenu: {
     items: string[]
   }

@@ -1,13 +1,13 @@
 import type { Result } from '@/common/interface/Result'
 
-export type SidebarPanelId = 'files' | 'outline';
+type SidebarPanelId = 'files' | 'outline' | 'ai';
 
-export interface SidebarPanelState {
+interface SidebarPanelState {
   id: SidebarPanelId;
   size: number;
 }
 
-export interface WorkspaceMetaPayload {
+interface WorkspaceMetaPayload {
   expandedDirs: string[];
   selectedPaths: string[];
   noteOrder: Record<string, string[]>;
@@ -18,13 +18,13 @@ export interface WorkspaceMetaPayload {
   sidebarPanels?: SidebarPanelState[];
 }
 
-export interface AppSettingsPayload {
+interface AppSettingsPayload {
   inlineMenu: {
     items: string[];
   };
 }
 
-export interface ElectronAPI {
+interface ElectronAPI {
   file: {
     readMarkdown: (filePath: string) => Promise<Result<string>>;
     readFileBase64: (filePath: string) => Promise<Result<string>>;

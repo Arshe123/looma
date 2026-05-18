@@ -32,7 +32,7 @@ export interface OpenTextFileState {
   saveError: string
 }
 
-export type SidebarPanelId = 'files' | 'outline'
+export type SidebarPanelId = 'files' | 'outline' | 'ai'
 export type SystemPageId = 'settings'
 
 export interface SidebarPanelState {

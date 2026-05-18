@@ -1,10 +1,6 @@
 import type { FsEntry } from '@/store/workspace'
 import { normalizeDir, pathDir } from '@/store/workspace-utils'
 
-export const FILE_TREE_CREATE_FILE_EVENT = 'file-tree:create-file'
-export const FILE_TREE_REVEAL_ACTIVE_FILE_EVENT = 'file-tree:reveal-active-file'
-export const INLINE_MARKDOWN_FILENAME = 'Untitled'
-
 type NameEntry = Pick<FsEntry, 'name' | 'isDirectory'>
 
 const splitFileName = (entry: NameEntry) => {

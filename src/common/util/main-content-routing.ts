@@ -1,6 +1,5 @@
 import { fileExt, normalizeDir, pathSep } from '@/store/workspace-utils'
-
-const MEDIA_FILE_EXTS = new Set(['ico', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'mp4', 'webm', 'ogg'])
+import { MEDIA_FILE_EXTS } from '@/common/constant/FileConst'
 
 type MediaPreviewTab = {
   relativePath: string

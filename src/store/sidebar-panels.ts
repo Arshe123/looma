@@ -1,6 +1,6 @@
 import type { SidebarPanelId, SidebarPanelState } from './workspace-types'
 
-export const SIDEBAR_PANEL_IDS: SidebarPanelId[] = ['files', 'outline']
+export const SIDEBAR_PANEL_IDS: SidebarPanelId[] = ['files', 'outline', 'ai']
 export const DEFAULT_ACTIVE_SIDEBAR_PANEL: SidebarPanelId = 'files'
 
 export const isSidebarPanelId = (value: unknown): value is SidebarPanelId =>

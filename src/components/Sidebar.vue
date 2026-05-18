@@ -118,7 +118,14 @@ onUnmounted(() => {
           <TableOfContents :size="20" />
         </button>
 
-        <button class="p-2 rounded-md text-text-subtle cursor-not-allowed" title="AI Assistant (Coming Soon)" disabled>
+        <button
+          @click="togglePanel('ai')"
+          :class="[
+            'p-2 rounded-md text-text-muted cursor-pointer',
+            isPanelOpen('ai') ? 'bg-accent-soft text-text-main' : 'hover:bg-accent-soft hover:text-text-main'
+          ]"
+          :title="isPanelOpen('ai') ? '关闭 AI 助手' : 'AI 助手'"
+        >
           <Bot :size="20" />
         </button>
 
@@ -210,6 +217,42 @@ onUnmounted(() => {
           </div>
           <div class="min-h-0 flex-1">
             <OutlinePanel />
+          </div>
+        </div>
+
+        <div v-else-if="workspaceStore.activeSidebarPanel === 'ai'" class="h-full min-h-0 flex flex-col">
+          <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main">
+            AI 助手
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
+            <div class="flex flex-col gap-3 text-sm">
+              <div class="max-w-[88%] rounded-lg bg-accent-soft px-3 py-2 text-text-main">
+                你好，我是 Looma AI 助手。之后可以在这里和我讨论当前笔记。
+              </div>
+              <div class="ml-auto max-w-[88%] rounded-lg bg-accent px-3 py-2 text-white">
+                帮我整理这篇笔记的重点。
+              </div>
+              <div class="max-w-[88%] rounded-lg bg-bg px-3 py-2 text-text-muted">
+                功能开发中。未来可用于总结内容、提取待办、改写段落和回答笔记相关问题。
+              </div>
+            </div>
+          </div>
+          <div class="shrink-0 border-t border-border px-3 py-3">
+            <div class="flex items-center gap-2 rounded-lg bg-bg px-3 py-2">
+              <input
+                class="min-w-0 flex-1 bg-transparent text-sm text-text-muted outline-none"
+                type="text"
+                placeholder="AI 对话功能开发中"
+                disabled
+              />
+              <button
+                class="shrink-0 rounded-md bg-accent-soft px-3 py-1.5 text-xs font-medium text-text-muted cursor-not-allowed"
+                type="button"
+                disabled
+              >
+                发送
+              </button>
+            </div>
           </div>
         </div>
       </div>

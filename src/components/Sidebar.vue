@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Bot, Folders, GitBranch, Monitor, Moon, Sun, TableOfContents, UserRound, Settings } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/store/workspace'
 import type { SidebarPanelId } from '@/store/workspace'
+import AiAssistant from './ai/AiAssistant.vue'
 import AuthModal from './auth/AuthModal.vue'
 import UserMenu from './auth/UserMenu.vue'
 import FileTree from './FileTree.vue'
@@ -182,79 +183,9 @@ onUnmounted(() => {
       :style="{ width: isOpen ? `${panelWidth}px` : '0px' }"
     >
       <div v-if="isOpen" class="h-full min-h-0 overflow-hidden">
-        <template v-if="workspaceStore.activeSidebarPanel === 'files'">
-          <div v-if="workspaceStore.workspaces.length === 0" class="p-4">
-            <div class="text-sm font-semibold text-text-main">暂未打开工作空间。请从本地文件夹开始使用</div>
-            <div class="mt-2 text-xs text-text-muted">请选择或创建一个本地文件夹作为您的工作空间。</div>
-            <div class="mt-4 grid grid-cols-1 gap-2">
-              <button
-                class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
-                @click="workspaceStore.openWorkspaceInNewWindowFlow()"
-              >
-                打开工作空间 (Ctrl+O)
-              </button>
-              <button
-                class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
-                @click="workspaceStore.newWorkspaceInNewWindowFlow()"
-              >
-                新建工作空间 (Ctrl+Shift+N)
-              </button>
-            </div>
-          </div>
-          <div v-if="workspaceStore.activeWorkspaceId" class="h-full min-h-0 flex flex-col">
-            <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main">
-              文件
-            </div>
-            <div class="min-h-0 flex-1 pt-2">
-              <FileTree />
-            </div>
-          </div>
-        </template>
-
-        <div v-else-if="workspaceStore.activeSidebarPanel === 'outline'" class="h-full min-h-0 flex flex-col">
-          <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main">
-            大纲
-          </div>
-          <div class="min-h-0 flex-1">
-            <OutlinePanel />
-          </div>
-        </div>
-
-        <div v-else-if="workspaceStore.activeSidebarPanel === 'ai'" class="h-full min-h-0 flex flex-col">
-          <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main">
-            AI 助手
-          </div>
-          <div class="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
-            <div class="flex flex-col gap-3 text-sm">
-              <div class="max-w-[88%] rounded-lg bg-accent-soft px-3 py-2 text-text-main">
-                你好，我是 Looma AI 助手。之后可以在这里和我讨论当前笔记。
-              </div>
-              <div class="ml-auto max-w-[88%] rounded-lg bg-accent px-3 py-2 text-white">
-                帮我整理这篇笔记的重点。
-              </div>
-              <div class="max-w-[88%] rounded-lg bg-bg px-3 py-2 text-text-muted">
-                功能开发中。未来可用于总结内容、提取待办、改写段落和回答笔记相关问题。
-              </div>
-            </div>
-          </div>
-          <div class="shrink-0 border-t border-border px-3 py-3">
-            <div class="flex items-center gap-2 rounded-lg bg-bg px-3 py-2">
-              <input
-                class="min-w-0 flex-1 bg-transparent text-sm text-text-muted outline-none"
-                type="text"
-                placeholder="AI 对话功能开发中"
-                disabled
-              />
-              <button
-                class="shrink-0 rounded-md bg-accent-soft px-3 py-1.5 text-xs font-medium text-text-muted cursor-not-allowed"
-                type="button"
-                disabled
-              >
-                发送
-              </button>
-            </div>
-          </div>
-        </div>
+        <FileTree v-if="workspaceStore.activeSidebarPanel === 'files'" />
+        <OutlinePanel v-else-if="workspaceStore.activeSidebarPanel === 'outline'" />
+        <AiAssistant v-else-if="workspaceStore.activeSidebarPanel === 'ai'" />
       </div>
     </div>
 

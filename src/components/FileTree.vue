@@ -395,9 +395,33 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col">
+  <div class="h-full min-h-0 flex flex-col">
+    <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main">
+      文件
+    </div>
+
+    <div v-if="workspaceStore.workspaces.length === 0" class="p-4">
+      <div class="text-sm font-semibold text-text-main">暂未打开工作空间。请从本地文件夹开始使用</div>
+      <div class="mt-2 text-xs text-text-muted">请选择或创建一个本地文件夹作为您的工作空间。</div>
+      <div class="mt-4 grid grid-cols-1 gap-2">
+        <button
+          class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
+          @click="workspaceStore.openWorkspaceInNewWindowFlow()"
+        >
+          打开工作空间 (Ctrl+O)
+        </button>
+        <button
+          class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
+          @click="workspaceStore.newWorkspaceInNewWindowFlow()"
+        >
+          新建工作空间 (Ctrl+Shift+N)
+        </button>
+      </div>
+    </div>
+
     <div
-      class="flex-1 overflow-y-auto px-2 pb-2 focus-scrollbar"
+      v-if="workspaceStore.activeWorkspaceId"
+      class="min-h-0 flex-1 overflow-y-auto px-2 pt-2 pb-2 focus-scrollbar"
       @click.self="workspaceStore.clearSelection()"
       @contextmenu.self="(e) => { workspaceStore.clearSelection(); openMenu(e, { name: '', relativePath: '', isDirectory: true, size: 0, mtimeMs: 0 }) }"
       @dragover.self="allowDrop"

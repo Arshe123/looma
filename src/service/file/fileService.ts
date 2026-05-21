@@ -1,5 +1,5 @@
 import fs from 'fs/promises';
-import type { Result } from '@/common/interface/Result';
+import type { Result } from '../../common/interface/Result';
 
 /**
  * Simple file-level lock to prevent concurrent write operations on the same file.

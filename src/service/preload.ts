@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 type FsEventPayload = { workspaceId: string; event: string; relativePath: string };
+type RagStreamEventPayload =
+  | { requestId: string; type: 'delta'; text: string }
+  | { requestId: string; type: 'sources'; sources: unknown[] }
+  | { requestId: string; type: 'done' }
+  | { requestId: string; type: 'error'; error: string };
 
 contextBridge.exposeInMainWorld('electronAPI', {
   file: {
@@ -32,12 +37,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   workspaceMeta: {
     get: (workspaceId: string) => ipcRenderer.invoke('workspaceMeta:get', workspaceId),
-    set: (workspaceId: string, meta: { expandedDirs: string[]; selectedPaths: string[]; noteOrder: Record<string, string[]> }) =>
+    set: (workspaceId: string, meta: unknown) =>
       ipcRenderer.invoke('workspaceMeta:set', workspaceId, meta),
+  },
+  workspaceAi: {
+    get: (workspaceId: string) => ipcRenderer.invoke('workspaceAi:get', workspaceId),
+    set: (workspaceId: string, state: unknown) => ipcRenderer.invoke('workspaceAi:set', workspaceId, state),
   },
   appSettings: {
     get: () => ipcRenderer.invoke('appSettings:get'),
     set: (settings: unknown) => ipcRenderer.invoke('appSettings:set', settings),
+  },
+  rag: {
+    health: () => ipcRenderer.invoke('rag:health'),
+    status: (workspaceId: string) => ipcRenderer.invoke('rag:status', workspaceId),
+    index: (workspaceId: string) => ipcRenderer.invoke('rag:index', workspaceId),
+    ask: (workspaceId: string, question: string) => ipcRenderer.invoke('rag:ask', workspaceId, question),
+    askStream: {
+      start: (requestId: string, workspaceId: string, question: string) =>
+        ipcRenderer.invoke('rag:askStream:start', requestId, workspaceId, question),
+      cancel: (requestId: string) => ipcRenderer.invoke('rag:askStream:cancel', requestId),
+      onEvent: (listener: (payload: RagStreamEventPayload) => void) => {
+        const handler = (_: unknown, payload: RagStreamEventPayload) => listener(payload);
+        ipcRenderer.on('rag:askStream:event', handler);
+        return () => ipcRenderer.removeListener('rag:askStream:event', handler);
+      },
+    },
   },
   fs: {
     listDir: (workspaceId: string, dirRelativePath: string) => ipcRenderer.invoke('fs:listDir', workspaceId, dirRelativePath),

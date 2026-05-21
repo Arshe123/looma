@@ -32,8 +32,8 @@ import {
   moveCurrentColumn,
   moveCurrentRow,
 } from './tiptap-table-utils'
-import type { MenuAction, MenuActionId, TableMenuActionId } from '@/common/type/MenuAction'
-import { DEFAULT_INLINE_MENU_ACTION_IDS } from '@/common/constant/MenuConst'
+import type { MenuAction, MenuActionId, TableMenuActionId } from '../type/MenuAction'
+import { DEFAULT_INLINE_MENU_ACTION_IDS } from '../constant/MenuConst'
 
 export interface AppSettings {
   inlineMenu: {

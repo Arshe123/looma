@@ -32,6 +32,38 @@ export interface OpenTextFileState {
   saveError: string
 }
 
+export type AiAssistantMessageRole = 'assistant' | 'user' | 'system'
+
+export interface AiAssistantMessageAction {
+  type: 'build-index'
+  title: string
+  description: string
+  buttonText: string
+  disabled?: boolean
+}
+
+export interface AiAssistantMessage {
+  id: number
+  role: AiAssistantMessageRole
+  text: string
+  createdAt: number
+  actions?: AiAssistantMessageAction[]
+}
+
+export interface AiAssistantConversation {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  messages: AiAssistantMessage[]
+  draft: string
+}
+
+export interface AiAssistantState {
+  conversations: AiAssistantConversation[]
+  activeConversationId: string
+}
+
 export type SidebarPanelId = 'files' | 'outline' | 'ai'
 export type SystemPageId = 'settings'
 

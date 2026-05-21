@@ -20,11 +20,155 @@ import { executeRedoAction, executeUndoAction, type HistoryEffects } from './wor
 import {
   buildWorkspaceMetaPayload,
 } from './workspace-meta-utils'
-import type { EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SidebarPanelId, SystemPageId, ThemeName, UndoAction, Workspace } from './workspace-types'
-export type { EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SidebarPanelId, SidebarPanelState, SystemPageId, ThemeName, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
+import type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantState, EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SidebarPanelId, SystemPageId, ThemeName, UndoAction, Workspace } from './workspace-types'
+export type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SidebarPanelId, SidebarPanelState, SystemPageId, ThemeName, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
 let systemThemeCleanup: (() => void) | null = null
+
+const createAiConversationId = () => `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+const getAiConversationTitle = (messages: AiAssistantMessage[]) => {
+  const firstUserMessage = messages.find((message) => message.role === 'user' && message.text.trim())
+  const title = firstUserMessage?.text.trim().replace(/\s+/g, ' ') || '新对话'
+  return title.length > 24 ? `${title.slice(0, 24)}...` : title
+}
+
+const createAiConversation = (messages?: AiAssistantMessage[], draft = ''): AiAssistantConversation => {
+  const now = Date.now()
+  const nextMessages = messages ?? [
+    {
+      id: 1,
+      role: 'assistant',
+      text: '你好，我是 Looma AI 助手。请先为当前工作空间建立索引，然后就可以向我提问。',
+      createdAt: 1,
+    },
+  ]
+  const timestamps = nextMessages.map((message) => message.createdAt).filter(Number.isFinite)
+  const createdAt = timestamps.length > 0 ? Math.min(...timestamps) : now
+  const updatedAt = timestamps.length > 0 ? Math.max(...timestamps) : now
+  return {
+    id: createAiConversationId(),
+    title: getAiConversationTitle(nextMessages),
+    createdAt,
+    updatedAt,
+    messages: nextMessages,
+    draft,
+  }
+}
+
+const createBlankAiConversation = (): AiAssistantConversation => {
+  const now = Date.now()
+  return {
+    id: createAiConversationId(),
+    title: '新对话',
+    createdAt: now,
+    updatedAt: now,
+    messages: [],
+    draft: '',
+  }
+}
+
+const createDefaultAiAssistantState = (): AiAssistantState => {
+  const conversation = createAiConversation()
+  return {
+    conversations: [conversation],
+    activeConversationId: conversation.id,
+  }
+}
+
+const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistantState => {
+  const fallback = createDefaultAiAssistantState()
+  if (!state) return fallback
+
+  const normalizeActions = (actions: unknown): AiAssistantMessageAction[] | undefined => {
+    if (!Array.isArray(actions)) return undefined
+    const normalized = actions
+      .filter((action): action is AiAssistantMessageAction =>
+        Boolean(
+          action
+          && typeof action === 'object'
+          && (action as any).type === 'build-index'
+          && typeof (action as any).title === 'string'
+          && typeof (action as any).description === 'string'
+          && typeof (action as any).buttonText === 'string',
+        ),
+      )
+      .map((action) => ({
+        type: action.type,
+        title: action.title,
+        description: action.description,
+        buttonText: action.buttonText,
+        disabled: Boolean(action.disabled),
+      }))
+    return normalized.length > 0 ? normalized : undefined
+  }
+
+  const normalizeMessages = (messages: unknown): AiAssistantMessage[] => (
+    Array.isArray(messages)
+      ? messages.filter((message): message is AiAssistantMessage =>
+        Boolean(
+          message
+          && typeof message.id === 'number'
+          && (message.role === 'assistant' || message.role === 'user' || message.role === 'system')
+          && typeof message.text === 'string',
+        ),
+      ).map((message) => ({
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        createdAt: typeof message.createdAt === 'number' ? message.createdAt : message.id,
+        actions: normalizeActions(message.actions),
+      }))
+      : []
+  )
+
+  const normalizeConversation = (conversation: any): AiAssistantConversation | null => {
+    if (!conversation || typeof conversation !== 'object') return null
+    const messages = normalizeMessages(conversation.messages)
+    const now = Date.now()
+    const id = typeof conversation.id === 'string' && conversation.id ? conversation.id : createAiConversationId()
+    const title = typeof conversation.title === 'string' && conversation.title.trim()
+      ? conversation.title.trim()
+      : getAiConversationTitle(messages)
+    const createdAt = typeof conversation.createdAt === 'number' ? conversation.createdAt : now
+    const updatedAt = typeof conversation.updatedAt === 'number' ? conversation.updatedAt : createdAt
+    return {
+      id,
+      title,
+      createdAt,
+      updatedAt,
+      messages,
+      draft: typeof conversation.draft === 'string' ? conversation.draft : '',
+    }
+  }
+
+  const rawState = state as any
+  const conversations = Array.isArray(rawState.conversations)
+    ? rawState.conversations.map(normalizeConversation).filter((conversation): conversation is AiAssistantConversation => Boolean(conversation))
+    : []
+
+  if (conversations.length > 0) {
+    const activeConversationId = conversations.some((conversation) => conversation.id === rawState.activeConversationId)
+      ? rawState.activeConversationId
+      : [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)[0].id
+    return {
+      conversations,
+      activeConversationId,
+    }
+  }
+
+  const legacyMessages = normalizeMessages(rawState.messages)
+  if (legacyMessages.length > 0 || typeof rawState.draft === 'string') {
+    const conversation = createAiConversation(legacyMessages.length > 0 ? legacyMessages : undefined, typeof rawState.draft === 'string' ? rawState.draft : '')
+    return {
+      conversations: [conversation],
+      activeConversationId: conversation.id,
+    }
+  }
+
+  return fallback
+}
 
 const isThemeName = (value: string | null): value is ThemeName =>
   value === 'light' || value === 'dark' || value === 'system'
@@ -56,6 +200,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     openedSystemPages: [] as SystemPageId[],
     activeSystemPage: null as SystemPageId | null,
     activeSidebarPanel: DEFAULT_ACTIVE_SIDEBAR_PANEL as SidebarPanelId | null,
+    aiAssistant: createDefaultAiAssistantState() as AiAssistantState,
     fileSessions: {} as Record<string, EditorSession>,
     selectedPaths: [] as string[],
     expandedDirs: [] as string[],
@@ -108,6 +253,14 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
     activeExpandedSet(): Set<string> {
       return new Set(this.expandedDirs.map(normalizeDir))
+    },
+    activeAiAssistantConversation(state): AiAssistantConversation {
+      return state.aiAssistant.conversations.find((conversation) => conversation.id === state.aiAssistant.activeConversationId)
+        ?? state.aiAssistant.conversations[0]
+        ?? createBlankAiConversation()
+    },
+    aiAssistantConversations(state): AiAssistantConversation[] {
+      return [...state.aiAssistant.conversations].sort((a, b) => b.updatedAt - a.updatedAt)
     },
   },
   actions: {
@@ -212,6 +365,138 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     clearError() {
       this.lastError = ''
+    },
+
+    resetAiAssistantState() {
+      this.aiAssistant = createDefaultAiAssistantState()
+    },
+
+    ensureActiveAiAssistantConversation() {
+      let conversation = this.aiAssistant.conversations.find((item) => item.id === this.aiAssistant.activeConversationId)
+      if (!conversation) {
+        conversation = this.aiAssistant.conversations[0]
+      }
+      if (!conversation) {
+        conversation = createBlankAiConversation()
+        this.aiAssistant.conversations = [conversation]
+      }
+      this.aiAssistant.activeConversationId = conversation.id
+      return conversation
+    },
+
+    saveAiAssistantState() {
+      const id = this.activeWorkspaceId
+      if (!id) return
+      window.electronAPI.workspaceAi.set(id, JSON.parse(JSON.stringify(this.aiAssistant))).catch(() => {})
+    },
+
+    touchAiAssistantConversation(conversation: AiAssistantConversation) {
+      conversation.updatedAt = Date.now()
+      conversation.title = getAiConversationTitle(conversation.messages)
+    },
+
+    appendAiAssistantMessage(role: AiAssistantMessage['role'], text: string, actions?: AiAssistantMessageAction[]) {
+      const now = Date.now()
+      const conversation = this.ensureActiveAiAssistantConversation()
+      const id = now + conversation.messages.length
+      conversation.messages.push({
+        id,
+        role,
+        text,
+        createdAt: now,
+        actions,
+      })
+      this.touchAiAssistantConversation(conversation)
+      this.saveAiAssistantState()
+      return id
+    },
+
+    updateAiAssistantMessageText(id: number, text: string, options?: { persist?: boolean }) {
+      const conversation = this.ensureActiveAiAssistantConversation()
+      const message = conversation.messages.find((item) => item.id === id)
+      if (!message) return
+      message.text = text
+      this.touchAiAssistantConversation(conversation)
+      if (options?.persist === false) return
+      this.saveAiAssistantState()
+    },
+
+    appendAiAssistantMessageText(id: number, text: string) {
+      const conversation = this.ensureActiveAiAssistantConversation()
+      const message = conversation.messages.find((item) => item.id === id)
+      if (!message) return
+      message.text += text
+      this.touchAiAssistantConversation(conversation)
+      this.saveAiAssistantState()
+    },
+
+    setAiAssistantActionDisabled(type: AiAssistantMessageAction['type'], disabled: boolean) {
+      let changed = false
+      const conversation = this.ensureActiveAiAssistantConversation()
+      conversation.messages = conversation.messages.map((message) => {
+        if (!message.actions?.some((action) => action.type === type)) return message
+        changed = true
+        return {
+          ...message,
+          actions: message.actions.map((action) => action.type === type ? { ...action, disabled } : action),
+        }
+      })
+      if (changed) {
+        this.touchAiAssistantConversation(conversation)
+        this.saveAiAssistantState()
+      }
+    },
+
+    removeAiAssistantMessagesByText(texts: string[]) {
+      const blocked = new Set(texts)
+      const conversation = this.ensureActiveAiAssistantConversation()
+      const nextMessages = conversation.messages.filter((message) => !blocked.has(message.text))
+      if (nextMessages.length === conversation.messages.length) return
+      conversation.messages = nextMessages
+      this.touchAiAssistantConversation(conversation)
+      this.saveAiAssistantState()
+    },
+
+    setAiAssistantDraft(value: string) {
+      const conversation = this.ensureActiveAiAssistantConversation()
+      conversation.draft = value
+      conversation.updatedAt = Date.now()
+      this.saveAiAssistantState()
+    },
+
+    createAiAssistantConversation() {
+      const conversation = createBlankAiConversation()
+      this.aiAssistant.conversations.unshift(conversation)
+      this.aiAssistant.activeConversationId = conversation.id
+      this.saveAiAssistantState()
+      return conversation.id
+    },
+
+    setActiveAiAssistantConversation(id: string) {
+      if (this.aiAssistant.activeConversationId === id) return
+      const conversation = this.aiAssistant.conversations.find((item) => item.id === id)
+      if (!conversation) return
+      this.aiAssistant.activeConversationId = id
+      this.saveAiAssistantState()
+    },
+
+    deleteAiAssistantConversation(id: string) {
+      const nextConversations = this.aiAssistant.conversations.filter((conversation) => conversation.id !== id)
+      if (nextConversations.length === this.aiAssistant.conversations.length) return
+
+      if (nextConversations.length === 0) {
+        const conversation = createBlankAiConversation()
+        this.aiAssistant.conversations = [conversation]
+        this.aiAssistant.activeConversationId = conversation.id
+        this.saveAiAssistantState()
+        return
+      }
+
+      this.aiAssistant.conversations = nextConversations
+      if (this.aiAssistant.activeConversationId === id) {
+        this.aiAssistant.activeConversationId = [...nextConversations].sort((a, b) => b.updatedAt - a.updatedAt)[0].id
+      }
+      this.saveAiAssistantState()
     },
 
     setActiveSidebarPanel(id: SidebarPanelId | null) {
@@ -562,6 +847,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.openedFiles = []
       this.openedTextFileContents = {}
       this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
+      this.resetAiAssistantState()
       this.selectedPaths = []
       this.expandedDirs = []
       this.noteOrder = {}
@@ -657,6 +943,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.activeSystemPage = null
         this.openedTextFileContents = {}
         this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
+        this.resetAiAssistantState()
+        await this.loadAiAssistantState(id)
         this.fileSessions = {}
         return
       }
@@ -667,6 +955,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.openedSystemPages = []
       this.activeSystemPage = null
       this.fileSessions = metaResult.data.fileSessions || {}
+      await this.loadAiAssistantState(id)
       this.openedTextFileContents = {}
       this.activeSidebarPanel = resolveActiveSidebarPanel(
         metaResult.data.activeSidebarPanel,
@@ -679,6 +968,15 @@ export const useWorkspaceStore = defineStore('workspace', {
       } else if (this.openedFiles.length > 0) {
         await this.setActiveFileRelative(this.openedFiles[this.openedFiles.length - 1])
       }
+    },
+
+    async loadAiAssistantState(id: string) {
+      const aiResult = await window.electronAPI.workspaceAi.get(id)
+      if (!aiResult.success || !aiResult.data) {
+        this.resetAiAssistantState()
+        return
+      }
+      this.aiAssistant = normalizeAiAssistantState(aiResult.data)
     },
 
     async saveWorkspaceMeta() {

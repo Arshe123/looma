@@ -7,8 +7,10 @@ import { fileService } from './file/fileService';
 import { telemetryService } from './user/telemetryService';
 import { workspaceService } from './workspace/workspaceService';
 import { fileSystemService, fileWatchService } from './file/fileSystemService';
-import { workspaceMetaService } from '@/service/workspace/workspaceMetaService';
-import { createAppSettingsService, makeAppSettingsPath } from '@/service/app/appSettingsService';
+import { workspaceAiService } from './workspace/workspaceAiService';
+import { workspaceMetaService } from './workspace/workspaceMetaService';
+import { createAppSettingsService, makeAppSettingsPath } from './app/appSettingsService';
+import { ragService } from './rag/ragService';
 
 app.setAppUserModelId('com.looma')
 app.setName('looma');
@@ -18,6 +20,7 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 const appSettingsService = createAppSettingsService(makeAppSettingsPath(app.getPath('appData')));
+const activeRagStreams = new Map<string, AbortController>();
 
 const getWindowFromEvent = (event: IpcMainInvokeEvent) => {
   return BrowserWindow.fromWebContents(event.sender) ?? null;
@@ -210,6 +213,11 @@ app.on('before-quit', async (e) => {
   if (isQuitting) return;
   e.preventDefault();
   isQuitting = true;
+
+  for (const controller of activeRagStreams.values()) {
+    controller.abort();
+  }
+  activeRagStreams.clear();
   
   try {
     const state = await workspaceService.getState();
@@ -344,12 +352,87 @@ ipcMain.handle('workspaceMeta:set', async (_, workspaceId: string, meta: any) =>
   return await workspaceMetaService.setMeta(workspaceId, meta);
 });
 
+ipcMain.handle('workspaceAi:get', async (_, workspaceId: string) => {
+  return await workspaceAiService.getState(workspaceId);
+});
+
+ipcMain.handle('workspaceAi:set', async (_, workspaceId: string, state: any) => {
+  return await workspaceAiService.setState(workspaceId, state);
+});
+
 const getWorkspacePathById = async (workspaceId: string) => {
   const state = await workspaceService.getState();
   if (!state.success || !state.data) return null;
   const ws = state.data.workspaces.find((w) => w.id === workspaceId);
   return ws?.path ?? null;
 };
+
+ipcMain.handle('rag:health', async () => {
+  return await ragService.health();
+});
+
+ipcMain.handle('rag:status', async (_, workspaceId: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  return await ragService.getIndexStatus(workspacePath);
+});
+
+ipcMain.handle('rag:index', async (_, workspaceId: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  return await ragService.buildVectorIndex(workspacePath);
+});
+
+ipcMain.handle('rag:ask', async (_, workspaceId: string, question: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  if (!question.trim()) return { success: false, error: 'Question is required' };
+  return await ragService.queryAssistant(workspacePath, question);
+});
+
+ipcMain.handle('rag:askStream:start', async (event, requestId: string, workspaceId: string, question: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  if (!question.trim()) return { success: false, error: 'Question is required' };
+
+  activeRagStreams.get(requestId)?.abort();
+  const controller = new AbortController();
+  activeRagStreams.set(requestId, controller);
+  const sender = event.sender;
+
+  ragService
+    .streamAssistant(
+      workspacePath,
+      question,
+      (payload) => {
+        if (sender.isDestroyed()) return;
+        sender.send('rag:askStream:event', { requestId, ...payload });
+      },
+      controller.signal,
+    )
+    .then((result) => {
+      if (!result.success && !sender.isDestroyed()) {
+        sender.send('rag:askStream:event', {
+          requestId,
+          type: 'error',
+          error: result.error || 'AI 助手请求失败。',
+        });
+      }
+    })
+    .finally(() => {
+      if (activeRagStreams.get(requestId) === controller) {
+        activeRagStreams.delete(requestId);
+      }
+    });
+
+  return { success: true };
+});
+
+ipcMain.handle('rag:askStream:cancel', async (_, requestId: string) => {
+  activeRagStreams.get(requestId)?.abort();
+  activeRagStreams.delete(requestId);
+  return { success: true };
+});
 
 ipcMain.handle('fs:listDir', async (_, workspaceId: string, dirRelativePath: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);

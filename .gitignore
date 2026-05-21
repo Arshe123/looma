@@ -29,3 +29,9 @@ out/
 
 # local config
 .npmrc
+
+# Python 缓存
+__pycache__/
+
+# 虚拟环境
+.venv/

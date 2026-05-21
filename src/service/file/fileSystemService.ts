@@ -3,7 +3,7 @@ import chokidar, { type FSWatcher } from 'chokidar'
 import fs from 'fs/promises'
 import path from 'path'
 import type { WebContents } from 'electron'
-import type { Result } from '@/common/interface/Result'
+import type { Result } from '../../common/interface/Result'
 
 export type WatchState = {
   workspacePath: string

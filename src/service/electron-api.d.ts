@@ -1,10 +1,42 @@
-import type { Result } from '@/common/interface/Result'
+import type { Result } from '../common/interface/Result'
 
 type SidebarPanelId = 'files' | 'outline' | 'ai';
 
 interface SidebarPanelState {
   id: SidebarPanelId;
   size: number;
+}
+
+type AiAssistantMessageRole = 'assistant' | 'user' | 'system';
+
+interface AiAssistantMessagePayload {
+  id: number;
+  role: AiAssistantMessageRole;
+  text: string;
+  createdAt: number;
+  actions?: AiAssistantMessageActionPayload[];
+}
+
+interface AiAssistantMessageActionPayload {
+  type: 'build-index';
+  title: string;
+  description: string;
+  buttonText: string;
+  disabled?: boolean;
+}
+
+interface AiAssistantStatePayload {
+  conversations: AiAssistantConversationPayload[];
+  activeConversationId: string;
+}
+
+interface AiAssistantConversationPayload {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: AiAssistantMessagePayload[];
+  draft: string;
 }
 
 interface WorkspaceMetaPayload {
@@ -23,6 +55,37 @@ interface AppSettingsPayload {
     items: string[];
   };
 }
+
+interface RagSourcePayload {
+  score: number | null;
+  text: string;
+  metadata: Record<string, unknown>;
+}
+
+interface RagAnswerPayload {
+  answer: string;
+  sources: RagSourcePayload[];
+}
+
+interface RagIndexPayload {
+  status: string;
+  document_count?: number;
+  exists?: boolean;
+  persist_dir?: string;
+  error?: string;
+}
+
+interface RagIndexStatusPayload {
+  exists: boolean;
+  persist_dir?: string;
+  error?: string;
+}
+
+type RagStreamEventPayload =
+  | { requestId: string; type: 'delta'; text: string }
+  | { requestId: string; type: 'sources'; sources: RagSourcePayload[] }
+  | { requestId: string; type: 'done' }
+  | { requestId: string; type: 'error'; error: string };
 
 interface ElectronAPI {
   file: {
@@ -56,9 +119,24 @@ interface ElectronAPI {
     get: (workspaceId: string) => Promise<Result<WorkspaceMetaPayload>>;
     set: (workspaceId: string, meta: WorkspaceMetaPayload) => Promise<Result<void>>;
   };
+  workspaceAi: {
+    get: (workspaceId: string) => Promise<Result<AiAssistantStatePayload>>;
+    set: (workspaceId: string, state: AiAssistantStatePayload) => Promise<Result<void>>;
+  };
   appSettings: {
     get: () => Promise<Result<AppSettingsPayload>>;
     set: (settings: AppSettingsPayload) => Promise<Result<void>>;
+  };
+  rag: {
+    health: () => Promise<Result<{ status: string; service: string }>>;
+    status: (workspaceId: string) => Promise<Result<RagIndexStatusPayload>>;
+    index: (workspaceId: string) => Promise<Result<RagIndexPayload>>;
+    ask: (workspaceId: string, question: string) => Promise<Result<RagAnswerPayload>>;
+    askStream: {
+      start: (requestId: string, workspaceId: string, question: string) => Promise<Result<void>>;
+      cancel: (requestId: string) => Promise<Result<void>>;
+      onEvent: (listener: (payload: RagStreamEventPayload) => void) => () => void;
+    };
   };
   fs: {
     listDir: (workspaceId: string, dirRelativePath: string) => Promise<Result<Array<{ name: string; relativePath: string; isDirectory: boolean; size: number; mtimeMs: number }>>>;

@@ -1,6 +1,6 @@
 import fs from 'fs/promises'
 import path from 'path'
-import type { Result } from '@/common/interface/Result'
+import type { Result } from '../../common/interface/Result'
 import { workspaceService } from './workspaceService'
 
 const META_DIR_NAME = '.looma'
@@ -13,8 +13,8 @@ export interface WorkspaceMeta {
   openedFiles?: string[]
   activeFile?: string
   fileSessions?: Record<string, any>
-  activeSidebarPanel?: 'files' | 'outline' | null
-  sidebarPanels?: { id: 'files' | 'outline'; size: number }[]
+  activeSidebarPanel?: 'files' | 'outline' | 'ai' | null
+  sidebarPanels?: { id: 'files' | 'outline' | 'ai'; size: number }[]
 }
 
 // Helper to get workspace root path by ID
@@ -98,7 +98,7 @@ export const workspaceMetaService = {
         activeFile: typeof parsed.activeFile === 'string' ? parsed.activeFile : undefined,
         fileSessions: typeof parsed.fileSessions === 'object' && parsed.fileSessions ? parsed.fileSessions : {},
         activeSidebarPanel:
-          parsed.activeSidebarPanel === null || parsed.activeSidebarPanel === 'files' || parsed.activeSidebarPanel === 'outline'
+          parsed.activeSidebarPanel === null || parsed.activeSidebarPanel === 'files' || parsed.activeSidebarPanel === 'outline' || parsed.activeSidebarPanel === 'ai'
             ? parsed.activeSidebarPanel
             : undefined,
         sidebarPanels: Array.isArray(parsed.sidebarPanels) ? parsed.sidebarPanels : undefined,
@@ -135,7 +135,9 @@ export const workspaceMetaService = {
       if (!metaPath) return { success: false, error: '工作空间路径不存在' }
 
       unlock = await lockFile(metaPath)
-      await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
+      const nextMeta = { ...meta }
+      delete (nextMeta as any).aiAssistant
+      await fs.writeFile(metaPath, JSON.stringify(nextMeta, null, 2), 'utf-8')
       
       if (unlock) await unlock()
       return { success: true }

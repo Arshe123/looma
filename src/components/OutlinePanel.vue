@@ -58,45 +58,51 @@ const jumpToHeading = (item: MarkdownOutlineItem) => {
 </script>
 
 <template>
-  <div class="h-full min-h-0 overflow-hidden">
-    <div v-if="!isMarkdownActive" class="h-full p-4 text-sm text-text-muted">
-      大纲仅支持 Markdown 文件。
+  <div class="h-full min-h-0 flex flex-col">
+    <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main">
+      大纲
     </div>
-    <div v-else-if="outlineItems.length === 0" class="h-full p-4 text-sm text-text-muted">
-      当前 Markdown 文件暂无标题。
-    </div>
-    <div v-else class="h-full overflow-y-auto focus-scrollbar py-2">
-      <div
-        v-for="row in visibleRows"
-        :key="row.item.id"
-        class="group relative w-full min-h-8 pr-3 py-1.5 flex items-start gap-2 text-left text-sm text-text-muted hover:bg-accent-soft hover:text-text-main"
-        :style="{ paddingLeft: `${10 + row.depth * 14}px` }"
-        :title="row.item.text"
-      >
-        <span
-          v-for="(guide, guideIndex) in row.guides"
-          :key="guideIndex"
-          class="pointer-events-none absolute top-0 border-l border-border-soft"
-          :class="guide === 'none' ? 'hidden' : guide === 'continue' ? 'h-full' : 'h-1/2'"
-          :style="{ left: `${10 + guideIndex * 14 + 7}px` }"
-        ></span>
-        <button
-          v-if="row.children.length > 0"
-          class="relative z-10 -mt-0.5 w-5 h-6 shrink-0 inline-flex items-center justify-center rounded hover:bg-accent-soft text-text-muted"
-          @click.stop="toggleHeading(row.item.id)"
+
+    <div class="min-h-0 flex-1 overflow-hidden">
+      <div v-if="!isMarkdownActive" class="h-full p-4 text-sm text-text-muted">
+        大纲仅支持 Markdown 文件。
+      </div>
+      <div v-else-if="outlineItems.length === 0" class="h-full p-4 text-sm text-text-muted">
+        当前 Markdown 文件暂无标题。
+      </div>
+      <div v-else class="h-full overflow-y-auto focus-scrollbar py-2">
+        <div
+          v-for="row in visibleRows"
+          :key="row.item.id"
+          class="group relative w-full min-h-8 pr-3 py-1.5 flex items-start gap-2 text-left text-sm text-text-muted hover:bg-accent-soft hover:text-text-main"
+          :style="{ paddingLeft: `${10 + row.depth * 14}px` }"
+          :title="row.item.text"
         >
-          <ChevronRight
-            :size="14"
-            :class="['transition-transform', isExpanded(row.item.id) ? 'rotate-90' : 'rotate-0']"
-          />
-        </button>
-        <div v-else class="w-5 h-6 shrink-0"></div>
-        <button
-          class="relative z-10 min-w-0 flex-1 truncate text-left cursor-pointer"
-          @click="jumpToHeading(row.item)"
-        >
-          {{ row.item.text }}
-        </button>
+          <span
+            v-for="(guide, guideIndex) in row.guides"
+            :key="guideIndex"
+            class="pointer-events-none absolute top-0 border-l border-border-soft"
+            :class="guide === 'none' ? 'hidden' : guide === 'continue' ? 'h-full' : 'h-1/2'"
+            :style="{ left: `${10 + guideIndex * 14 + 7}px` }"
+          ></span>
+          <button
+            v-if="row.children.length > 0"
+            class="relative z-10 -mt-0.5 w-5 h-6 shrink-0 inline-flex items-center justify-center rounded hover:bg-accent-soft text-text-muted"
+            @click.stop="toggleHeading(row.item.id)"
+          >
+            <ChevronRight
+              :size="14"
+              :class="['transition-transform', isExpanded(row.item.id) ? 'rotate-90' : 'rotate-0']"
+            />
+          </button>
+          <div v-else class="w-5 h-6 shrink-0"></div>
+          <button
+            class="relative z-10 min-w-0 flex-1 truncate text-left cursor-pointer"
+            @click="jumpToHeading(row.item)"
+          >
+            {{ row.item.text }}
+          </button>
+        </div>
       </div>
     </div>
   </div>

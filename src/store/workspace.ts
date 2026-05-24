@@ -754,7 +754,13 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
 
       this.workspaces = listResult.data
-      const nextActive = wsFromUrl || stateResult.data.activeId || this.workspaces[0]?.id || null
+      let nextActive = wsFromUrl || stateResult.data.activeId || this.workspaces[0]?.id || null
+      while (nextActive) {
+        const canOpen = await this.ensureWorkspaceCanOpen(nextActive)
+        if (canOpen) break
+        await this.refreshWorkspaces()
+        nextActive = this.workspaces[0]?.id || null
+      }
       this.activeWorkspaceId = nextActive
 
       if (!this.workspaces.length) {
@@ -836,6 +842,39 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     },
 
+    async removeMissingWorkspaceRecord(id: string, info?: { name?: string; path?: string }) {
+      const fallback = this.workspaces.find((w) => w.id === id)
+      const name = info?.name || fallback?.name || '该工作空间'
+      const workspacePath = info?.path || fallback?.path || ''
+      await (window as any).electronAPI.app.showMessageBox({
+        type: 'warning',
+        title: '工作空间已丢失',
+        message: `${name} 已被移动或删除，已从最近打开记录中移除。`,
+        detail: workspacePath,
+        buttons: ['确定'],
+        defaultId: 0,
+        cancelId: 0,
+      })
+
+      const removeResult = await window.electronAPI.workspace.remove(id)
+      if (!removeResult.success && removeResult.error !== 'Workspace not found') {
+        this.setError(removeResult.error || 'Failed to remove workspace')
+      }
+      await this.refreshWorkspaces()
+    },
+
+    async ensureWorkspaceCanOpen(id: string) {
+      const existsResult = await window.electronAPI.workspace.checkExists(id)
+      if (!existsResult.success) {
+        this.setError(existsResult.error || 'Failed to check workspace')
+        return false
+      }
+      if (!existsResult.data) return false
+      if (existsResult.data.exists) return true
+      await this.removeMissingWorkspaceRecord(id, existsResult.data)
+      return false
+    },
+
     async clearActiveWorkspace() {
       const prev = this.watchedWorkspaceId
       if (prev) {
@@ -861,6 +900,8 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async openWorkspaceInNewWindow(id: string) {
       if (!id) return
+      const canOpen = await this.ensureWorkspaceCanOpen(id)
+      if (!canOpen) return
       await (window as any).electronAPI?.window?.openWorkspace?.(id)
     },
 
@@ -868,33 +909,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!id) return
       if (this.isWorkspaceTransitioning) return
 
-      const existsResult = await (window as any).electronAPI.workspace.checkExists(id)
-      if (existsResult.success && existsResult.data) {
-        if (!existsResult.data.exists) {
-          const res = await (window as any).electronAPI.app.showMessageBox({
-            type: 'warning',
-            title: '工作空间已丢失',
-            message: '工作空间已被删除或转移，是否移除记录或重建？',
-            buttons: ['取消', '移除', '重建'],
-            defaultId: 2,
-            cancelId: 0
-          })
-          if (res.response === 1) {
-            await this.removeWorkspace(id, true)
-            return
-          } else if (res.response === 2) {
-            this.setBusy(true, '正在重建工作空间...')
-            const createRes = await (window as any).electronAPI.workspace.recreate(id)
-            this.setBusy(false)
-            if (!createRes.success) {
-              this.setError(createRes.error || '重建失败')
-              return
-            }
-          } else {
-            return
-          }
-        }
-      }
+      const canOpen = await this.ensureWorkspaceCanOpen(id)
+      if (!canOpen) return
 
       this.setWorkspaceTransition(true, '正在保存...')
       const okToLeave = await this.ensureSavedBeforeWorkspaceChange()
@@ -923,7 +939,12 @@ export const useWorkspaceStore = defineStore('workspace', {
     async switchWorkspaceInternal(id: string) {
       this.activeWorkspaceId = id
       this.resetActiveFileState()
-      await window.electronAPI.workspace.setActive(id)
+      const activeResult = await window.electronAPI.workspace.setActive(id)
+      if (!activeResult.success) {
+        this.activeWorkspaceId = null
+        this.setError(activeResult.error || 'Failed to set active workspace')
+        return
+      }
       await this.loadWorkspaceMeta(id)
 
       await window.electronAPI.fs.watchStart(id)

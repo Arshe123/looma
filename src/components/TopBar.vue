@@ -12,7 +12,7 @@ const recentWorkspaces = computed(() => {
     .filter((w) => w.id !== active)
     .slice()
     .sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0))
-    .slice(0, 8)
+    .slice(0, 10)
 })
 
 const menuOpen = ref(false)

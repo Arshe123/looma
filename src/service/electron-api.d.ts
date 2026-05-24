@@ -132,7 +132,6 @@ interface ElectronAPI {
     remove: (id: string) => Promise<Result<void>>;
     reorder: (order: string[]) => Promise<Result<void>>;
     checkExists: (id: string) => Promise<Result<{ exists: boolean, path: string, name: string }>>;
-    recreate: (id: string) => Promise<Result<void>>;
     setActive: (id: string | null) => Promise<Result<void>>;
   };
   workspaceMeta: {

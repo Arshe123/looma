@@ -18,6 +18,8 @@ interface WorkspaceState {
   activeId: string | null
 }
 
+const MAX_WORKSPACE_RECORDS = 10
+
 const getMetaRootDir = () => {
   return path.join(app.getPath('appData'), 'workspace-meta', 'looma')
 }
@@ -35,30 +37,64 @@ const isDirectory = async (p: string) => {
   return stat.isDirectory()
 }
 
+const normalizeState = (state: Partial<WorkspaceState>): WorkspaceState => {
+  const rawWorkspaces = Array.isArray(state.workspaces) ? state.workspaces : []
+  const workspaces = rawWorkspaces.filter((w): w is Workspace =>
+    Boolean(
+      w
+      && typeof w.id === 'string'
+      && typeof w.name === 'string'
+      && typeof w.path === 'string',
+    ),
+  ).map((w) => ({
+    ...w,
+    createdAt: typeof w.createdAt === 'number' ? w.createdAt : 0,
+    lastOpenedAt: typeof w.lastOpenedAt === 'number' ? w.lastOpenedAt : 0,
+  }))
+
+  const keptIds = new Set(
+    [...workspaces]
+      .sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0))
+      .slice(0, MAX_WORKSPACE_RECORDS)
+      .map((w) => w.id),
+  )
+  const keptWorkspaces = workspaces.filter((w) => keptIds.has(w.id))
+  const knownIds = new Set(keptWorkspaces.map((w) => w.id))
+  const order = Array.isArray(state.order) ? state.order : []
+  const normalizedOrder = order.filter((id) => knownIds.has(id))
+  const missing = keptWorkspaces.map((w) => w.id).filter((id) => !normalizedOrder.includes(id))
+  const nextOrder = normalizedOrder.concat(missing)
+  const activeId = state.activeId && knownIds.has(state.activeId) ? state.activeId : (nextOrder[0] ?? null)
+
+  return {
+    workspaces: keptWorkspaces,
+    order: nextOrder,
+    activeId,
+  }
+}
+
+const writeRawState = async (state: WorkspaceState) => {
+  await ensureMetaRootDir()
+  await fs.writeFile(getWorkspacesJsonPath(), JSON.stringify(state, null, 2), 'utf-8')
+}
+
 const readState = async (): Promise<WorkspaceState> => {
   await ensureMetaRootDir()
   try {
     const raw = await fs.readFile(getWorkspacesJsonPath(), 'utf-8')
     const parsed = JSON.parse(raw) as WorkspaceState
-    const workspaces = Array.isArray(parsed.workspaces) ? parsed.workspaces : []
-    const order = Array.isArray(parsed.order) ? parsed.order : []
-    const activeId = parsed.activeId ?? null
-    const knownIds = new Set(workspaces.map((w) => w.id))
-    const normalizedOrder = order.filter((id) => knownIds.has(id))
-    const missing = workspaces.map((w) => w.id).filter((id) => !normalizedOrder.includes(id))
-    return {
-      workspaces,
-      order: normalizedOrder.concat(missing),
-      activeId: activeId && knownIds.has(activeId) ? activeId : (normalizedOrder[0] ?? missing[0] ?? null),
+    const normalized = normalizeState(parsed)
+    if (JSON.stringify(parsed) !== JSON.stringify(normalized)) {
+      await writeRawState(normalized)
     }
+    return normalized
   } catch {
     return { workspaces: [], order: [], activeId: null }
   }
 }
 
 const writeState = async (state: WorkspaceState) => {
-  await ensureMetaRootDir()
-  await fs.writeFile(getWorkspacesJsonPath(), JSON.stringify(state, null, 2), 'utf-8')
+  await writeRawState(normalizeState(state))
 }
 
 export const workspaceService = {
@@ -166,19 +202,6 @@ export const workspaceService = {
     }
   },
 
-  async recreateWorkspace(id: string): Promise<Result<void>> {
-    try {
-      const state = await readState()
-      const ws = state.workspaces.find((w) => w.id === id)
-      if (!ws) return { success: false, error: 'Workspace not found' }
-      
-      await fs.mkdir(ws.path, { recursive: true })
-      return { success: true }
-    } catch (error: any) {
-      return { success: false, error: error.message }
-    }
-  },
-
   async setActiveWorkspace(id: string | null): Promise<Result<void>> {
     try {
       const state = await readState()
@@ -189,6 +212,9 @@ export const workspaceService = {
       }
       const ws = state.workspaces.find((w) => w.id === id)
       if (!ws) return { success: false, error: 'Workspace not found' }
+      if (!(await isDirectory(ws.path).catch(() => false))) {
+        return { success: false, error: 'Workspace has been moved or deleted' }
+      }
       ws.lastOpenedAt = Date.now()
       state.activeId = id
       await writeState(state)

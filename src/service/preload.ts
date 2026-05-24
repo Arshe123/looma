@@ -43,7 +43,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     remove: (id: string) => ipcRenderer.invoke('workspace:remove', id),
     reorder: (order: string[]) => ipcRenderer.invoke('workspace:reorder', order),
     checkExists: (id: string) => ipcRenderer.invoke('workspace:checkExists', id),
-    recreate: (id: string) => ipcRenderer.invoke('workspace:recreate', id),
     setActive: (id: string | null) => ipcRenderer.invoke('workspace:setActive', id),
   },
   workspaceMeta: {

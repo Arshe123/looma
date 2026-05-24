@@ -352,10 +352,6 @@ ipcMain.handle('workspace:checkExists', async (_, id: string) => {
   return await workspaceService.checkExists(id);
 });
 
-ipcMain.handle('workspace:recreate', async (_, id: string) => {
-  return await workspaceService.recreateWorkspace(id);
-});
-
 ipcMain.handle('workspace:setActive', async (event, id: string | null) => {
   const r = await workspaceService.setActiveWorkspace(id);
   if (r.success) await setWindowTitleForWorkspace(id, getWindowFromEvent(event));
@@ -589,8 +585,12 @@ ipcMain.handle('window:toggleMaximize', async (event) => {
 
 ipcMain.handle('window:openWorkspace', async (_, workspaceId: string) => {
   if (!workspaceId) return { success: false, error: 'Workspace ID is required' };
-  const ws = await getWorkspaceById(workspaceId);
-  if (!ws) return { success: false, error: 'Workspace not found' };
+  const exists = await workspaceService.checkExists(workspaceId);
+  if (!exists.success || !exists.data) return { success: false, error: exists.error || 'Workspace not found' };
+  if (!exists.data.exists) {
+    await workspaceService.removeWorkspace(workspaceId);
+    return { success: false, error: 'Workspace has been moved or deleted' };
+  }
   createWindow(workspaceId);
   return { success: true };
 });

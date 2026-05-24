@@ -22,7 +22,6 @@ const closeTab = (e: Event | null, relPath: string) => {
     workspaceStore.saveWorkspaceMeta().catch(() => {})
     
     if (workspaceStore.activeFileRelativePath === relPath) {
-      // If we closed the active tab, switch to the adjacent one
       const nextTab = workspaceStore.openedFiles[idx] || workspaceStore.openedFiles[idx - 1]
       if (nextTab) {
         workspaceStore.setActiveFileRelative(nextTab)

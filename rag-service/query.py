@@ -9,29 +9,37 @@ from llama_index.core import (
 from llama_index.llms.ollama import Ollama
 from llama_index.embeddings.ollama import OllamaEmbedding
 
-from config import (
-    OLLAMA_BASE_URL,
-    LLM_MODEL,
-    EMBED_MODEL,
+from indexer import (
+    DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_VECTOR_STORE_PATH,
+    get_persist_dir,
+    has_index,
 )
-from indexer import get_persist_dir, has_index
 
 
-def init_settings():
+def init_settings(llm_model: str, embed_model: str, ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL):
     Settings.llm = Ollama(
-        model=LLM_MODEL,
-        base_url=OLLAMA_BASE_URL,
+        model=llm_model,
+        base_url=ollama_base_url,
         request_timeout=120.0,
+        context_window=4096
     )
 
     Settings.embed_model = OllamaEmbedding(
-        model_name=EMBED_MODEL,
-        base_url=OLLAMA_BASE_URL,
+        model_name=embed_model,
+        base_url=ollama_base_url,
     )
 
 
-def ask(workspace_path: str, question: str):
-    init_settings()
+def ask(
+    workspace_path: str,
+    question: str,
+    llm_model: str,
+    embed_model: str,
+    ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL,
+    vector_store_path: str = DEFAULT_VECTOR_STORE_PATH,
+):
+    init_settings(llm_model, embed_model, ollama_base_url)
 
     notes_dir = Path(workspace_path).expanduser().resolve()
     if not notes_dir.exists() or not notes_dir.is_dir():
@@ -40,8 +48,14 @@ def ask(workspace_path: str, question: str):
             "sources": [],
         }
 
-    persist_dir = get_persist_dir(str(notes_dir))
-    if not has_index(str(notes_dir)):
+    try:
+        persist_dir = get_persist_dir(str(notes_dir), vector_store_path)
+    except ValueError as exc:
+        return {
+            "answer": str(exc),
+            "sources": [],
+        }
+    if not has_index(str(notes_dir), vector_store_path):
         return {
             "answer": "当前还没有建立索引，请先索引笔记。",
             "sources": [],
@@ -100,17 +114,28 @@ def stream_event(event_type: str, **payload):
     ) + "\n"
 
 
-def ask_stream(workspace_path: str, question: str):
+def ask_stream(
+    workspace_path: str,
+    question: str,
+    llm_model: str,
+    embed_model: str,
+    ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL,
+    vector_store_path: str = DEFAULT_VECTOR_STORE_PATH,
+):
     try:
-        init_settings()
+        init_settings(llm_model, embed_model, ollama_base_url)
 
         notes_dir = Path(workspace_path).expanduser().resolve()
         if not notes_dir.exists() or not notes_dir.is_dir():
             yield stream_event("error", error="工作空间不存在或不是文件夹。")
             return
 
-        persist_dir = get_persist_dir(str(notes_dir))
-        if not has_index(str(notes_dir)):
+        try:
+            persist_dir = get_persist_dir(str(notes_dir), vector_store_path)
+        except ValueError as exc:
+            yield stream_event("error", error=str(exc))
+            return
+        if not has_index(str(notes_dir), vector_store_path):
             yield stream_event("error", error="当前还没有建立索引，请先索引笔记。")
             return
 

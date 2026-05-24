@@ -39,6 +39,13 @@ export interface AppSettings {
   inlineMenu: {
     items: string[]
   }
+  ai: {
+    provider: 'ollama'
+    ollamaBaseUrl: string
+    llmModel: string
+    embedModel: string
+    vectorStorePath: string
+  }
 }
 
 const rawIcon = (icon: Component) => markRaw(icon)
@@ -81,6 +88,13 @@ export const TABLE_ACTIONS: Record<TableMenuActionId, MenuAction> = {
 export const defaultAppSettings: AppSettings = {
   inlineMenu: {
     items: [...DEFAULT_INLINE_MENU_ACTION_IDS],
+  },
+  ai: {
+    provider: 'ollama',
+    ollamaBaseUrl: 'http://127.0.0.1:11434',
+    llmModel: 'qwen2.5:7b',
+    embedModel: 'bge-m3:latest',
+    vectorStorePath: '.looma/rag-index',
   },
 }
 
@@ -143,10 +157,29 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
   const items = inlineMenu && typeof inlineMenu === 'object'
     ? (inlineMenu as { items?: unknown }).items
     : undefined
+  const ai = (value as { ai?: unknown }).ai
+  const rawAi = ai && typeof ai === 'object'
+    ? ai as {
+      provider?: unknown
+      ollamaBaseUrl?: unknown
+      llmModel?: unknown
+      embedModel?: unknown
+      vectorStorePath?: unknown
+    }
+    : {}
+  const normalizeNonEmptyString = (raw: unknown, fallback: string) =>
+    typeof raw === 'string' && raw.trim() ? raw.trim() : fallback
 
   return {
     inlineMenu: {
       items: normalizeInlineMenuItems(items),
+    },
+    ai: {
+      provider: 'ollama',
+      ollamaBaseUrl: normalizeNonEmptyString(rawAi.ollamaBaseUrl, defaultAppSettings.ai.ollamaBaseUrl),
+      llmModel: normalizeNonEmptyString(rawAi.llmModel, defaultAppSettings.ai.llmModel),
+      embedModel: normalizeNonEmptyString(rawAi.embedModel, defaultAppSettings.ai.embedModel),
+      vectorStorePath: normalizeNonEmptyString(rawAi.vectorStorePath, defaultAppSettings.ai.vectorStorePath),
     },
   }
 }

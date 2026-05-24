@@ -6,6 +6,17 @@ type RagStreamEventPayload =
   | { requestId: string; type: 'sources'; sources: unknown[] }
   | { requestId: string; type: 'done' }
   | { requestId: string; type: 'error'; error: string };
+type OllamaDownloadProgressPayload = {
+  status: 'downloading' | 'completed' | 'error' | 'cancelled';
+  receivedBytes: number;
+  totalBytes?: number;
+  percent?: number;
+  error?: string;
+};
+type OllamaModelPullProgressPayload = OllamaDownloadProgressPayload & {
+  model: string;
+  message?: string;
+};
 
 contextBridge.exposeInMainWorld('electronAPI', {
   file: {
@@ -47,6 +58,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   appSettings: {
     get: () => ipcRenderer.invoke('appSettings:get'),
     set: (settings: unknown) => ipcRenderer.invoke('appSettings:set', settings),
+  },
+  ollama: {
+    listModels: (baseUrl: string) => ipcRenderer.invoke('ollama:listModels', baseUrl),
+    checkInstalled: (baseUrl: string) => ipcRenderer.invoke('ollama:checkInstalled', baseUrl),
+    downloadInstaller: () => ipcRenderer.invoke('ollama:downloadInstaller'),
+    cancelDownload: () => ipcRenderer.invoke('ollama:cancelDownload'),
+    pullModel: (baseUrl: string, model: string) => ipcRenderer.invoke('ollama:pullModel', baseUrl, model),
+    cancelPullModel: (model: string) => ipcRenderer.invoke('ollama:cancelPullModel', model),
+    deleteModel: (baseUrl: string, model: string) => ipcRenderer.invoke('ollama:deleteModel', baseUrl, model),
+    onDownloadProgress: (listener: (payload: OllamaDownloadProgressPayload) => void) => {
+      const handler = (_: unknown, payload: OllamaDownloadProgressPayload) => listener(payload);
+      ipcRenderer.on('ollama:downloadProgress', handler);
+      return () => ipcRenderer.removeListener('ollama:downloadProgress', handler);
+    },
+    onPullModelProgress: (listener: (payload: OllamaModelPullProgressPayload) => void) => {
+      const handler = (_: unknown, payload: OllamaModelPullProgressPayload) => listener(payload);
+      ipcRenderer.on('ollama:pullModelProgress', handler);
+      return () => ipcRenderer.removeListener('ollama:pullModelProgress', handler);
+    },
   },
   rag: {
     health: () => ipcRenderer.invoke('rag:health'),

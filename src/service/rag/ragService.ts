@@ -33,22 +33,37 @@ export type RagStreamEvent =
   | { type: 'done' }
   | { type: 'error'; error: string }
 
+export interface RagAiSettings {
+  llmModel: string
+  embedModel: string
+  ollamaBaseUrl: string
+  vectorStorePath: string
+}
+
 interface RAGService {
   health(): Promise<Result<{ status: string; service: string }>>
 
-  getIndexStatus(workspacePath: string): Promise<Result<RagIndexStatus>>
+  getIndexStatus(workspacePath: string, aiSettings: RagAiSettings): Promise<Result<RagIndexStatus>>
 
-  buildVectorIndex(workspacePath: string): Promise<Result<RagIndexResult>>
+  buildVectorIndex(workspacePath: string, aiSettings: RagAiSettings): Promise<Result<RagIndexResult>>
 
-  queryAssistant(workspacePath: string, question: string): Promise<Result<RagAnswer>>
+  queryAssistant(workspacePath: string, question: string, aiSettings: RagAiSettings): Promise<Result<RagAnswer>>
 
   streamAssistant(
     workspacePath: string,
     question: string,
+    aiSettings: RagAiSettings,
     onEvent: (event: RagStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<Result<void>>
 }
+
+const toAiRequestBody = (aiSettings: RagAiSettings) => ({
+  llm_model: aiSettings.llmModel,
+  embed_model: aiSettings.embedModel,
+  ollama_base_url: aiSettings.ollamaBaseUrl,
+  vector_store_path: aiSettings.vectorStorePath,
+})
 
 const postJson = async <T>(path: string, body: unknown): Promise<Result<T>> => {
   try {
@@ -80,15 +95,21 @@ export const ragService: RAGService = {
     }
   },
 
-  async getIndexStatus(workspacePath: string): Promise<Result<RagIndexStatus>> {
-    const result = await postJson<RagIndexStatus>('/index/status', { workspace_path: workspacePath })
+  async getIndexStatus(workspacePath: string, aiSettings: RagAiSettings): Promise<Result<RagIndexStatus>> {
+    const result = await postJson<RagIndexStatus>('/index/status', {
+      workspace_path: workspacePath,
+      vector_store_path: aiSettings.vectorStorePath,
+    })
     if (!result.success) return result
     if (result.data?.error) return { success: false, error: result.data.error }
     return result
   },
 
-  async buildVectorIndex(workspacePath: string): Promise<Result<RagIndexResult>> {
-    const result = await postJson<RagIndexResult>('/index', { workspace_path: workspacePath })    
+  async buildVectorIndex(workspacePath: string, aiSettings: RagAiSettings): Promise<Result<RagIndexResult>> {
+    const result = await postJson<RagIndexResult>('/index', {
+      workspace_path: workspacePath,
+      ...toAiRequestBody(aiSettings),
+    })
     if (!result.success) return result
     if (result.data?.status === 'error') return { success: false, error: result.data.error || '建立索引失败' }
     if (result.data?.document_count !== 0 && result.data?.exists !== true) {
@@ -102,13 +123,18 @@ export const ragService: RAGService = {
     return result
   },
 
-  async queryAssistant(workspacePath: string, question: string): Promise<Result<RagAnswer>> {
-    return postJson<RagAnswer>('/ask', { workspace_path: workspacePath, question })
+  async queryAssistant(workspacePath: string, question: string, aiSettings: RagAiSettings): Promise<Result<RagAnswer>> {
+    return postJson<RagAnswer>('/ask', {
+      workspace_path: workspacePath,
+      question,
+      ...toAiRequestBody(aiSettings),
+    })
   },
 
   async streamAssistant(
     workspacePath: string,
     question: string,
+    aiSettings: RagAiSettings,
     onEvent: (event: RagStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<Result<void>> {
@@ -116,7 +142,11 @@ export const ragService: RAGService = {
       const response = await fetch(`${RAG_BASE_URL}/ask/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspace_path: workspacePath, question }),
+        body: JSON.stringify({
+          workspace_path: workspacePath,
+          question,
+          ...toAiRequestBody(aiSettings),
+        }),
         signal,
       })
 
@@ -146,8 +176,6 @@ export const ragService: RAGService = {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        console.log(decoder.decode(value, { stream: true }));
-        
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''

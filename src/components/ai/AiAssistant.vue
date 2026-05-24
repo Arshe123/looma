@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Bot, Clipboard, Copy, History, Loader2, MessageSquare, Paperclip, Plus, RotateCcw, Send, Sparkles, Trash2, User } from 'lucide-vue-next'
+import { Bot, Clipboard, Copy, History, Loader2, MessageSquare, Paperclip, Plus, RotateCcw, Send, Settings, Sparkles, Trash2, User } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/store/workspace'
 import type { AiAssistantMessageAction } from '@/store/workspace'
 import AiMarkdown from './AiMarkdown.vue'
@@ -474,6 +474,14 @@ watch(activeConversationId, () => {
           </p>
         </div>
         <div class="flex shrink-0 items-center gap-1">
+          <button
+            class="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main"
+            type="button"
+            title="AI 设置"
+            @click="workspaceStore.openSettingsPage('ai')"
+          >
+            <Settings :size="16" />
+          </button>
           <button
             class="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main disabled:cursor-not-allowed disabled:text-text-subtle"
             type="button"

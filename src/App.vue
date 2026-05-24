@@ -2,14 +2,19 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useWorkspaceStore } from '@/store/workspace';
 import { useSettingsStore } from '@/store/settings';
+import { useOllamaStore } from '@/store/ollama';
+import { useDownloadsStore } from '@/store/downloads';
 import TopBar from '@/components/TopBar.vue';
 import InputDialog from '@/components/InputDialog.vue';
 import Sidebar from '@/components/Sidebar.vue';
 import MainContent from '@/components/MainContent.vue';
 import CommandPalette from '@/components/CommandPalette.vue';
+import AppMessages from '@/components/AppMessages.vue';
 
 const workspaceStore = useWorkspaceStore();
 const settingsStore = useSettingsStore();
+const ollamaStore = useOllamaStore();
+const downloadsStore = useDownloadsStore();
 
 const SIDEBAR_WIDTH_KEY = 'looma.sidebarWidth'
 const defaultSidebarWidth = 320
@@ -81,6 +86,8 @@ const startSidebarResize = (e: PointerEvent) => {
 onMounted(() => {
   workspaceStore.init();
   settingsStore.load();
+  ollamaStore.attachDownloadProgress();
+  ollamaStore.attachPullModelProgress();
   window.addEventListener('resize', onWindowResize)
 
   keyHandler = (e: KeyboardEvent) => {
@@ -117,6 +124,8 @@ onUnmounted(() => {
   keyHandler = null
   cleanupAppCommand?.()
   cleanupAppCommand = null
+  ollamaStore.dispose()
+  downloadsStore.dispose()
 })
 </script>
 
@@ -136,23 +145,6 @@ onUnmounted(() => {
     </div>
     <InputDialog />
     <CommandPalette />
-    <div v-if="workspaceStore.isBusy" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-panel text-text-main text-xs shadow-lg">
-      {{ workspaceStore.busyText || '处理中...' }}
-    </div>
-    <div v-if="workspaceStore.isWorkspaceTransitioning" class="fixed inset-0 z-40 bg-overlay flex items-center justify-center">
-      <div class="w-[420px] max-w-[92vw] rounded-xl bg-panel border border-border-soft shadow-2xl p-5 text-center">
-        <div class="mx-auto w-6 h-6 rounded-full border-2 border-border-soft border-t-accent animate-spin"></div>
-        <div class="mt-3 text-sm font-semibold text-text-main">Loading</div>
-        <div class="mt-1 text-xs text-text-muted">{{ workspaceStore.workspaceTransitionText || '处理中...' }}</div>
-      </div>
-    </div>
-    <div
-      v-if="workspaceStore.lastError"
-      class="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-[520px] z-50 pointer-events-auto px-4 py-3 rounded-lg bg-danger text-white text-sm shadow-lg flex items-center justify-between gap-3"
-      style="-webkit-app-region: no-drag"
-    >
-      <div>{{ workspaceStore.lastError }}</div>
-      <button class="shrink-0 px-3 py-1 rounded bg-white/20 hover:bg-white/30" @click="workspaceStore.clearError()">关闭</button>
-    </div>
+    <AppMessages />
   </div>
 </template>

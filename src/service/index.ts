@@ -10,7 +10,8 @@ import { fileSystemService, fileWatchService } from './file/fileSystemService';
 import { workspaceAiService } from './workspace/workspaceAiService';
 import { workspaceMetaService } from './workspace/workspaceMetaService';
 import { createAppSettingsService, makeAppSettingsPath } from './app/appSettingsService';
-import { ragService } from './rag/ragService';
+import { ragService, type RagAiSettings } from './rag/ragService';
+import { normalizeOllamaBaseUrl, ollamaService } from './ollama/ollamaService';
 
 app.setAppUserModelId('com.looma')
 app.setName('looma');
@@ -21,6 +22,21 @@ const __dirname = path.dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 const appSettingsService = createAppSettingsService(makeAppSettingsPath(app.getPath('appData')));
 const activeRagStreams = new Map<string, AbortController>();
+
+const normalizeVectorStorePath = (value: string) => {
+  return (value || '').trim() || '.looma/rag-index';
+};
+
+const getRagAiSettings = async (): Promise<RagAiSettings> => {
+  const result = await appSettingsService.getSettings();
+  const ai = result.success && result.data ? result.data.ai : undefined;
+  return {
+    ollamaBaseUrl: normalizeOllamaBaseUrl(ai?.ollamaBaseUrl ?? ''),
+    llmModel: ai?.llmModel || 'qwen2.5:7b',
+    embedModel: ai?.embedModel || 'bge-m3:latest',
+    vectorStorePath: normalizeVectorStorePath(ai?.vectorStorePath ?? ''),
+  };
+};
 
 const getWindowFromEvent = (event: IpcMainInvokeEvent) => {
   return BrowserWindow.fromWebContents(event.sender) ?? null;
@@ -271,6 +287,34 @@ ipcMain.handle('appSettings:set', async (_, settings: any) => {
   return await appSettingsService.setSettings(settings);
 });
 
+ipcMain.handle('ollama:listModels', async (_, baseUrl: string) => {
+  return await ollamaService.listModels(baseUrl);
+});
+
+ipcMain.handle('ollama:checkInstalled', async (_, baseUrl: string) => {
+  return await ollamaService.checkInstalled(baseUrl);
+});
+
+ipcMain.handle('ollama:downloadInstaller', async (event) => {
+  return await ollamaService.downloadInstaller(event);
+});
+
+ipcMain.handle('ollama:cancelDownload', async () => {
+  return await ollamaService.cancelDownload();
+});
+
+ipcMain.handle('ollama:pullModel', async (event, baseUrl: string, model: string) => {
+  return await ollamaService.pullModel(event, baseUrl, model);
+});
+
+ipcMain.handle('ollama:cancelPullModel', async (_, model: string) => {
+  return await ollamaService.cancelPullModel(model);
+});
+
+ipcMain.handle('ollama:deleteModel', async (_, baseUrl: string, model: string) => {
+  return await ollamaService.deleteModel(baseUrl, model);
+});
+
 // Workspace Meta IPC (simplified version for now)
 ipcMain.handle('workspace:selectDir', async () => {
   const result = await dialog.showOpenDialog({
@@ -374,20 +418,20 @@ ipcMain.handle('rag:health', async () => {
 ipcMain.handle('rag:status', async (_, workspaceId: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
-  return await ragService.getIndexStatus(workspacePath);
+  return await ragService.getIndexStatus(workspacePath, await getRagAiSettings());
 });
 
 ipcMain.handle('rag:index', async (_, workspaceId: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
-  return await ragService.buildVectorIndex(workspacePath);
+  return await ragService.buildVectorIndex(workspacePath, await getRagAiSettings());
 });
 
 ipcMain.handle('rag:ask', async (_, workspaceId: string, question: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
   if (!question.trim()) return { success: false, error: 'Question is required' };
-  return await ragService.queryAssistant(workspacePath, question);
+  return await ragService.queryAssistant(workspacePath, question, await getRagAiSettings());
 });
 
 ipcMain.handle('rag:askStream:start', async (event, requestId: string, workspaceId: string, question: string) => {
@@ -404,6 +448,7 @@ ipcMain.handle('rag:askStream:start', async (event, requestId: string, workspace
     .streamAssistant(
       workspacePath,
       question,
+      await getRagAiSettings(),
       (payload) => {
         if (sender.isDestroyed()) return;
         sender.send('rag:askStream:event', { requestId, ...payload });

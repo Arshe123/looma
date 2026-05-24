@@ -16,6 +16,7 @@ export const useSettingsStore = defineStore('settings', {
 
   getters: {
     inlineMenuItems: (state) => state.settings.inlineMenu.items,
+    aiSettings: (state) => state.settings.ai,
   },
 
   actions: {
@@ -78,6 +79,18 @@ export const useSettingsStore = defineStore('settings', {
 
     async resetInlineMenu() {
       this.settings.inlineMenu.items = defaultInlineMenuItems()
+      await this.persist()
+    },
+
+    async setAiSettings(next: Partial<AppSettings['ai']>) {
+      this.settings.ai = normalizeAppSettings({
+        ...this.settings,
+        ai: {
+          ...this.settings.ai,
+          ...next,
+          provider: 'ollama',
+        },
+      }).ai
       await this.persist()
     },
   },

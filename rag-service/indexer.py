@@ -9,7 +9,8 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.llms.ollama import Ollama
 from llama_index.embeddings.ollama import OllamaEmbedding
 
-from config import OLLAMA_BASE_URL, LLM_MODEL, EMBED_MODEL
+DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
+DEFAULT_VECTOR_STORE_PATH = ".looma/rag-index"
 
 REQUIRED_INDEX_FILES = {
     "index_store.json",
@@ -18,16 +19,16 @@ REQUIRED_INDEX_FILES = {
 }
 
 
-def init_settings():
+def init_settings(llm_model: str, embed_model: str, ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL):
     Settings.llm = Ollama(
-        model=LLM_MODEL,
-        base_url=OLLAMA_BASE_URL,
+        model=llm_model,
+        base_url=ollama_base_url,
         request_timeout=120.0,
     )
 
     Settings.embed_model = OllamaEmbedding(
-        model_name=EMBED_MODEL,
-        base_url=OLLAMA_BASE_URL,
+        model_name=embed_model,
+        base_url=ollama_base_url,
     )
 
     Settings.node_parser = SentenceSplitter(
@@ -36,22 +37,37 @@ def init_settings():
     )
 
 
-def get_persist_dir(workspace_path: str) -> Path:
+def get_persist_dir(workspace_path: str, vector_store_path: str = DEFAULT_VECTOR_STORE_PATH) -> Path:
     resolved = Path(workspace_path).expanduser().resolve()
-    return resolved / ".looma" / "rag-index"
+    raw_path = (vector_store_path or DEFAULT_VECTOR_STORE_PATH).strip()
+    relative_path = Path(raw_path)
+    if relative_path.is_absolute():
+        raise ValueError("向量存储路径必须是相对于工作空间的路径。")
+    persist_dir = (resolved / relative_path).resolve()
+    try:
+        persist_dir.relative_to(resolved)
+    except ValueError as exc:
+        raise ValueError("向量存储路径不能指向工作空间外。") from exc
+    return persist_dir
 
 
-def has_index(workspace_path: str) -> bool:
-    persist_dir = get_persist_dir(workspace_path)
+def has_index(workspace_path: str, vector_store_path: str = DEFAULT_VECTOR_STORE_PATH) -> bool:
+    persist_dir = get_persist_dir(workspace_path, vector_store_path)
     return persist_dir.is_dir() and all(
         (persist_dir / filename).is_file()
         for filename in REQUIRED_INDEX_FILES
     )
 
 
-def get_index_status(workspace_path: str):
+def get_index_status(workspace_path: str, vector_store_path: str = DEFAULT_VECTOR_STORE_PATH):
     notes_dir = Path(workspace_path).expanduser().resolve()
-    persist_dir = get_persist_dir(str(notes_dir))
+    try:
+        persist_dir = get_persist_dir(str(notes_dir), vector_store_path)
+    except ValueError as exc:
+        return {
+            "exists": False,
+            "error": str(exc),
+        }
     if not notes_dir.exists() or not notes_dir.is_dir():
         return {
             "exists": False,
@@ -60,7 +76,7 @@ def get_index_status(workspace_path: str):
         }
 
     return {
-        "exists": has_index(str(notes_dir)),
+        "exists": has_index(str(notes_dir), vector_store_path),
         "persist_dir": str(persist_dir),
     }
 
@@ -82,12 +98,26 @@ def collect_indexable_files(notes_dir: Path):
     return files
 
 
-def build_index(workspace_path: str):
-    init_settings()
-
+def build_index(
+    workspace_path: str,
+    llm_model: str,
+    embed_model: str,
+    ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL,
+    vector_store_path: str = DEFAULT_VECTOR_STORE_PATH,
+):
     notes_dir = Path(workspace_path).expanduser().resolve()
     print(notes_dir)
-    persist_dir = get_persist_dir(str(notes_dir))
+    try:
+        persist_dir = get_persist_dir(str(notes_dir), vector_store_path)
+    except ValueError as exc:
+        return {
+            "status": "error",
+            "exists": False,
+            "error": str(exc),
+        }
+
+    init_settings(llm_model, embed_model, ollama_base_url)
+
     if not notes_dir.exists() or not notes_dir.is_dir():
         return {
             "status": "error",
@@ -119,7 +149,7 @@ def build_index(workspace_path: str):
 
     persist_dir.mkdir(parents=True, exist_ok=True)
     index.storage_context.persist(persist_dir=str(persist_dir))
-    exists = has_index(str(notes_dir))
+    exists = has_index(str(notes_dir), vector_store_path)
     if not exists:
         return {
             "status": "error",

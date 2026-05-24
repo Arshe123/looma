@@ -20,8 +20,8 @@ import { executeRedoAction, executeUndoAction, type HistoryEffects } from './wor
 import {
   buildWorkspaceMetaPayload,
 } from './workspace-meta-utils'
-import type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantState, EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SidebarPanelId, SystemPageId, ThemeName, UndoAction, Workspace } from './workspace-types'
-export type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SidebarPanelId, SidebarPanelState, SystemPageId, ThemeName, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
+import type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantState, EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SystemPageId, ThemeName, UndoAction, Workspace } from './workspace-types'
+export type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, ThemeName, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
 let systemThemeCleanup: (() => void) | null = null
@@ -199,6 +199,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     openedFiles: [] as string[],
     openedSystemPages: [] as SystemPageId[],
     activeSystemPage: null as SystemPageId | null,
+    activeSettingsSection: 'appearance' as SettingsSectionId,
     activeSidebarPanel: DEFAULT_ACTIVE_SIDEBAR_PANEL as SidebarPanelId | null,
     aiAssistant: createDefaultAiAssistantState() as AiAssistantState,
     fileSessions: {} as Record<string, EditorSession>,
@@ -518,10 +519,11 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeFileSaveError = ''
     },
 
-    openSettingsPage() {
+    openSettingsPage(section: SettingsSectionId = 'appearance') {
       if (!this.openedSystemPages.includes('settings')) {
         this.openedSystemPages.push('settings')
       }
+      this.activeSettingsSection = section
       this.activeSystemPage = 'settings'
       this.resetActiveFileState()
     },

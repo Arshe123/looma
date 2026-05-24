@@ -54,6 +54,13 @@ interface AppSettingsPayload {
   inlineMenu: {
     items: string[];
   };
+  ai: {
+    provider: 'ollama';
+    ollamaBaseUrl: string;
+    llmModel: string;
+    embedModel: string;
+    vectorStorePath: string;
+  };
 }
 
 interface RagSourcePayload {
@@ -86,6 +93,19 @@ type RagStreamEventPayload =
   | { requestId: string; type: 'sources'; sources: RagSourcePayload[] }
   | { requestId: string; type: 'done' }
   | { requestId: string; type: 'error'; error: string };
+
+interface OllamaDownloadProgressPayload {
+  status: 'downloading' | 'completed' | 'error' | 'cancelled';
+  receivedBytes: number;
+  totalBytes?: number;
+  percent?: number;
+  error?: string;
+}
+
+interface OllamaModelPullProgressPayload extends OllamaDownloadProgressPayload {
+  model: string;
+  message?: string;
+}
 
 interface ElectronAPI {
   file: {
@@ -126,6 +146,17 @@ interface ElectronAPI {
   appSettings: {
     get: () => Promise<Result<AppSettingsPayload>>;
     set: (settings: AppSettingsPayload) => Promise<Result<void>>;
+  };
+  ollama: {
+    listModels: (baseUrl: string) => Promise<Result<{ models: string[] }>>;
+    checkInstalled: (baseUrl: string) => Promise<Result<{ installed: boolean; version?: string }>>;
+    downloadInstaller: () => Promise<Result<{ installerPath: string }>>;
+    cancelDownload: () => Promise<Result<void>>;
+    pullModel: (baseUrl: string, model: string) => Promise<Result<void>>;
+    cancelPullModel: (model: string) => Promise<Result<void>>;
+    deleteModel: (baseUrl: string, model: string) => Promise<Result<void>>;
+    onDownloadProgress: (listener: (payload: OllamaDownloadProgressPayload) => void) => () => void;
+    onPullModelProgress: (listener: (payload: OllamaModelPullProgressPayload) => void) => () => void;
   };
   rag: {
     health: () => Promise<Result<{ status: string; service: string }>>;

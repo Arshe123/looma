@@ -2,13 +2,13 @@ import type { MarkdownOutlineItem } from '@/common/interface/MarkdownOutlineItem
 import { appendTreeGuides } from './tree-row-guides'
 import type { TreeGuide } from '@/common/type/TreeGuide'
 
-type OutlineTreeNode = {
+export type OutlineTreeNode = {
   item: MarkdownOutlineItem
   children: OutlineTreeNode[]
   depth: number
 }
 
-type OutlineFlatRow = {
+export type OutlineFlatRow = {
   item: MarkdownOutlineItem
   children: OutlineTreeNode[]
   depth: number

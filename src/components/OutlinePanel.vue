@@ -1,44 +1,128 @@
 <script setup lang="ts">
 import { ChevronRight } from 'lucide-vue-next'
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useWorkspaceStore } from '../store/workspace'
-import { parseMarkdownOutline } from '@/common/util/markdown-outline'
 import type { MarkdownOutlineItem } from '@/common/interface/MarkdownOutlineItem'
-import { buildOutlineTree, flattenOutlineTree } from '@/common/util/outline-tree'
+import type { OutlineFlatRow } from '@/common/util/outline-tree'
 
 const workspaceStore = useWorkspaceStore()
 const expandedHeadingIds = ref(new Set<string>())
 const knownHeadingIds = ref(new Set<string>())
 const lastActivePath = ref('')
+const outlineItems = ref<MarkdownOutlineItem[]>([])
+const visibleRows = ref<OutlineFlatRow[]>([])
+const isOutlineLoading = ref(false)
+const outlineError = ref('')
+let outlineWorker: Worker | null = null
+let activeRequestId = 0
 
 const isMarkdownActive = computed(() => workspaceStore.activeFileRelativePath.toLowerCase().endsWith('.md'))
-const outlineItems = computed(() => {
-  if (!isMarkdownActive.value) return []
-  return parseMarkdownOutline(workspaceStore.activeFileContent)
-})
-const outlineTree = computed(() => buildOutlineTree(outlineItems.value))
-const visibleRows = computed(() => flattenOutlineTree(outlineTree.value, expandedHeadingIds.value))
 
-watch(
-  () => [workspaceStore.activeFileRelativePath, outlineItems.value] as const,
-  ([activePath, items]) => {
-    const ids = new Set(items.map((item) => item.id))
-    if (activePath !== lastActivePath.value) {
-      expandedHeadingIds.value = ids
-      knownHeadingIds.value = ids
-      lastActivePath.value = activePath
+type MarkdownOutlineWorkerSuccess = {
+  requestId: number
+  success: true
+  items: MarkdownOutlineItem[]
+  visibleRows: OutlineFlatRow[]
+  expandedIds: string[]
+  knownIds: string[]
+}
+
+type MarkdownOutlineWorkerFailure = {
+  requestId: number
+  success: false
+  error: string
+}
+
+type MarkdownOutlineWorkerResponse = MarkdownOutlineWorkerSuccess | MarkdownOutlineWorkerFailure
+
+const resetOutlineState = () => {
+  outlineItems.value = []
+  visibleRows.value = []
+  expandedHeadingIds.value = new Set()
+  knownHeadingIds.value = new Set()
+  outlineError.value = ''
+  isOutlineLoading.value = false
+}
+
+const ensureOutlineWorker = () => {
+  if (outlineWorker) return outlineWorker
+  if (typeof Worker === 'undefined') return null
+
+  outlineWorker = new Worker(new URL('../workers/markdown-outline.worker.ts', import.meta.url), { type: 'module' })
+  outlineWorker.onmessage = (event: MessageEvent<MarkdownOutlineWorkerResponse>) => {
+    const response = event.data
+    if (response.requestId !== activeRequestId) return
+
+    isOutlineLoading.value = false
+    if (response.success === false) {
+      outlineError.value = response.error
+      outlineItems.value = []
+      visibleRows.value = []
       return
     }
 
-    const nextExpanded = new Set([...expandedHeadingIds.value].filter((id) => ids.has(id)))
-    ids.forEach((id) => {
-      if (!knownHeadingIds.value.has(id)) nextExpanded.add(id)
-    })
-    expandedHeadingIds.value = nextExpanded
-    knownHeadingIds.value = ids
+    outlineError.value = ''
+    outlineItems.value = response.items
+    visibleRows.value = response.visibleRows
+    expandedHeadingIds.value = new Set(response.expandedIds)
+    knownHeadingIds.value = new Set(response.knownIds)
+  }
+  outlineWorker.onerror = (event) => {
+    isOutlineLoading.value = false
+    outlineError.value = event.message || '大纲生成失败。'
+    outlineItems.value = []
+    visibleRows.value = []
+  }
+
+  return outlineWorker
+}
+
+const requestOutline = (content: string, resetExpansion: boolean) => {
+  const worker = ensureOutlineWorker()
+  const requestId = activeRequestId + 1
+  activeRequestId = requestId
+  outlineError.value = ''
+  isOutlineLoading.value = true
+
+  if (resetExpansion) {
+    outlineItems.value = []
+    visibleRows.value = []
+    expandedHeadingIds.value = new Set()
+    knownHeadingIds.value = new Set()
+  }
+
+  worker?.postMessage({
+    requestId,
+    content,
+    expandedIds: Array.from(expandedHeadingIds.value),
+    knownIds: Array.from(knownHeadingIds.value),
+    resetExpansion,
+  })
+}
+
+watch(
+  () => [workspaceStore.activeFileRelativePath, workspaceStore.activeFileContent] as const,
+  ([activePath, content]) => {
+    activeRequestId += 1
+
+    if (!activePath.toLowerCase().endsWith('.md')) {
+      lastActivePath.value = activePath
+      resetOutlineState()
+      return
+    }
+
+    const resetExpansion = activePath !== lastActivePath.value
+    lastActivePath.value = activePath
+    requestOutline(content, resetExpansion)
   },
   { immediate: true },
 )
+
+onBeforeUnmount(() => {
+  activeRequestId += 1
+  outlineWorker?.terminate()
+  outlineWorker = null
+})
 
 const isExpanded = (id: string) => expandedHeadingIds.value.has(id)
 
@@ -50,6 +134,7 @@ const toggleHeading = (id: string) => {
     nextExpanded.add(id)
   }
   expandedHeadingIds.value = nextExpanded
+  requestOutline(workspaceStore.activeFileContent, false)
 }
 
 const jumpToHeading = (item: MarkdownOutlineItem) => {
@@ -66,6 +151,12 @@ const jumpToHeading = (item: MarkdownOutlineItem) => {
     <div class="min-h-0 flex-1 overflow-hidden">
       <div v-if="!isMarkdownActive" class="h-full p-4 text-sm text-text-muted">
         大纲仅支持 Markdown 文件。
+      </div>
+      <div v-else-if="isOutlineLoading && outlineItems.length === 0" class="h-full p-4 text-sm text-text-muted">
+        大纲加载中...
+      </div>
+      <div v-else-if="outlineError" class="h-full p-4 text-sm text-text-muted">
+        {{ outlineError }}
       </div>
       <div v-else-if="outlineItems.length === 0" class="h-full p-4 text-sm text-text-muted">
         当前 Markdown 文件暂无标题。

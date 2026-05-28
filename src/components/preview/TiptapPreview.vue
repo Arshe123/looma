@@ -18,6 +18,7 @@ import InlineMenu from './InlineMenu.vue'
 import ContextMenu from './ContextMenu.vue'
 import TableToolbar from './TableToolbar.vue'
 import CodeBlockView from './CodeBlockView.vue'
+import LocalImageView from './LocalImageView.vue'
 import type { MarkdownOutlineItem } from '@/common/interface/MarkdownOutlineItem'
 import { replaceExternalMarkdownContent } from '@/common/util/tiptap-content-sync'
 import { destroyTiptapEditorSafely } from '@/common/util/tiptap-editor-lifecycle'
@@ -31,6 +32,8 @@ import type { ScrollSyncState } from '@/common/type/ScrollSyncState'
 
 const props = defineProps<{
   content: string
+  filePath: string
+  relativeFilePath: string
 }>()
 
 const emit = defineEmits<{
@@ -49,6 +52,138 @@ const CodeBlockWithHeader = CodeBlockLowlight.extend({
     return VueNodeViewRenderer(CodeBlockView)
   },
 })
+
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
+const resolvedImageCache = new Map<string, string | null>()
+
+const LocalImage = Image.extend({
+  addStorage() {
+    return {
+      resolveImageSrc,
+      markdown: {
+        parse: {
+          setup(markdown: any) {
+            const validateLink = markdown.validateLink.bind(markdown)
+            markdown.validateLink = (url: string) => {
+              const protocol = url.trim().toLowerCase().match(/^([a-z][a-z0-9+.-]*):/)?.[1]
+              if (protocol === 'file') return true
+              if (protocol === 'javascript' || protocol === 'vbscript') return false
+              return validateLink(url)
+            }
+          },
+        },
+      },
+    }
+  },
+
+  addNodeView() {
+    return VueNodeViewRenderer(LocalImageView)
+  },
+})
+
+const isPassThroughImageSrc = (src: string) => /^(https?:|data:|blob:)/i.test(src.trim())
+
+const getPathSep = (path: string) => path.includes('\\') ? '\\' : '/'
+
+const getImageExt = (path: string) => {
+  const cleanPath = path.split(/[?#]/, 1)[0]
+  const base = cleanPath.split(/[\\/]/).pop() || ''
+  const idx = base.lastIndexOf('.')
+  return idx === -1 ? '' : base.slice(idx + 1).toLowerCase()
+}
+
+const isSupportedImagePath = (path: string) => IMAGE_EXTS.has(getImageExt(path))
+
+const isWindowsAbsolutePath = (path: string) => /^[a-zA-Z]:[\\/]/.test(path)
+const isUncPath = (path: string) => /^\\\\[^\\]+\\[^\\]+/.test(path)
+
+const decodeMarkdownImageSrc = (src: string) => {
+  const raw = src.trim()
+  if (isPassThroughImageSrc(raw)) return raw
+
+  try {
+    return decodeURIComponent(raw)
+  } catch (error) {
+    return raw.replace(/%5[cC]/g, '\\').replace(/%20/g, ' ')
+  }
+}
+
+const decodeFileUrlPath = (src: string) => {
+  try {
+    const url = new URL(src)
+    let pathname = decodeURIComponent(url.pathname)
+    if (url.hostname) {
+      return `\\\\${url.hostname}${pathname.split('/').join('\\')}`
+    }
+    if (/^\/[a-zA-Z]:\//.test(pathname)) pathname = pathname.slice(1)
+    return pathname.split('/').join(getPathSep(props.filePath || pathname))
+  } catch (error) {
+    return ''
+  }
+}
+
+const normalizeNativePath = (path: string, sep = getPathSep(path)) => {
+  const normalizedSepPath = path.split(/[\\/]+/).join(sep)
+  const driveMatch = normalizedSepPath.match(/^[a-zA-Z]:[\\/]/)
+  const prefix = driveMatch ? normalizedSepPath.slice(0, 3) : normalizedSepPath.startsWith(sep) ? sep : ''
+  const rest = prefix ? normalizedSepPath.slice(prefix.length) : normalizedSepPath
+  const parts: string[] = []
+
+  for (const part of rest.split(sep)) {
+    if (!part || part === '.') continue
+    if (part === '..') {
+      if (parts.length > 0) parts.pop()
+      continue
+    }
+    parts.push(part)
+  }
+
+  if (!prefix) return parts.join(sep)
+  return prefix.endsWith(sep) ? prefix + parts.join(sep) : [prefix, ...parts].join(sep)
+}
+
+const getNativeDir = (path: string) => {
+  const sep = getPathSep(path)
+  const normalized = normalizeNativePath(path, sep)
+  const idx = normalized.lastIndexOf(sep)
+  if (idx === -1) return ''
+  if (idx === 2 && /^[a-zA-Z]:$/.test(normalized.slice(0, 2))) return normalized.slice(0, idx + 1)
+  return normalized.slice(0, idx)
+}
+
+const joinNativePath = (base: string, relativePath: string) => {
+  const sep = getPathSep(base)
+  const cleanBase = base.endsWith(sep) ? base.slice(0, -1) : base
+  const cleanRelative = relativePath.replace(/^\.?[\\/]+/, '').split(/[\\/]+/).join(sep)
+  return normalizeNativePath(`${cleanBase}${sep}${cleanRelative}`, sep)
+}
+
+const resolveLocalImagePath = (src: string) => {
+  const raw = decodeMarkdownImageSrc(src)
+  if (!raw) return ''
+  if (/^file:/i.test(raw)) return decodeFileUrlPath(raw)
+  if (isWindowsAbsolutePath(raw) || isUncPath(raw)) return normalizeNativePath(raw, getPathSep(raw))
+
+  const currentDir = getNativeDir(props.filePath || '')
+  return currentDir ? joinNativePath(currentDir, raw.replace(/^\/+/, '')) : ''
+}
+
+async function resolveImageSrc(src: string) {
+  const raw = decodeMarkdownImageSrc(src)
+  if (isPassThroughImageSrc(raw)) return raw
+
+  const localPath = resolveLocalImagePath(raw)
+  if (!localPath || !isSupportedImagePath(localPath)) return null
+
+  const cacheKey = localPath
+  if (resolvedImageCache.has(cacheKey)) return resolvedImageCache.get(cacheKey) || null
+
+  const result = await window.electronAPI.file.readFileBase64(localPath)
+  if (!result.success || !result.data) return null
+
+  resolvedImageCache.set(cacheKey, result.data)
+  return result.data
+}
 
 const getScrollableBlocks = () => {
   const container = previewContainerRef.value
@@ -161,7 +296,7 @@ onMounted(() => {
       TableRow,
       TableHeader,
       TableCell,
-      Image.configure({
+      LocalImage.configure({
         inline: false,
         allowBase64: true,
       }),

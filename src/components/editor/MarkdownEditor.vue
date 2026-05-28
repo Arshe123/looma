@@ -187,6 +187,8 @@ defineExpose({
       <TiptapPreview
         ref="previewRef"
         :content="props.content"
+        :filePath="props.filePath"
+        :relativeFilePath="props.relativeFilePath"
         @update:content="(v) => emit('update:content', v)"
       />
     </div>

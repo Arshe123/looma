@@ -43,10 +43,14 @@ const emit = defineEmits<{
 let isUpdatingFromExternal = false
 let lastEmittedContent = ''
 let isUnmounting = false
+let pendingHeadingTarget: MarkdownOutlineItem | null = null
+let pendingHeadingClearTimer: number | null = null
 
 const editor = shallowRef<Editor | null>(null)
 const previewContainerRef = shallowRef<HTMLElement | null>(null)
 const lowlight = createLowlight(common)
+const PREVIEW_IMAGE_SETTLED_EVENT = 'looma:preview-image-settled'
+const HEADING_REANCHOR_WINDOW_MS = 1000
 const CodeBlockWithHeader = CodeBlockLowlight.extend({
   addNodeView() {
     return VueNodeViewRenderer(CodeBlockView)
@@ -272,6 +276,42 @@ const applyPreviewScrollState = (state: ScrollSyncState) => {
   setScrollRatio(container, state.ratio)
 }
 
+const clearPendingHeadingTarget = () => {
+  pendingHeadingTarget = null
+  if (pendingHeadingClearTimer) {
+    window.clearTimeout(pendingHeadingClearTimer)
+    pendingHeadingClearTimer = null
+  }
+}
+
+const rememberHeadingTarget = (target: MarkdownOutlineItem) => {
+  pendingHeadingTarget = target
+  if (pendingHeadingClearTimer) window.clearTimeout(pendingHeadingClearTimer)
+  pendingHeadingClearTimer = window.setTimeout(() => {
+    pendingHeadingTarget = null
+    pendingHeadingClearTimer = null
+  }, HEADING_REANCHOR_WINDOW_MS)
+}
+
+const scrollToHeadingTarget = (target: MarkdownOutlineItem, behavior: ScrollBehavior) => {
+  const container = previewContainerRef.value
+  if (!container) return false
+  const headings = Array.from(container.querySelectorAll<HTMLElement>('.tiptap h1, .tiptap h2, .tiptap h3, .tiptap h4, .tiptap h5, .tiptap h6'))
+  const heading = headings[target.index]
+  if (!heading) return false
+  heading.scrollIntoView({ block: 'start', behavior })
+  return true
+}
+
+const reanchorPendingHeading = () => {
+  const target = pendingHeadingTarget
+  if (!target) return
+  requestAnimationFrame(() => {
+    if (pendingHeadingTarget !== target) return
+    scrollToHeadingTarget(target, 'auto')
+  })
+}
+
 onMounted(() => {
   editor.value = new Editor({
     extensions: [
@@ -325,10 +365,14 @@ onMounted(() => {
       emit('update:content', markdown)
     },
   })
+
+  previewContainerRef.value?.addEventListener(PREVIEW_IMAGE_SETTLED_EVENT, reanchorPendingHeading)
 })
 
 onBeforeUnmount(() => {
   isUnmounting = true
+  previewContainerRef.value?.removeEventListener(PREVIEW_IMAGE_SETTLED_EVENT, reanchorPendingHeading)
+  clearPendingHeadingTarget()
   const currentEditor = editor.value
   editor.value = null
   destroyTiptapEditorSafely(currentEditor)
@@ -360,12 +404,7 @@ watch(
 
 defineExpose({
   scrollToHeading(target: MarkdownOutlineItem) {
-    const container = previewContainerRef.value
-    if (!container) return
-    const headings = Array.from(container.querySelectorAll<HTMLElement>('.tiptap h1, .tiptap h2, .tiptap h3, .tiptap h4, .tiptap h5, .tiptap h6'))
-    const heading = headings[target.index]
-    if (!heading) return
-    heading.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    if (scrollToHeadingTarget(target, 'smooth')) rememberHeadingTarget(target)
   },
   getScrollState() {
     return getPreviewScrollState()

@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { NodeViewWrapper, nodeViewProps } from '@tiptap/vue-3'
 
 const props = defineProps(nodeViewProps)
 
 type ImageLoadState = 'idle' | 'loading' | 'ready' | 'failed'
+const PREVIEW_IMAGE_SETTLED_EVENT = 'looma:preview-image-settled'
 
 const renderedSrc = ref('')
 const loadState = ref<ImageLoadState>('idle')
+const wrapperRef = ref<any | null>(null)
 let resolveRunId = 0
 
 const originalSrc = computed(() => (
@@ -25,12 +27,29 @@ const titleText = computed(() => (
 const width = computed(() => props.node.attrs.width ?? undefined)
 const height = computed(() => props.node.attrs.height ?? undefined)
 
+const getWrapperElement = () => {
+  const value = wrapperRef.value
+  return (value?.$el || value) as HTMLElement | null
+}
+
+const notifyImageSettled = () => {
+  nextTick(() => {
+    const element = getWrapperElement()
+    if (!element) return
+    element.dispatchEvent(new CustomEvent(PREVIEW_IMAGE_SETTLED_EVENT, {
+      bubbles: true,
+      composed: true,
+    }))
+  })
+}
+
 const resolveImage = async (src: string) => {
   const runId = ++resolveRunId
   renderedSrc.value = ''
 
   if (!src.trim()) {
     loadState.value = 'failed'
+    notifyImageSettled()
     return
   }
 
@@ -56,6 +75,7 @@ const resolveImage = async (src: string) => {
     if (!nextSrc) {
       loadState.value = 'failed'
       renderedSrc.value = ''
+      notifyImageSettled()
       return
     }
 
@@ -65,7 +85,17 @@ const resolveImage = async (src: string) => {
     if (runId !== resolveRunId) return
     renderedSrc.value = ''
     loadState.value = 'failed'
+    notifyImageSettled()
   }
+}
+
+const handleImageLoad = () => {
+  notifyImageSettled()
+}
+
+const handleImageError = () => {
+  loadState.value = 'failed'
+  notifyImageSettled()
 }
 
 watch(originalSrc, (src) => {
@@ -81,7 +111,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <NodeViewWrapper class="local-image-node" contenteditable="false">
+  <NodeViewWrapper ref="wrapperRef" class="local-image-node" contenteditable="false">
     <img
       v-if="renderedSrc"
       :src="renderedSrc"
@@ -90,7 +120,8 @@ onBeforeUnmount(() => {
       :width="width"
       :height="height"
       draggable="true"
-      @error="loadState = 'failed'"
+      @load="handleImageLoad"
+      @error="handleImageError"
     >
     <div v-else class="local-image-placeholder" :class="{ 'is-loading': loadState === 'loading' }">
       <span>{{ loadState === 'loading' ? '图片加载中...' : '无法加载图片' }}</span>

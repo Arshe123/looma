@@ -130,7 +130,8 @@ watch(viewMode, () => {
 watch(
   () => props.saveTrigger,
   () => {
-    emit('save', props.content)
+    const flushedContent = previewRef.value?.flushPendingMarkdownEmit?.()
+    emit('save', flushedContent ?? props.content)
   },
 )
 

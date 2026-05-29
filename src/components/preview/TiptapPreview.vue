@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { shallowRef, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { findChildren } from '@tiptap/core'
 import { Editor, EditorContent, VueNodeViewRenderer } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
+import { CodeBlock } from '@tiptap/extension-code-block'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -11,6 +12,10 @@ import Image from '@tiptap/extension-image'
 import { TableRow } from '@tiptap/extension-table-row'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableCell } from '@tiptap/extension-table-cell'
+import type { Node as ProsemirrorNode } from '@tiptap/pm/model'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import type { EditorState, Transaction } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { Markdown } from 'tiptap-markdown'
 import { common, createLowlight } from 'lowlight'
 import 'github-markdown-css/github-markdown-light.css'
@@ -43,6 +48,8 @@ const emit = defineEmits<{
 let isUpdatingFromExternal = false
 let lastEmittedContent = ''
 let isUnmounting = false
+let pendingMarkdownEmitTimer: number | null = null
+let pendingCodeHighlightTimer: number | null = null
 let pendingHeadingTarget: MarkdownOutlineItem | null = null
 let pendingHeadingClearTimer: number | null = null
 
@@ -51,9 +58,151 @@ const previewContainerRef = shallowRef<HTMLElement | null>(null)
 const lowlight = createLowlight(common)
 const PREVIEW_IMAGE_SETTLED_EVENT = 'looma:preview-image-settled'
 const HEADING_REANCHOR_WINDOW_MS = 1000
-const CodeBlockWithHeader = CodeBlockLowlight.extend({
+const MARKDOWN_EMIT_DEBOUNCE_MS = 150
+const CODE_HIGHLIGHT_IDLE_MS = 300
+const deferredLowlightKey = new PluginKey('loomaDeferredLowlight')
+
+type HighlightNode = {
+  value?: string
+  children?: HighlightNode[]
+  properties?: {
+    className?: string[]
+  }
+}
+
+type ParsedHighlightText = {
+  text: string
+  classes: string[]
+}
+
+const parseHighlightNodes = (nodes: HighlightNode[], className: string[] = []): ParsedHighlightText[] =>
+  nodes.flatMap((node) => {
+    const classes = [...className, ...(node.properties?.className || [])]
+    if (node.children) return parseHighlightNodes(node.children, classes)
+    return {
+      text: node.value || '',
+      classes,
+    }
+  })
+
+const getHighlightNodes = (result: any): HighlightNode[] => result.value || result.children || []
+
+const getCodeBlockDecorations = ({
+  doc,
+  name,
+  defaultLanguage,
+}: {
+  doc: ProsemirrorNode
+  name: string
+  defaultLanguage?: string | null
+}) => {
+  const decorations: Decoration[] = []
+  const languages = lowlight.listLanguages()
+
+  findChildren(doc, node => node.type.name === name).forEach((block) => {
+    let from = block.pos + 1
+    const language = block.node.attrs.language || defaultLanguage
+    const highlightedNodes = language && (languages.includes(language) || lowlight.registered?.(language))
+      ? getHighlightNodes(lowlight.highlight(language, block.node.textContent))
+      : getHighlightNodes(lowlight.highlightAuto(block.node.textContent))
+
+    parseHighlightNodes(highlightedNodes).forEach((node) => {
+      const to = from + node.text.length
+      if (node.classes.length) {
+        decorations.push(Decoration.inline(from, to, { class: node.classes.join(' ') }))
+      }
+      from = to
+    })
+  })
+
+  return DecorationSet.create(doc, decorations)
+}
+
+const isSelectionInNode = (state: EditorState, name: string) =>
+  state.selection.$head.parent.type.name === name
+
+const transactionContainsWholeCodeBlock = (
+  transaction: Transaction,
+  oldState: EditorState,
+  name: string,
+) => {
+  const oldNodes = findChildren(oldState.doc, node => node.type.name === name)
+  return transaction.steps.some((step) => {
+    const stepRange = step as unknown as { from?: number; to?: number }
+    if (stepRange.from === undefined || stepRange.to === undefined) return false
+    return oldNodes.some((node) => node.pos >= stepRange.from! && node.pos + node.node.nodeSize <= stepRange.to!)
+  })
+}
+
+const shouldRefreshCodeDecorations = (
+  transaction: Transaction,
+  oldState: EditorState,
+  newState: EditorState,
+  name: string,
+) => {
+  if (transaction.getMeta(deferredLowlightKey)?.force) return true
+  if (!transaction.docChanged) return false
+
+  const oldNodes = findChildren(oldState.doc, node => node.type.name === name)
+  const newNodes = findChildren(newState.doc, node => node.type.name === name)
+
+  return isSelectionInNode(oldState, name)
+    || isSelectionInNode(newState, name)
+    || newNodes.length !== oldNodes.length
+    || transactionContainsWholeCodeBlock(transaction, oldState, name)
+}
+
+const createDeferredLowlightPlugin = ({
+  name,
+  defaultLanguage,
+}: {
+  name: string
+  defaultLanguage?: string | null
+}) =>
+  new Plugin({
+    key: deferredLowlightKey,
+
+    state: {
+      init: (_, { doc }) => getCodeBlockDecorations({ doc, name, defaultLanguage }),
+      apply: (transaction, decorationSet, oldState, newState) => {
+        const forceRefresh = Boolean(transaction.getMeta(deferredLowlightKey)?.force)
+
+        if (forceRefresh) {
+          return getCodeBlockDecorations({ doc: transaction.doc, name, defaultLanguage })
+        }
+
+        if (shouldRefreshCodeDecorations(transaction, oldState, newState, name)) {
+          if (isSelectionInNode(oldState, name) || isSelectionInNode(newState, name)) {
+            return decorationSet.map(transaction.mapping, transaction.doc)
+          }
+
+          return getCodeBlockDecorations({ doc: transaction.doc, name, defaultLanguage })
+        }
+
+        return decorationSet.map(transaction.mapping, transaction.doc)
+      },
+    },
+
+    props: {
+      decorations(state) {
+        return deferredLowlightKey.getState(state)
+      },
+    },
+  })
+
+const CodeBlockWithHeader = CodeBlock.extend({
   addNodeView() {
     return VueNodeViewRenderer(CodeBlockView)
+  },
+
+  addProseMirrorPlugins() {
+    return [
+      ...(this.parent?.() || []),
+      createDeferredLowlightPlugin({
+        name: this.name,
+        defaultLanguage: this.options.defaultLanguage,
+      }),
+    ]
   },
 })
 
@@ -284,6 +433,50 @@ const clearPendingHeadingTarget = () => {
   }
 }
 
+const clearPendingMarkdownEmit = () => {
+  if (!pendingMarkdownEmitTimer) return
+  window.clearTimeout(pendingMarkdownEmitTimer)
+  pendingMarkdownEmitTimer = null
+}
+
+const emitCurrentMarkdown = () => {
+  clearPendingMarkdownEmit()
+  const currentEditor = editor.value
+  if (!currentEditor || isUnmounting || currentEditor.isDestroyed || isUpdatingFromExternal) return undefined
+
+  const markdown = (currentEditor.storage as any).markdown.getMarkdown()
+  if (markdown === lastEmittedContent) return markdown
+  lastEmittedContent = markdown
+  emit('update:content', markdown)
+  return markdown
+}
+
+const scheduleMarkdownEmit = () => {
+  clearPendingMarkdownEmit()
+  pendingMarkdownEmitTimer = window.setTimeout(() => {
+    pendingMarkdownEmitTimer = null
+    emitCurrentMarkdown()
+  }, MARKDOWN_EMIT_DEBOUNCE_MS)
+}
+
+const clearPendingCodeHighlight = () => {
+  if (!pendingCodeHighlightTimer) return
+  window.clearTimeout(pendingCodeHighlightTimer)
+  pendingCodeHighlightTimer = null
+}
+
+const selectionIsInCodeBlock = (currentEditor: any) =>
+  currentEditor.state.selection.$head.parent.type.name === CodeBlockWithHeader.name
+
+const scheduleCodeHighlightRefresh = (currentEditor: any) => {
+  clearPendingCodeHighlight()
+  pendingCodeHighlightTimer = window.setTimeout(() => {
+    pendingCodeHighlightTimer = null
+    if (isUnmounting || currentEditor.isDestroyed) return
+    currentEditor.view.dispatch(currentEditor.state.tr.setMeta(deferredLowlightKey, { force: true }))
+  }, CODE_HIGHLIGHT_IDLE_MS)
+}
+
 const rememberHeadingTarget = (target: MarkdownOutlineItem) => {
   pendingHeadingTarget = target
   if (pendingHeadingClearTimer) window.clearTimeout(pendingHeadingClearTimer)
@@ -321,7 +514,6 @@ onMounted(() => {
         orderedList: { keepMarks: true, keepAttributes: false },
       }),
       CodeBlockWithHeader.configure({
-        lowlight,
         exitOnTripleEnter: false,
         exitOnArrowDown: true,
       }),
@@ -360,9 +552,13 @@ onMounted(() => {
     onUpdate: ({ editor }) => {
       if (isUnmounting || editor.isDestroyed) return
       if (isUpdatingFromExternal) return
-      const markdown = (editor.storage as any).markdown.getMarkdown()
-      lastEmittedContent = markdown
-      emit('update:content', markdown)
+      scheduleMarkdownEmit()
+    },
+    onTransaction: ({ editor, transaction }) => {
+      if (isUnmounting || editor.isDestroyed) return
+      if (!transaction.docChanged) return
+      if (!selectionIsInCodeBlock(editor)) return
+      scheduleCodeHighlightRefresh(editor)
     },
   })
 
@@ -370,8 +566,11 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  emitCurrentMarkdown()
   isUnmounting = true
   previewContainerRef.value?.removeEventListener(PREVIEW_IMAGE_SETTLED_EVENT, reanchorPendingHeading)
+  clearPendingMarkdownEmit()
+  clearPendingCodeHighlight()
   clearPendingHeadingTarget()
   const currentEditor = editor.value
   editor.value = null
@@ -383,9 +582,14 @@ watch(
   (newContent) => {
     if (!editor.value) return
     if (isUnmounting || editor.value.isDestroyed) return
+    if (pendingMarkdownEmitTimer) {
+      if (editor.value.isFocused) emitCurrentMarkdown()
+      else clearPendingMarkdownEmit()
+    }
     if (newContent === lastEmittedContent) return
     
     isUpdatingFromExternal = true
+    clearPendingCodeHighlight()
     const { from, to } = editor.value.state.selection
     replaceExternalMarkdownContent(editor.value as any, newContent)
     
@@ -411,6 +615,9 @@ defineExpose({
   },
   applyScrollState(state: ScrollSyncState) {
     applyPreviewScrollState(state)
+  },
+  flushPendingMarkdownEmit() {
+    return emitCurrentMarkdown()
   },
 })
 

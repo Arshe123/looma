@@ -43,9 +43,19 @@ const activeMenuItems = computed(() => menuMode.value === 'table' ? tableMenuIte
 
 const getCurrentMenuMode = (editor: Editor) => isInTable(editor.state) ? 'table' : 'default'
 
+const isInNonEmptyCodeBlock = (editor: Editor) => {
+  const parent = editor.state.selection.$anchor.parent
+  return parent.type.name === 'codeBlock' && parent.textContent.length > 0
+}
+
 const updatePosition = () => {
   const editor = getEditor()
   if (!editor || !editor.isEditable || !editor.isFocused || defaultMenuItems.value.length === 0) {
+    menuVisible.value = false
+    return
+  }
+
+  if (isInNonEmptyCodeBlock(editor)) {
     menuVisible.value = false
     return
   }

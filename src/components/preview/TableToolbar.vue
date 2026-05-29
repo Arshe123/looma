@@ -125,6 +125,13 @@ const handleSelectionUpdate = () => {
   hideIfIdle()
 }
 
+const handleTransactionUpdate = () => {
+  const editor = getEditor()
+  if (!editor) return
+  if (!visible.value && !isInTable(editor.state)) return
+  handleSelectionUpdate()
+}
+
 const runAction = (action: () => boolean) => {
   const editor = getEditor()
   if (!editor) return
@@ -181,7 +188,7 @@ const toggleSizePicker = () => {
 onMounted(() => {
   props.editor.view.dom.addEventListener('mousemove', handleMouseMove)
   props.editor.on('selectionUpdate', handleSelectionUpdate)
-  props.editor.on('transaction', handleSelectionUpdate)
+  props.editor.on('transaction', handleTransactionUpdate)
   window.addEventListener('resize', handleSelectionUpdate)
 })
 
@@ -191,7 +198,7 @@ onBeforeUnmount(() => {
     if (!props.editor.isDestroyed) {
       props.editor.view.dom.removeEventListener('mousemove', handleMouseMove)
       props.editor.off('selectionUpdate', handleSelectionUpdate)
-      props.editor.off('transaction', handleSelectionUpdate)
+      props.editor.off('transaction', handleTransactionUpdate)
     }
   } catch (e) {
     // Editor teardown may already be in progress.

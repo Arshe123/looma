@@ -552,7 +552,7 @@ onUnmounted(() => {
           复制相对路径
         </button>
         <div v-if="selectedFile.relativePath !== ''" class="h-px bg-accent-soft my-1"></div>
-        <button v-if="selectedFile.relativePath !== ''" class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft" @click="handleRevealInExplorer">
+        <button class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft" @click="handleRevealInExplorer">
           在文件资源管理器中显示
         </button>
       </div>

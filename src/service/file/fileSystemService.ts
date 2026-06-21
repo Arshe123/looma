@@ -88,7 +88,7 @@ export const fileSystemService = {
       return { success: true, data: entries }
     } catch (error: any) {
       if (error?.code === 'ENOENT') {
-        return { success: false, error: `目录不存在: ${dirRelativePath}` }
+        return { success: false, error: `目录不存在: ${dirRelativePath}`, errorCode: 'ENOENT' }
       }
       return { success: false, error: `列出目录失败: ${error?.message ?? String(error)}` }
     }

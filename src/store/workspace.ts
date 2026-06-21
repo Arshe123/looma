@@ -6,6 +6,7 @@ import {
 } from './sidebar-panels'
 import {
   isEditableTextPath,
+  isMissingDirectoryResult,
   isSameOrChildPath,
   isSupportedPath,
   normalizeDir,
@@ -21,7 +22,7 @@ import {
   buildWorkspaceMetaPayload,
 } from './workspace-meta-utils'
 import type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantState, EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SystemPageId, ThemeName, UndoAction, Workspace } from './workspace-types'
-export type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, ThemeName, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
+export type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, AiAssistantTimelineOutput, AiAssistantTimelineOutputType, AiAssistantTimelineStep, AiAssistantTimelineStepStatus, EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, ThemeName, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
 let systemThemeCleanup: (() => void) | null = null
@@ -104,6 +105,50 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
     return normalized.length > 0 ? normalized : undefined
   }
 
+  const normalizeTimeline = (timeline: unknown): AiAssistantMessage['timeline'] | undefined => {
+    if (!Array.isArray(timeline)) return undefined
+    const allowedStatuses = new Set(['pending', 'active', 'completed', 'error'])
+    const allowedOutputTypes = new Set(['text', 'source', 'metric', 'code', 'json', 'error'])
+    const normalized = timeline
+      .filter((step) => Boolean(
+        step
+        && typeof step === 'object'
+        && typeof (step as any).id === 'string'
+        && typeof (step as any).title === 'string'
+        && allowedStatuses.has((step as any).status)
+        && typeof (step as any).startedAt === 'number',
+      ))
+      .map((step: any) => ({
+        id: step.id,
+        title: step.title,
+        description: typeof step.description === 'string' ? step.description : undefined,
+        detail: typeof step.detail === 'string' ? step.detail : undefined,
+        status: step.status,
+        startedAt: step.startedAt,
+        endedAt: typeof step.endedAt === 'number' ? step.endedAt : undefined,
+        outputs: Array.isArray(step.outputs)
+          ? step.outputs
+            .filter((output: any) => Boolean(
+              output
+              && typeof output === 'object'
+              && typeof output.id === 'string'
+              && allowedOutputTypes.has(output.type),
+            ))
+            .map((output: any) => ({
+              id: output.id,
+              type: output.type,
+              title: typeof output.title === 'string' ? output.title : undefined,
+              content: typeof output.content === 'string' ? output.content : undefined,
+              value: typeof output.value === 'string' || typeof output.value === 'number' ? output.value : undefined,
+              unit: typeof output.unit === 'string' ? output.unit : undefined,
+              path: typeof output.path === 'string' ? output.path : undefined,
+              metadata: output.metadata && typeof output.metadata === 'object' ? output.metadata : undefined,
+            }))
+          : [],
+      }))
+    return normalized.length > 0 ? normalized : undefined
+  }
+
   const normalizeMessages = (messages: unknown): AiAssistantMessage[] => (
     Array.isArray(messages)
       ? messages.filter((message): message is AiAssistantMessage =>
@@ -119,6 +164,7 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
         text: message.text,
         createdAt: typeof message.createdAt === 'number' ? message.createdAt : message.id,
         actions: normalizeActions(message.actions),
+        timeline: normalizeTimeline(message.timeline),
       }))
       : []
   )
@@ -417,6 +463,16 @@ export const useWorkspaceStore = defineStore('workspace', {
       const message = conversation.messages.find((item) => item.id === id)
       if (!message) return
       message.text = text
+      this.touchAiAssistantConversation(conversation)
+      if (options?.persist === false) return
+      this.saveAiAssistantState()
+    },
+
+    updateAiAssistantMessageTimeline(id: number, timeline: AiAssistantMessage['timeline'], options?: { persist?: boolean }) {
+      const conversation = this.ensureActiveAiAssistantConversation()
+      const message = conversation.messages.find((item) => item.id === id)
+      if (!message) return
+      message.timeline = timeline
       this.touchAiAssistantConversation(conversation)
       if (options?.persist === false) return
       this.saveAiAssistantState()
@@ -1073,7 +1129,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       const dir = normalizeDir(dirRelativePath)
       const r = await window.electronAPI.fs.listDir(workspaceId, dir || '.')
       if (!r.success || !r.data) {
-        if (r.error && r.error.includes('Directory not found')) {
+        if (isMissingDirectoryResult(r)) {
           if (dir === '') return
           this.expandedDirs = this.expandedDirs.filter((p) => p !== dir)
           this.selectedPaths = this.selectedPaths.filter((p) => p !== dir && !p.startsWith(dir + '/'))

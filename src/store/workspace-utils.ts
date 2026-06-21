@@ -50,3 +50,9 @@ export const resolveCurrentDir = (selectedPaths: string[], dirEntries: Record<st
   if (!selected) return ''
   return dirEntries[normalizeDir(selected)] ? selected : pathDir(selected)
 }
+
+export const isMissingDirectoryResult = (result: unknown) => Boolean(
+  result
+  && typeof result === 'object'
+  && (result as { errorCode?: unknown }).errorCode === 'ENOENT',
+)

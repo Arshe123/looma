@@ -1,11 +1,13 @@
 import { defineStore } from 'pinia'
 import {
-  defaultAppSettings,
   defaultInlineMenuItems,
-  normalizeAppSettings,
   normalizeInlineMenuItems,
-  type AppSettings,
 } from '@/common/util/tiptap-menu-actions'
+import {
+  defaultAppSettings,
+  normalizeAppSettings,
+  type AppSettings,
+} from '@/common/util/app-settings'
 
 export const useSettingsStore = defineStore('settings', {
   state: () => ({

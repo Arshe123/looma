@@ -35,19 +35,6 @@ import {
 import type { MenuAction, MenuActionId, TableMenuActionId } from '../type/MenuAction'
 import { DEFAULT_INLINE_MENU_ACTION_IDS } from '../constant/MenuConst'
 
-export interface AppSettings {
-  inlineMenu: {
-    items: string[]
-  }
-  ai: {
-    provider: 'ollama'
-    ollamaBaseUrl: string
-    llmModel: string
-    embedModel: string
-    vectorStorePath: string
-  }
-}
-
 const rawIcon = (icon: Component) => markRaw(icon)
 
 export const MENU_ACTIONS: Record<MenuActionId, MenuAction> = {
@@ -83,19 +70,6 @@ export const TABLE_ACTIONS: Record<TableMenuActionId, MenuAction> = {
   columnRight: { id: 'columnRight', label: '右移该列', icon: rawIcon(ArrowRight), run: (editor) => moveCurrentColumn(editor, 1) },
   deleteRow: { id: 'deleteRow', label: '删除行', icon: rawIcon(Trash2), run: (editor) => editor.chain().focus().deleteRow().run() },
   deleteColumn: { id: 'deleteColumn', label: '删除列', icon: rawIcon(Trash2), run: (editor) => editor.chain().focus().deleteColumn().run() },
-}
-
-export const defaultAppSettings: AppSettings = {
-  inlineMenu: {
-    items: [...DEFAULT_INLINE_MENU_ACTION_IDS],
-  },
-  ai: {
-    provider: 'ollama',
-    ollamaBaseUrl: 'http://127.0.0.1:11434',
-    llmModel: 'qwen2.5:7b',
-    embedModel: 'bge-m3:latest',
-    vectorStorePath: '.looma/rag-index',
-  },
 }
 
 // 文档菜单操作
@@ -149,37 +123,4 @@ export const normalizeInlineMenuItems = (
   }
 
   return normalized
-}
-
-export const normalizeAppSettings = (value: unknown): AppSettings => {
-  if (!value || typeof value !== 'object') return defaultAppSettings
-  const inlineMenu = (value as { inlineMenu?: unknown }).inlineMenu
-  const items = inlineMenu && typeof inlineMenu === 'object'
-    ? (inlineMenu as { items?: unknown }).items
-    : undefined
-  const ai = (value as { ai?: unknown }).ai
-  const rawAi = ai && typeof ai === 'object'
-    ? ai as {
-      provider?: unknown
-      ollamaBaseUrl?: unknown
-      llmModel?: unknown
-      embedModel?: unknown
-      vectorStorePath?: unknown
-    }
-    : {}
-  const normalizeNonEmptyString = (raw: unknown, fallback: string) =>
-    typeof raw === 'string' && raw.trim() ? raw.trim() : fallback
-
-  return {
-    inlineMenu: {
-      items: normalizeInlineMenuItems(items),
-    },
-    ai: {
-      provider: 'ollama',
-      ollamaBaseUrl: normalizeNonEmptyString(rawAi.ollamaBaseUrl, defaultAppSettings.ai.ollamaBaseUrl),
-      llmModel: normalizeNonEmptyString(rawAi.llmModel, defaultAppSettings.ai.llmModel),
-      embedModel: normalizeNonEmptyString(rawAi.embedModel, defaultAppSettings.ai.embedModel),
-      vectorStorePath: normalizeNonEmptyString(rawAi.vectorStorePath, defaultAppSettings.ai.vectorStorePath),
-    },
-  }
 }

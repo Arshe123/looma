@@ -5,7 +5,7 @@ import {
   defaultAppSettings,
   normalizeAppSettings,
   type AppSettings,
-} from '../../common/util/tiptap-menu-actions'
+} from '../../common/util/app-settings'
 
 export { defaultAppSettings }
 export type { AppSettings }

@@ -35,3 +35,7 @@ __pycache__/
 
 # 虚拟环境
 .venv/
+
+#ai files or ai generated files
+.hermes
+sketches

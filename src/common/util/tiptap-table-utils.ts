@@ -21,24 +21,6 @@ type TableMatrixCell = {
   header: boolean
 }
 
-type MarkdownNodeLike = {
-  type: { name: string }
-  attrs?: Record<string, any>
-  textContent?: string
-  childCount: number
-  child: (index: number) => MarkdownNodeLike
-  forEach: (callback: (node: MarkdownNodeLike, offset: number, index: number) => void) => void
-  isTextblock?: boolean
-}
-
-type MarkdownTableState = {
-  out: string
-  write: (value: string) => void
-  ensureNewLine: () => void
-  closeBlock: (node?: unknown) => void
-  renderInline: (node: MarkdownNodeLike) => void
-}
-
 type TableContext = {
   table: {
     node: ProseMirrorNode
@@ -80,127 +62,6 @@ export const normalizeTableMatrix = (
       }
     }),
   )
-}
-
-const escapeMarkdownTableCellText = (value: string) => {
-  let escaped = ''
-
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index]
-    const previous = value[index - 1]
-    escaped += char === '|' && previous !== '\\' ? '\\|' : char
-  }
-
-  return escaped.replace(/\r?\n/g, '<br>')
-}
-
-const renderInlineToString = (state: MarkdownTableState, node: MarkdownNodeLike) => {
-  const before = state.out
-  state.renderInline(node)
-  const rendered = state.out.slice(before.length)
-  state.out = before
-  return rendered
-}
-
-const renderCellToMarkdown = (state: MarkdownTableState, cell: MarkdownNodeLike) => {
-  const parts: string[] = []
-
-  cell.forEach((child) => {
-    if (child.type.name === 'paragraph' || child.isTextblock) {
-      parts.push(renderInlineToString(state, child))
-      return
-    }
-
-    if (child.textContent) {
-      parts.push(child.textContent)
-    }
-  })
-
-  return escapeMarkdownTableCellText(parts.filter(Boolean).join('<br>'))
-}
-
-const getColumnCount = (tableNode: MarkdownNodeLike) => {
-  let columnCount = 0
-  tableNode.forEach((row) => {
-    columnCount = Math.max(columnCount, row.childCount)
-  })
-  return columnCount
-}
-
-const getColumnAlignments = (tableNode: MarkdownNodeLike, columnCount: number) => {
-  const alignments = new Array<string | null>(columnCount).fill(null)
-
-  tableNode.forEach((row) => {
-    for (let index = 0; index < row.childCount; index += 1) {
-      const align = row.child(index).attrs?.align
-      if (!alignments[index] && (align === 'left' || align === 'center' || align === 'right')) {
-        alignments[index] = align
-      }
-    }
-  })
-
-  return alignments
-}
-
-const getDelimiter = (align: string | null) => {
-  if (align === 'left') return ':---'
-  if (align === 'center') return ':---:'
-  if (align === 'right') return '---:'
-  return '---'
-}
-
-const firstRowIsHeader = (tableNode: MarkdownNodeLike) => {
-  if (!tableNode.childCount) return false
-  const firstRow = tableNode.child(0)
-  if (!firstRow.childCount) return false
-
-  for (let index = 0; index < firstRow.childCount; index += 1) {
-    if (firstRow.child(index).type.name !== 'tableHeader') return false
-  }
-
-  return true
-}
-
-const writeMarkdownTableRow = (
-  state: MarkdownTableState,
-  row: MarkdownNodeLike | null,
-  columnCount: number,
-) => {
-  state.write('| ')
-  for (let index = 0; index < columnCount; index += 1) {
-    if (index > 0) state.write(' | ')
-    const cell = row && index < row.childCount ? row.child(index) : null
-    if (cell) state.write(renderCellToMarkdown(state, cell))
-  }
-  state.write(' |')
-  state.ensureNewLine()
-}
-
-export const serializeMarkdownTable = (state: MarkdownTableState, node: MarkdownNodeLike) => {
-  const columnCount = getColumnCount(node)
-  if (!columnCount) return
-
-  const hasHeaderRow = firstRowIsHeader(node)
-  const alignments = getColumnAlignments(node, columnCount)
-
-  ;(state as any).inTable = true
-
-  if (!hasHeaderRow) {
-    writeMarkdownTableRow(state, null, columnCount)
-    state.write(`| ${alignments.map(getDelimiter).join(' | ')} |`)
-    state.ensureNewLine()
-  }
-
-  node.forEach((row, _offset, rowIndex) => {
-    writeMarkdownTableRow(state, row, columnCount)
-    if (rowIndex === 0 && hasHeaderRow) {
-      state.write(`| ${alignments.map(getDelimiter).join(' | ')} |`)
-      state.ensureNewLine()
-    }
-  })
-
-  state.closeBlock(node)
-  ;(state as any).inTable = false
 }
 
 const getCurrentTableContext = (editor: Editor): TableContext | null => {
@@ -487,15 +348,6 @@ export const handleTableEnter = (editor: Editor, shiftKey = false) => {
 }
 
 export const EnhancedTable = Table.extend({
-  addStorage() {
-    return {
-      markdown: {
-        serialize: serializeMarkdownTable,
-        parse: {},
-      },
-    }
-  },
-
   addKeyboardShortcuts() {
     const parentShortcuts = this.parent?.() ?? {}
 

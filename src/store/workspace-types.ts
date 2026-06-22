@@ -42,12 +42,39 @@ export interface AiAssistantMessageAction {
   disabled?: boolean
 }
 
+export type AiAssistantTimelineStepStatus = 'pending' | 'active' | 'completed' | 'error'
+
+export type AiAssistantTimelineOutputType = 'text' | 'source' | 'metric' | 'code' | 'json' | 'error'
+
+export interface AiAssistantTimelineOutput {
+  id: string
+  type: AiAssistantTimelineOutputType
+  title?: string
+  content?: string
+  value?: string | number
+  unit?: string
+  path?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface AiAssistantTimelineStep {
+  id: string
+  title: string
+  description?: string
+  detail?: string
+  status: AiAssistantTimelineStepStatus
+  startedAt: number
+  endedAt?: number
+  outputs: AiAssistantTimelineOutput[]
+}
+
 export interface AiAssistantMessage {
   id: number
   role: AiAssistantMessageRole
   text: string
   createdAt: number
   actions?: AiAssistantMessageAction[]
+  timeline?: AiAssistantTimelineStep[]
 }
 
 export interface AiAssistantConversation {

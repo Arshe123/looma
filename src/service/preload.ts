@@ -2,10 +2,23 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 type FsEventPayload = { workspaceId: string; event: string; relativePath: string };
 type RagStreamEventPayload =
+  | { requestId: string; type: 'timeline'; stepId?: string; status?: 'pending' | 'active' | 'completed' | 'error'; title?: string; description?: string; detail?: string; outputs?: unknown[]; step?: Record<string, unknown> }
+  | { requestId: string; type: 'progress'; stepId: string; current: number; total?: number; message?: string }
   | { requestId: string; type: 'delta'; text: string }
   | { requestId: string; type: 'sources'; sources: unknown[] }
-  | { requestId: string; type: 'done' }
-  | { requestId: string; type: 'error'; error: string };
+  | { requestId: string; type: 'done'; result?: Record<string, unknown>; status?: string; document_count?: number; exists?: boolean; persist_dir?: string }
+  | { requestId: string; type: 'error'; error: string; stepId?: string };
+type RagChatMessagePayload = {
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  name?: string;
+};
+type RagRequestStatsPayload = {
+  history_messages: number;
+  history_token_estimate: number;
+  question_token_estimate: number;
+  total_token_estimate: number;
+};
 type OllamaDownloadProgressPayload = {
   status: 'downloading' | 'completed' | 'error' | 'cancelled';
   receivedBytes: number;
@@ -80,16 +93,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
   rag: {
     health: () => ipcRenderer.invoke('rag:health'),
     status: (workspaceId: string) => ipcRenderer.invoke('rag:status', workspaceId),
-    index: (workspaceId: string) => ipcRenderer.invoke('rag:index', workspaceId),
-    ask: (workspaceId: string, question: string) => ipcRenderer.invoke('rag:ask', workspaceId, question),
+    chat: (workspaceId: string, question: string, history?: RagChatMessagePayload[], requestStats?: RagRequestStatsPayload) =>
+      ipcRenderer.invoke('rag:chat', workspaceId, question, history, requestStats),
     askStream: {
-      start: (requestId: string, workspaceId: string, question: string) =>
-        ipcRenderer.invoke('rag:askStream:start', requestId, workspaceId, question),
+      start: (requestId: string, workspaceId: string, question: string, history?: RagChatMessagePayload[], requestStats?: RagRequestStatsPayload) =>
+        ipcRenderer.invoke('rag:askStream:start', requestId, workspaceId, question, history, requestStats),
       cancel: (requestId: string) => ipcRenderer.invoke('rag:askStream:cancel', requestId),
       onEvent: (listener: (payload: RagStreamEventPayload) => void) => {
         const handler = (_: unknown, payload: RagStreamEventPayload) => listener(payload);
         ipcRenderer.on('rag:askStream:event', handler);
         return () => ipcRenderer.removeListener('rag:askStream:event', handler);
+      },
+    },
+    indexStream: {
+      start: (requestId: string, workspaceId: string) =>
+        ipcRenderer.invoke('rag:indexStream:start', requestId, workspaceId),
+      cancel: (requestId: string) => ipcRenderer.invoke('rag:indexStream:cancel', requestId),
+      onEvent: (listener: (payload: RagStreamEventPayload) => void) => {
+        const handler = (_: unknown, payload: RagStreamEventPayload) => listener(payload);
+        ipcRenderer.on('rag:indexStream:event', handler);
+        return () => ipcRenderer.removeListener('rag:indexStream:event', handler);
       },
     },
   },

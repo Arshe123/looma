@@ -16,7 +16,7 @@ import type { Node as ProsemirrorNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { Markdown } from 'tiptap-markdown'
+import { Markdown } from '@tiptap/markdown'
 import { common, createLowlight } from 'lowlight'
 import 'github-markdown-css/github-markdown-light.css'
 import InlineMenu from './InlineMenu.vue'
@@ -34,6 +34,11 @@ import {
   setScrollRatio,
 } from '@/common/util/editor-scroll-sync'
 import type { ScrollSyncState } from '@/common/type/ScrollSyncState'
+import { createMarkdownSerializationGate } from '@/common/util/markdown-serialization-gate'
+import {
+  prepareMarkdownForRichText,
+  serializeMarkdownAst,
+} from '@/common/util/markdown-rich-text'
 
 const props = defineProps<{
   content: string
@@ -52,6 +57,7 @@ let pendingMarkdownEmitTimer: number | null = null
 let pendingCodeHighlightTimer: number | null = null
 let pendingHeadingTarget: MarkdownOutlineItem | null = null
 let pendingHeadingClearTimer: number | null = null
+const markdownSerializationGate = createMarkdownSerializationGate()
 
 const editor = shallowRef<Editor | null>(null)
 const previewContainerRef = shallowRef<HTMLElement | null>(null)
@@ -213,19 +219,6 @@ const LocalImage = Image.extend({
   addStorage() {
     return {
       resolveImageSrc,
-      markdown: {
-        parse: {
-          setup(markdown: any) {
-            const validateLink = markdown.validateLink.bind(markdown)
-            markdown.validateLink = (url: string) => {
-              const protocol = url.trim().toLowerCase().match(/^([a-z][a-z0-9+.-]*):/)?.[1]
-              if (protocol === 'file') return true
-              if (protocol === 'javascript' || protocol === 'vbscript') return false
-              return validateLink(url)
-            }
-          },
-        },
-      },
     }
   },
 
@@ -444,7 +437,8 @@ const emitCurrentMarkdown = () => {
   const currentEditor = editor.value
   if (!currentEditor || isUnmounting || currentEditor.isDestroyed || isUpdatingFromExternal) return undefined
 
-  const markdown = (currentEditor.storage as any).markdown.getMarkdown()
+  const markdown = markdownSerializationGate.flush(() => serializeMarkdownAst(currentEditor))
+  if (markdown === undefined) return undefined
   if (markdown === lastEmittedContent) return markdown
   lastEmittedContent = markdown
   emit('update:content', markdown)
@@ -453,6 +447,7 @@ const emitCurrentMarkdown = () => {
 
 const scheduleMarkdownEmit = () => {
   clearPendingMarkdownEmit()
+  markdownSerializationGate.markDirty()
   pendingMarkdownEmitTimer = window.setTimeout(() => {
     pendingMarkdownEmitTimer = null
     emitCurrentMarkdown()
@@ -536,11 +531,11 @@ onMounted(() => {
         placeholder: 'Shift + ctrl + Enter 唤起菜单，或直接输入 Markdown...',
       }),
       Markdown.configure({
-        html: true,
-        transformPastedText: true,
+        markedOptions: { gfm: true },
       }),
     ],
-    content: props.content,
+    content: prepareMarkdownForRichText(props.content),
+    contentType: 'markdown',
     editorProps: {
       attributes: {
         class: 'prose dark:prose-invert max-w-none focus:outline-hidden min-h-full p-8 markdown-body dark:markdown-body-dark',
@@ -584,14 +579,18 @@ watch(
     if (isUnmounting || editor.value.isDestroyed) return
     if (pendingMarkdownEmitTimer) {
       if (editor.value.isFocused) emitCurrentMarkdown()
-      else clearPendingMarkdownEmit()
+      else {
+        clearPendingMarkdownEmit()
+        markdownSerializationGate.clear()
+      }
     }
     if (newContent === lastEmittedContent) return
     
     isUpdatingFromExternal = true
     clearPendingCodeHighlight()
     const { from, to } = editor.value.state.selection
-    replaceExternalMarkdownContent(editor.value as any, newContent)
+    markdownSerializationGate.clear()
+    replaceExternalMarkdownContent(editor.value as any, prepareMarkdownForRichText(newContent))
     
     // Try to restore selection if possible
     try {

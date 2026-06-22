@@ -10,7 +10,7 @@ import { fileSystemService, fileWatchService } from './file/fileSystemService';
 import { workspaceAiService } from './workspace/workspaceAiService';
 import { workspaceMetaService } from './workspace/workspaceMetaService';
 import { createAppSettingsService, makeAppSettingsPath } from './app/appSettingsService';
-import { ragService, type RagAiSettings } from './rag/ragService';
+import { aiService, type AISettings, type RagChatMessage, type RagRequestStats } from './ai/AIService';
 import { normalizeOllamaBaseUrl, ollamaService } from './ollama/ollamaService';
 
 app.setAppUserModelId('com.looma')
@@ -22,18 +22,29 @@ const __dirname = path.dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 const appSettingsService = createAppSettingsService(makeAppSettingsPath(app.getPath('appData')));
 const activeRagStreams = new Map<string, AbortController>();
+const activeRagIndexStreams = new Map<string, AbortController>();
 
 const normalizeVectorStorePath = (value: string) => {
   return (value || '').trim() || '.looma/rag-index';
 };
 
-const getRagAiSettings = async (): Promise<RagAiSettings> => {
+const getRagAiSettings = async (): Promise<AISettings & { vectorStorePath: string }> => {
   const result = await appSettingsService.getSettings();
   const ai = result.success && result.data ? result.data.ai : undefined;
   return {
-    ollamaBaseUrl: normalizeOllamaBaseUrl(ai?.ollamaBaseUrl ?? ''),
-    llmModel: ai?.llmModel || 'qwen2.5:7b',
-    embedModel: ai?.embedModel || 'bge-m3:latest',
+    chat: ai?.chat ?? {
+      provider: 'ollama',
+      model: 'qwen2.5:7b',
+      baseUrl: normalizeOllamaBaseUrl(''),
+      apiKey: '',
+      temperature: 0.7,
+    },
+    embedding: ai?.embedding ?? {
+      provider: 'ollama',
+      model: 'bge-m3:latest',
+      baseUrl: normalizeOllamaBaseUrl(''),
+      apiKey: '',
+    },
     vectorStorePath: normalizeVectorStorePath(ai?.vectorStorePath ?? ''),
   };
 };
@@ -407,30 +418,105 @@ const getWorkspacePathById = async (workspaceId: string) => {
   return ws?.path ?? null;
 };
 
+const normalizeRagHistory = (history: unknown): RagChatMessage[] => {
+  if (!Array.isArray(history)) return [];
+  const allowedRoles = new Set(['user', 'assistant', 'system', 'tool']);
+  return history
+    .filter((item): item is RagChatMessage => Boolean(
+      item
+      && typeof item === 'object'
+      && allowedRoles.has((item as any).role)
+      && typeof (item as any).content === 'string'
+      && (item as any).content.trim().length > 0,
+    ))
+    .map((item) => ({
+      role: item.role,
+      content: item.content.trim(),
+      name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : undefined,
+    }));
+};
+
+const normalizeRagRequestStats = (stats: unknown): RagRequestStats => {
+  const raw = stats && typeof stats === 'object' ? stats as Record<string, unknown> : {};
+  const toNonNegativeInt = (value: unknown) => {
+    const numberValue = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(numberValue) && numberValue > 0 ? Math.round(numberValue) : 0;
+  };
+  return {
+    history_messages: toNonNegativeInt(raw.history_messages),
+    history_token_estimate: toNonNegativeInt(raw.history_token_estimate),
+    question_token_estimate: toNonNegativeInt(raw.question_token_estimate),
+    total_token_estimate: toNonNegativeInt(raw.total_token_estimate),
+  };
+};
+
 ipcMain.handle('rag:health', async () => {
-  return await ragService.health();
+  return await aiService.health();
 });
 
 ipcMain.handle('rag:status', async (_, workspaceId: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
-  return await ragService.getIndexStatus(workspacePath, await getRagAiSettings());
+  return await aiService.getIndexStatus(workspacePath, await getRagAiSettings());
 });
 
-ipcMain.handle('rag:index', async (_, workspaceId: string) => {
+ipcMain.handle('rag:indexStream:start', async (event, requestId: string, workspaceId: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
-  return await ragService.buildVectorIndex(workspacePath, await getRagAiSettings());
+
+  activeRagIndexStreams.get(requestId)?.abort();
+  const controller = new AbortController();
+  activeRagIndexStreams.set(requestId, controller);
+  const sender = event.sender;
+
+  aiService
+    .streamBuildVectorIndex(
+      workspacePath,
+      await getRagAiSettings(),
+      (payload) => {
+        if (sender.isDestroyed()) return;
+        sender.send('rag:indexStream:event', { requestId, ...payload });
+      },
+      controller.signal,
+    )
+    .then((result) => {
+      if (!result.success && !sender.isDestroyed()) {
+        sender.send('rag:indexStream:event', {
+          requestId,
+          type: 'error',
+          error: result.error || '建立索引失败。',
+        });
+      }
+    })
+    .finally(() => {
+      if (activeRagIndexStreams.get(requestId) === controller) {
+        activeRagIndexStreams.delete(requestId);
+      }
+    });
+
+  return { success: true };
 });
 
-ipcMain.handle('rag:ask', async (_, workspaceId: string, question: string) => {
+ipcMain.handle('rag:indexStream:cancel', async (_, requestId: string) => {
+  activeRagIndexStreams.get(requestId)?.abort();
+  activeRagIndexStreams.delete(requestId);
+  return { success: true };
+});
+
+ipcMain.handle('rag:chat', async (_, workspaceId: string, question: string, history?: unknown, requestStats?: unknown) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
   if (!question.trim()) return { success: false, error: 'Question is required' };
-  return await ragService.queryAssistant(workspacePath, question, await getRagAiSettings());
+  return await aiService.chat(
+    workspacePath,
+    question,
+    await getRagAiSettings(),
+    normalizeRagHistory(history),
+    normalizeRagRequestStats(requestStats),
+  );
 });
 
-ipcMain.handle('rag:askStream:start', async (event, requestId: string, workspaceId: string, question: string) => {
+ipcMain.handle('rag:askStream:start', async (event, requestId: string, workspaceId: string, question: string, history?: unknown, requestStats?: unknown) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
   if (!question.trim()) return { success: false, error: 'Question is required' };
@@ -440,11 +526,13 @@ ipcMain.handle('rag:askStream:start', async (event, requestId: string, workspace
   activeRagStreams.set(requestId, controller);
   const sender = event.sender;
 
-  ragService
+  aiService
     .streamAssistant(
       workspacePath,
       question,
       await getRagAiSettings(),
+      normalizeRagHistory(history),
+      normalizeRagRequestStats(requestStats),
       (payload) => {
         if (sender.isDestroyed()) return;
         sender.send('rag:askStream:event', { requestId, ...payload });

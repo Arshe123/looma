@@ -2,12 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Bot, Clipboard, Copy, History, Loader2, MessageSquare, Paperclip, Plus, RotateCcw, Send, Settings, Sparkles, Trash2, User } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/store/workspace'
-import type { AiAssistantMessageAction } from '@/store/workspace'
+import type { AiAssistantMessageAction, AiAssistantTimelineOutput, AiAssistantTimelineStep } from '@/store/workspace'
 import AiMarkdown from './AiMarkdown.vue'
+import { applyRagTimelineEvent, createIndexTimeline, failAiTimelineStep, formatAiRuntimeError, getAiTimelineStepDuration } from './aiTimeline'
 
 const workspaceStore = useWorkspaceStore()
 const BUILD_INDEX_ACTION_TYPE: AiAssistantMessageAction['type'] = 'build-index'
-const MISSING_INDEX_MESSAGE = '当前还没有建立索引，请先建立索引。'
+const MISSING_INDEX_MESSAGE = '为了让 Looma AI 能检索你的笔记，需要先为当前工作空间建立本地索引。这个提示来自应用状态，不是 AI 回答。'
 const isIndexing = ref(false)
 const isAsking = ref(false)
 const isCheckingIndex = ref(false)
@@ -18,6 +19,10 @@ const contextMenuRef = ref<HTMLElement | null>(null)
 const activeStreamRequestId = ref<string | null>(null)
 const activeAssistantMessageId = ref<number | null>(null)
 const activeAssistantText = ref('')
+const activeAssistantTimeline = ref<AiAssistantTimelineStep[]>([])
+const activeIndexRequestId = ref<string | null>(null)
+const activeIndexMessageId = ref<number | null>(null)
+const activeIndexTimeline = ref<AiAssistantTimelineStep[]>([])
 const historyOpen = ref(false)
 const aiContextMenu = ref({
   visible: false,
@@ -27,6 +32,7 @@ const aiContextMenu = ref({
   selectedText: '',
 })
 let unsubscribeStreamEvents: (() => void) | null = null
+let unsubscribeIndexStreamEvents: (() => void) | null = null
 
 const hasWorkspace = computed(() => Boolean(workspaceStore.activeWorkspaceId))
 const activeConversation = computed(() => workspaceStore.activeAiAssistantConversation)
@@ -196,6 +202,43 @@ const clearActiveStream = () => {
   activeStreamRequestId.value = null
   activeAssistantMessageId.value = null
   activeAssistantText.value = ''
+  activeAssistantTimeline.value = []
+}
+
+const clearActiveIndexStream = () => {
+  activeIndexRequestId.value = null
+  activeIndexMessageId.value = null
+  activeIndexTimeline.value = []
+}
+
+const syncActiveTimeline = (timeline: AiAssistantTimelineStep[], options?: { persist?: boolean }) => {
+  const messageId = activeAssistantMessageId.value
+  if (!messageId) return
+  activeAssistantTimeline.value = timeline
+  workspaceStore.updateAiAssistantMessageTimeline(messageId, timeline, options ?? { persist: false })
+}
+
+const updateActiveTimeline = (
+  updater: (timeline: AiAssistantTimelineStep[]) => AiAssistantTimelineStep[],
+  options?: { persist?: boolean },
+) => {
+  if (!activeAssistantTimeline.value.length) return
+  syncActiveTimeline(updater(activeAssistantTimeline.value), options)
+}
+
+const syncActiveIndexTimeline = (timeline: AiAssistantTimelineStep[], options?: { persist?: boolean }) => {
+  const messageId = activeIndexMessageId.value
+  if (!messageId) return
+  activeIndexTimeline.value = timeline
+  workspaceStore.updateAiAssistantMessageTimeline(messageId, timeline, options ?? { persist: false })
+}
+
+const updateActiveIndexTimeline = (
+  updater: (timeline: AiAssistantTimelineStep[]) => AiAssistantTimelineStep[],
+  options?: { persist?: boolean },
+) => {
+  if (!activeIndexTimeline.value.length) return
+  syncActiveIndexTimeline(updater(activeIndexTimeline.value), options)
 }
 
 const cancelActiveStream = () => {
@@ -206,15 +249,188 @@ const cancelActiveStream = () => {
   clearActiveStream()
 }
 
+const cancelActiveIndexStream = () => {
+  const requestId = activeIndexRequestId.value
+  if (requestId) {
+    window.electronAPI.rag.indexStream.cancel(requestId).catch(() => {})
+  }
+  clearActiveIndexStream()
+}
+
 const createStreamRequestId = () =>
   `${Date.now()}:${Math.random().toString(36).slice(2)}`
+
+const getTimelineStatusClass = (status: AiAssistantTimelineStep['status']) => {
+  if (status === 'active') return 'bg-accent'
+  if (status === 'completed') return 'bg-text-subtle'
+  if (status === 'error') return 'bg-danger'
+  return 'bg-border-soft'
+}
+
+const getTimelineStatusLabel = (status: AiAssistantTimelineStep['status']) => {
+  if (status === 'active') return '进行中'
+  if (status === 'completed') return '完成'
+  if (status === 'error') return '失败'
+  return '等待'
+}
+
+const getTimelineOutputText = (output: AiAssistantTimelineOutput) => {
+  if (output.content) return output.content
+  if (output.path) return output.path
+  if (output.value !== undefined) return `${output.value}${output.unit || ''}`
+  if (output.metadata) return JSON.stringify(output.metadata)
+  return ''
+}
+
+const createSourceOutputs = (sources: Array<{ score: number | null; text: string; metadata: Record<string, unknown> }>): AiAssistantTimelineOutput[] =>
+  sources.slice(0, 5).map((source, index) => {
+    const path = typeof source.metadata?.source === 'string'
+      ? source.metadata.source
+      : typeof source.metadata?.file_path === 'string'
+        ? source.metadata.file_path
+        : typeof source.metadata?.path === 'string'
+          ? source.metadata.path
+          : ''
+    return {
+      id: `source-${index + 1}`,
+      type: 'source',
+      title: path ? `来源 ${index + 1}` : `片段 ${index + 1}`,
+      content: source.text.slice(0, 120),
+      path,
+      metadata: source.metadata,
+    }
+  })
+
+type RagChatMessagePayload = {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+type RagRequestStatsPayload = {
+  history_messages: number
+  history_token_estimate: number
+  question_token_estimate: number
+  total_token_estimate: number
+}
+
+const estimateTokenCount = (text: string) => {
+  const normalized = text.trim()
+  if (!normalized) return 0
+  const cjkChars = normalized.match(/[\u3400-\u9fff\uf900-\ufaff]/g)?.length ?? 0
+  const nonCjkText = normalized.replace(/[\u3400-\u9fff\uf900-\ufaff]/g, ' ')
+  const asciiTokenEstimate = Math.ceil(nonCjkText.replace(/\s+/g, ' ').trim().length / 4)
+  return Math.max(1, cjkChars + asciiTokenEstimate)
+}
+
+const estimateMessageTokens = (message: RagChatMessagePayload) =>
+  estimateTokenCount(message.content) + 4
+
+const buildConversationHistoryForRequest = (currentQuestion: string) => {
+  const history = messages.value
+    .filter((message) => (
+      (message.role === 'user' || message.role === 'assistant')
+      && !message.actions?.length
+      && message.createdAt !== 1
+      && message.text.trim().length > 0
+      && message.text.trim() !== currentQuestion.trim()
+    ))
+    .map((message): RagChatMessagePayload => ({
+      role: message.role === 'assistant' ? 'assistant' : 'user',
+      content: message.text.trim(),
+    }))
+
+  const historyTokenEstimate = history.reduce((total, message) => total + estimateMessageTokens(message), 0)
+  const questionTokenEstimate = estimateTokenCount(currentQuestion) + 4
+  const stats: RagRequestStatsPayload = {
+    history_messages: history.length,
+    history_token_estimate: historyTokenEstimate,
+    question_token_estimate: questionTokenEstimate,
+    total_token_estimate: historyTokenEstimate + questionTokenEstimate,
+  }
+
+  return { history, stats }
+}
+
+const createConversationContextTimeline = (stats: RagRequestStatsPayload, startedAt = Date.now()): AiAssistantTimelineStep[] => [{
+  id: 'conversation-context',
+  title: '整理对话上下文',
+  description: '把当前会话历史转换为后端 history，并估算本次请求上下文 token。',
+  detail: `已加入 ${stats.history_messages} 条历史消息，整轮上下文约 ${stats.total_token_estimate} tokens。`,
+  status: 'completed',
+  startedAt,
+  endedAt: startedAt,
+  outputs: [
+    {
+      id: 'history-messages',
+      type: 'metric',
+      title: '历史消息',
+      value: stats.history_messages,
+      unit: '条',
+    },
+    {
+      id: 'history-token-estimate',
+      type: 'metric',
+      title: '历史上下文',
+      value: stats.history_token_estimate,
+      unit: ' tokens',
+    },
+    {
+      id: 'question-token-estimate',
+      type: 'metric',
+      title: '当前问题',
+      value: stats.question_token_estimate,
+      unit: ' tokens',
+    },
+    {
+      id: 'total-token-estimate',
+      type: 'metric',
+      title: '会话总计',
+      value: stats.total_token_estimate,
+      unit: ' tokens',
+    },
+  ],
+}]
 
 const handleStreamEvent = (payload: Parameters<Parameters<typeof window.electronAPI.rag.askStream.onEvent>[0]>[0]) => {
   if (!activeStreamRequestId.value || payload.requestId !== activeStreamRequestId.value) return
   const messageId = activeAssistantMessageId.value
   if (!messageId) return
 
+  if (payload.type === 'timeline' || payload.type === 'progress') {
+    updateActiveTimeline((timeline) => applyRagTimelineEvent(timeline, payload))
+    scrollToBottom()
+    return
+  }
+
+  if (payload.type === 'sources') {
+    const sources = payload.sources || []
+    updateActiveTimeline((timeline) => applyRagTimelineEvent(timeline, {
+      type: 'timeline',
+      stepId: 'retrieve-context',
+      title: '检索上下文',
+      status: 'completed',
+      detail: sources.length ? `命中 ${sources.length} 个相关片段。` : '未收到可展示的来源片段。',
+      outputs: createSourceOutputs(sources),
+    }))
+    scrollToBottom()
+    return
+  }
+
   if (payload.type === 'delta') {
+    if (!activeAssistantText.value.trim()) {
+      updateActiveTimeline((timeline) => applyRagTimelineEvent(timeline, {
+        type: 'timeline',
+        stepId: 'compose-answer',
+        title: '生成回复',
+        status: 'active',
+        detail: '正在流式生成最终回答。',
+        outputs: [{
+          type: 'text',
+          title: '生成回复',
+          content: '正在流式生成最终回答。',
+        }],
+      }))
+    }
     activeAssistantText.value += payload.text
     workspaceStore.updateAiAssistantMessageText(messageId, activeAssistantText.value, { persist: false })
     scrollToBottom()
@@ -222,6 +438,13 @@ const handleStreamEvent = (payload: Parameters<Parameters<typeof window.electron
   }
 
   if (payload.type === 'done') {
+    updateActiveTimeline((timeline) => applyRagTimelineEvent(timeline, {
+      type: 'timeline',
+      stepId: 'compose-answer',
+      title: '生成回复',
+      status: 'completed',
+      detail: activeAssistantText.value.trim() ? '最终回复已生成。' : '没有得到可展示的回复。',
+    }))
     if (!activeAssistantText.value.trim()) {
       workspaceStore.updateAiAssistantMessageText(messageId, '没有得到回答。')
     } else {
@@ -234,14 +457,56 @@ const handleStreamEvent = (payload: Parameters<Parameters<typeof window.electron
   }
 
   if (payload.type === 'error') {
-    const errorText = payload.error || 'AI 助手请求失败。'
+    const runtimeError = formatAiRuntimeError(payload.error, 'AI 助手请求失败。')
+    updateActiveTimeline((timeline) => failAiTimelineStep(timeline, payload.stepId || 'compose-answer', runtimeError.message, Date.now(), runtimeError.technicalDetail))
     if (activeAssistantText.value.trim()) {
-      appendMessage('system', errorText)
+      appendMessage('system', runtimeError.message)
     } else {
-      workspaceStore.updateAiAssistantMessageText(messageId, errorText)
+      workspaceStore.updateAiAssistantMessageText(messageId, runtimeError.message)
     }
     isAsking.value = false
     clearActiveStream()
+    scrollToBottom()
+  }
+}
+
+const handleIndexStreamEvent = (payload: Parameters<Parameters<typeof window.electronAPI.rag.indexStream.onEvent>[0]>[0]) => {
+  if (!activeIndexRequestId.value || payload.requestId !== activeIndexRequestId.value) return
+  const messageId = activeIndexMessageId.value
+  if (!messageId) return
+
+  if (payload.type === 'timeline' || payload.type === 'progress') {
+    updateActiveIndexTimeline((timeline) => applyRagTimelineEvent(timeline, payload))
+    scrollToBottom()
+    return
+  }
+
+  if (payload.type === 'done') {
+    const result = payload.result || payload
+    const count = typeof result.document_count === 'number' ? result.document_count : 0
+    const exists = Boolean(result.exists)
+    hasIndex.value = exists && count > 0
+    setBuildIndexActionsDisabled(hasIndex.value)
+    workspaceStore.updateAiAssistantMessageText(
+      messageId,
+      count === 0
+        ? '当前工作空间没有可索引的文档，请添加 Markdown、文本或 PDF 文件后再建立索引。'
+        : `索引已建立，共处理 ${count} 个文档。现在可以开始提问。`,
+    )
+    isIndexing.value = false
+    clearActiveIndexStream()
+    scrollToBottom()
+    return
+  }
+
+  if (payload.type === 'error') {
+    const runtimeError = formatAiRuntimeError(payload.error, '建立索引失败。')
+    updateActiveIndexTimeline((timeline) => failAiTimelineStep(timeline, payload.stepId || 'verify-index', runtimeError.message, Date.now(), runtimeError.technicalDetail))
+    workspaceStore.updateAiAssistantMessageText(messageId, `建立索引失败：${runtimeError.message}`)
+    hasIndex.value = false
+    setBuildIndexActionsDisabled(false)
+    isIndexing.value = false
+    clearActiveIndexStream()
     scrollToBottom()
   }
 }
@@ -257,8 +522,8 @@ const getActiveWorkspaceId = () => {
 
 const createBuildIndexAction = (disabled = false): AiAssistantMessageAction => ({
   type: BUILD_INDEX_ACTION_TYPE,
-  title: '建立工作空间索引',
-  description: 'AI 助手需要先读取当前工作空间中的笔记并建立索引，之后才能回答与笔记内容相关的问题。',
+  title: '建立当前工作空间索引',
+  description: '索引只保存在本机。建立完成后，Looma AI 就可以基于当前工作空间回答你的问题。',
   buttonText: '建立索引',
   disabled,
 })
@@ -271,7 +536,7 @@ const hasBuildIndexPrompt = () =>
 
 const ensureBuildIndexPrompt = () => {
   if (hasBuildIndexPrompt()) return
-  appendMessage('assistant', MISSING_INDEX_MESSAGE, [createBuildIndexAction(false)])
+  appendMessage('system', MISSING_INDEX_MESSAGE, [createBuildIndexAction(false)])
 }
 
 const setBuildIndexActionsDisabled = (disabled: boolean) => {
@@ -311,34 +576,31 @@ const indexWorkspace = async () => {
   if (!workspaceId || isIndexing.value || hasIndex.value) return
 
   isIndexing.value = true
-  appendMessage('system', '正在建立当前工作空间的索引...')
+  setBuildIndexActionsDisabled(true)
+  const messageId = appendMessage('assistant', '正在建立当前工作空间索引...')
+  const requestId = createStreamRequestId()
+  activeIndexRequestId.value = requestId
+  activeIndexMessageId.value = messageId
+  syncActiveIndexTimeline(createIndexTimeline(Date.now()))
 
   try {
-    const result = await window.electronAPI.rag.index(workspaceId)
-    if (workspaceStore.activeWorkspaceId !== workspaceId) return
+    const result = await window.electronAPI.rag.indexStream.start(requestId, workspaceId)
     if (!result.success) {
-      appendMessage('system', result.error || '建立索引失败。')
-      return
-    }
-
-    const count = result.data?.document_count ?? 0
-    if (count === 0) {
+      const runtimeError = formatAiRuntimeError(result.error, '建立索引失败。')
+      updateActiveIndexTimeline((timeline) => failAiTimelineStep(timeline, 'validate-workspace', runtimeError.message, Date.now(), runtimeError.technicalDetail))
+      workspaceStore.updateAiAssistantMessageText(messageId, `建立索引失败：${runtimeError.message}`)
       hasIndex.value = false
       setBuildIndexActionsDisabled(false)
-      appendMessage('assistant', '当前工作空间没有可索引的文档，请添加 Markdown、文本或 PDF 文件后再建立索引。')
-      return
+      clearActiveIndexStream()
+      isIndexing.value = false
     }
-
-    await checkIndexStatus()
-    if (!hasIndex.value) {
-      appendMessage('system', '索引文件未写入预期目录。请重新建立索引。')
-      setBuildIndexActionsDisabled(false)
-      ensureBuildIndexPrompt()
-      return
-    }
-
-    appendMessage('assistant', `索引已建立，共处理 ${count} 个文档。现在可以开始提问。`)
-  } finally {
+  } catch (error: any) {
+    const runtimeError = formatAiRuntimeError(error?.message ?? String(error), '建立索引失败。')
+    updateActiveIndexTimeline((timeline) => failAiTimelineStep(timeline, 'validate-workspace', runtimeError.message, Date.now(), runtimeError.technicalDetail))
+    workspaceStore.updateAiAssistantMessageText(messageId, `建立索引失败：${runtimeError.message}`)
+    hasIndex.value = false
+    setBuildIndexActionsDisabled(false)
+    clearActiveIndexStream()
     isIndexing.value = false
   }
 }
@@ -352,6 +614,7 @@ const askQuestion = async () => {
     return
   }
 
+  const { history, stats } = buildConversationHistoryForRequest(text)
   workspaceStore.setAiAssistantDraft('')
   isAsking.value = true
   appendMessage('user', text)
@@ -360,17 +623,22 @@ const askQuestion = async () => {
   activeStreamRequestId.value = requestId
   activeAssistantMessageId.value = assistantMessageId
   activeAssistantText.value = ''
+  syncActiveTimeline(createConversationContextTimeline(stats), { persist: true })
 
   try {
-    const result = await window.electronAPI.rag.askStream.start(requestId, workspaceId, text)
+    const result = await window.electronAPI.rag.askStream.start(requestId, workspaceId, text, history, stats)
     if (!result.success) {
-      workspaceStore.updateAiAssistantMessageText(assistantMessageId, result.error || 'AI 助手请求失败。')
+      const errorText = result.error || 'AI 助手请求失败。'
+      updateActiveTimeline((timeline) => failAiTimelineStep(timeline, 'start-request', errorText))
+      workspaceStore.updateAiAssistantMessageText(assistantMessageId, errorText)
       clearActiveStream()
       isAsking.value = false
       return
     }
   } catch (error: any) {
-    workspaceStore.updateAiAssistantMessageText(assistantMessageId, `AI 助手请求失败：${error?.message ?? String(error)}`)
+    const errorText = `AI 助手请求失败：${error?.message ?? String(error)}`
+    updateActiveTimeline((timeline) => failAiTimelineStep(timeline, 'start-request', errorText))
+    workspaceStore.updateAiAssistantMessageText(assistantMessageId, errorText)
     clearActiveStream()
     isAsking.value = false
   }
@@ -396,6 +664,7 @@ const isActionDisabled = (action: AiAssistantMessageAction) =>
 
 const createConversation = () => {
   cancelActiveStream()
+  cancelActiveIndexStream()
   isAsking.value = false
   workspaceStore.createAiAssistantConversation()
   historyOpen.value = false
@@ -408,6 +677,7 @@ const selectConversation = (id: string) => {
     return
   }
   cancelActiveStream()
+  cancelActiveIndexStream()
   isAsking.value = false
   workspaceStore.setActiveAiAssistantConversation(id)
   historyOpen.value = false
@@ -429,6 +699,7 @@ const deleteConversation = (id: string) => {
 onMounted(() => {
   document.addEventListener('click', handleDocumentClick)
   unsubscribeStreamEvents = window.electronAPI.rag.askStream.onEvent(handleStreamEvent)
+  unsubscribeIndexStreamEvents = window.electronAPI.rag.indexStream.onEvent(handleIndexStreamEvent)
   workspaceStore.removeAiAssistantMessagesByText(['Not Found'])
   scrollToBottom()
   checkIndexStatus().catch(console.error)
@@ -437,14 +708,19 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleDocumentClick)
   cancelActiveStream()
+  cancelActiveIndexStream()
   unsubscribeStreamEvents?.()
   unsubscribeStreamEvents = null
+  unsubscribeIndexStreamEvents?.()
+  unsubscribeIndexStreamEvents = null
 })
 
 watch(() => messages.value.length, scrollToBottom)
 watch(() => workspaceStore.activeWorkspaceId, () => {
   cancelActiveStream()
+  cancelActiveIndexStream()
   isAsking.value = false
+  isIndexing.value = false
   historyOpen.value = false
   closeAiContextMenu()
   checkIndexStatus().catch(console.error)
@@ -557,15 +833,31 @@ watch(activeConversationId, () => {
           :key="message.id"
           :class="[
             'flex',
-            message.role === 'user' ? 'justify-end' : 'justify-start',
+            message.role === 'user'
+              ? 'justify-end'
+              : message.role === 'system'
+                ? 'justify-center'
+                : 'justify-start',
           ]"
         >
           <div
             :class="[
-              message.role === 'user' ? 'max-w-[82%]' : 'max-w-[90%]',
+              message.role === 'user'
+                ? 'max-w-[82%]'
+                : message.role === 'system'
+                  ? 'w-full max-w-[94%]'
+                  : 'max-w-[90%]',
             ]"
           >
             <div
+              v-if="message.role === 'system'"
+              class="mb-2 flex items-center gap-2 px-1 text-center text-[10px] leading-4 text-text-subtle before:h-px before:flex-1 before:bg-border-soft after:h-px after:flex-1 after:bg-border-soft"
+            >
+              <span class="shrink-0">系统事件 · 本地 RAG</span>
+            </div>
+
+            <div
+              v-else
               :class="[
                 'mb-1.5 flex items-center gap-1.5 px-1 text-[10px] leading-4 text-text-subtle',
                 message.role === 'user' ? 'justify-end' : 'justify-start',
@@ -577,8 +869,51 @@ watch(activeConversationId, () => {
               </template>
               <template v-else>
                 <Bot :size="12" />
-                <span>{{ message.role === 'system' ? '系统' : 'Looma AI' }}</span>
+                <span>Looma AI</span>
               </template>
+            </div>
+
+            <div
+              v-if="message.role === 'assistant' && message.timeline?.length"
+              class="mb-2 ml-1 max-w-full select-text pl-3 text-[12px] text-text-muted"
+            >
+              <div class="relative flex flex-col gap-1.5 before:absolute before:left-[3px] before:top-2 before:bottom-2 before:w-px before:bg-border-soft">
+                <details
+                  v-for="step in message.timeline"
+                  :key="`${message.id}:timeline:${step.id}`"
+                  class="group relative pl-4"
+                  :open="step.status === 'active' || step.outputs.length > 0"
+                >
+                  <summary class="flex cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-1.5 py-1 text-[12px] leading-5 transition-colors hover:bg-panel [&::-webkit-details-marker]:hidden">
+                    <span
+                      class="absolute left-0 top-2.5 h-1.5 w-1.5 rounded-full ring-4 ring-panel-soft"
+                      :class="getTimelineStatusClass(step.status)"
+                    />
+                    <span class="min-w-0 flex-1 truncate font-medium text-text-muted">
+                      {{ step.title }}
+                    </span>
+                    <span class="shrink-0 text-[10px] text-text-subtle">
+                      {{ getTimelineStatusLabel(step.status) }} · {{ getAiTimelineStepDuration(step) }}
+                    </span>
+                  </summary>
+                  <div
+                    v-if="step.detail || step.outputs.length"
+                    class="mb-1 ml-1 rounded-lg border border-border-soft bg-panel/80 px-2.5 py-2 text-[11px] leading-5 text-text-muted"
+                  >
+                    <div v-if="step.detail">
+                      {{ step.detail }}
+                    </div>
+                    <div
+                      v-for="output in step.outputs"
+                      :key="`${step.id}:${output.id}`"
+                      class="mt-1 first:mt-0"
+                    >
+                      <span v-if="output.title" class="font-medium text-text-main">{{ output.title }}：</span>
+                      <span>{{ getTimelineOutputText(output) }}</span>
+                    </div>
+                  </div>
+                </details>
+              </div>
             </div>
 
             <div
@@ -589,7 +924,7 @@ watch(activeConversationId, () => {
                 message.role === 'user'
                   ? 'rounded-2xl rounded-tr-md bg-accent text-white'
                   : message.role === 'system'
-                    ? 'rounded-2xl rounded-tl-md border border-border-soft bg-panel text-text-muted'
+                    ? 'mx-auto rounded-2xl border border-dashed border-accent/40 bg-panel/80 text-center text-text-muted'
                     : 'rounded-2xl rounded-tl-md border border-border-soft bg-panel text-text-main',
               ]"
             >
@@ -597,6 +932,14 @@ watch(activeConversationId, () => {
                 v-if="message.role === 'assistant'"
                 :content="message.text"
               />
+              <template v-else-if="message.role === 'system' && message.actions?.some((action) => action.type === BUILD_INDEX_ACTION_TYPE)">
+                <div class="mb-1.5 font-semibold text-text-main">
+                  当前工作空间还没有索引
+                </div>
+                <div>
+                  {{ message.text }}
+                </div>
+              </template>
               <template v-else>
                 {{ message.text }}
               </template>
@@ -633,7 +976,8 @@ watch(activeConversationId, () => {
             <div
               v-for="action in message.actions || []"
               :key="`${message.id}:${action.type}`"
-              class="mt-2 w-full rounded-2xl border border-border-soft bg-panel p-3.5 text-text-main shadow-sm"
+              class="mt-2 rounded-2xl border bg-panel p-3.5 text-text-main shadow-sm"
+              :class="message.role === 'system' ? 'mx-auto max-w-md border-dashed border-accent/40 text-center' : 'w-full border-border-soft'"
             >
               <div class="mb-3 flex items-center justify-between gap-3">
                 <div class="flex min-w-0 items-center gap-2">
@@ -647,7 +991,7 @@ watch(activeConversationId, () => {
                     {{ action.title }}
                   </span>
                 </div>
-                <span class="shrink-0 text-[10px] text-text-subtle">本地 RAG</span>
+                <span v-if="message.role !== 'system'" class="shrink-0 text-[10px] text-text-subtle">本地 RAG</span>
               </div>
               <div class="text-xs leading-5 text-text-muted">
                 {{ action.description }}

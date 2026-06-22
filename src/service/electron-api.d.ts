@@ -15,6 +15,7 @@ interface AiAssistantMessagePayload {
   text: string;
   createdAt: number;
   actions?: AiAssistantMessageActionPayload[];
+  timeline?: AiAssistantTimelineStepPayload[];
 }
 
 interface AiAssistantMessageActionPayload {
@@ -23,6 +24,31 @@ interface AiAssistantMessageActionPayload {
   description: string;
   buttonText: string;
   disabled?: boolean;
+}
+
+type AiAssistantTimelineStepStatusPayload = 'pending' | 'active' | 'completed' | 'error';
+type AiAssistantTimelineOutputTypePayload = 'text' | 'source' | 'metric' | 'code' | 'json' | 'error';
+
+interface AiAssistantTimelineOutputPayload {
+  id: string;
+  type: AiAssistantTimelineOutputTypePayload;
+  title?: string;
+  content?: string;
+  value?: string | number;
+  unit?: string;
+  path?: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface AiAssistantTimelineStepPayload {
+  id: string;
+  title: string;
+  description?: string;
+  detail?: string;
+  status: AiAssistantTimelineStepStatusPayload;
+  startedAt: number;
+  endedAt?: number;
+  outputs: AiAssistantTimelineOutputPayload[];
 }
 
 interface AiAssistantStatePayload {
@@ -55,12 +81,40 @@ interface AppSettingsPayload {
     items: string[];
   };
   ai: {
-    provider: 'ollama';
-    ollamaBaseUrl: string;
-    llmModel: string;
-    embedModel: string;
+    chat: {
+      provider: 'ollama' | 'openai' | 'openai-compatible' | 'deepseek' | 'qwen' | 'custom';
+      model: string;
+      baseUrl?: string;
+      apiKey?: string;
+      temperature?: number;
+      maxTokens?: number;
+    };
+    embedding: {
+      provider: 'ollama' | 'openai' | 'openai-compatible' | 'deepseek' | 'qwen' | 'custom';
+      model: string;
+      baseUrl?: string;
+      apiKey?: string;
+      dimension?: number;
+    };
     vectorStorePath: string;
+    indexingMode: 'manual' | 'incremental' | 'idle';
+    enableAiTimeline: boolean;
+    enableSourceCitation: boolean;
+    localFirstMode: boolean;
   };
+}
+
+interface RagChatMessagePayload {
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  name?: string;
+}
+
+interface RagRequestStatsPayload {
+  history_messages: number;
+  history_token_estimate: number;
+  question_token_estimate: number;
+  total_token_estimate: number;
 }
 
 interface RagSourcePayload {
@@ -77,8 +131,11 @@ interface RagAnswerPayload {
 interface RagIndexPayload {
   status: string;
   document_count?: number;
+  file_count?: number;
   exists?: boolean;
   persist_dir?: string;
+  embedding_model?: string;
+  embedding_provider?: string;
   error?: string;
 }
 
@@ -89,10 +146,12 @@ interface RagIndexStatusPayload {
 }
 
 type RagStreamEventPayload =
+  | { requestId: string; type: 'timeline'; stepId?: string; status?: AiAssistantTimelineStepStatusPayload; title?: string; description?: string; detail?: string; outputs?: Partial<AiAssistantTimelineOutputPayload>[]; step?: Partial<AiAssistantTimelineStepPayload> & { stepId?: string } }
+  | { requestId: string; type: 'progress'; stepId: string; current: number; total?: number; message?: string }
   | { requestId: string; type: 'delta'; text: string }
   | { requestId: string; type: 'sources'; sources: RagSourcePayload[] }
-  | { requestId: string; type: 'done' }
-  | { requestId: string; type: 'error'; error: string };
+  | { requestId: string; type: 'done'; result?: RagIndexPayload; status?: string; document_count?: number; file_count?: number; exists?: boolean; persist_dir?: string }
+  | { requestId: string; type: 'error'; error: string; stepId?: string };
 
 interface OllamaDownloadProgressPayload {
   status: 'downloading' | 'completed' | 'error' | 'cancelled';
@@ -160,10 +219,14 @@ interface ElectronAPI {
   rag: {
     health: () => Promise<Result<{ status: string; service: string }>>;
     status: (workspaceId: string) => Promise<Result<RagIndexStatusPayload>>;
-    index: (workspaceId: string) => Promise<Result<RagIndexPayload>>;
-    ask: (workspaceId: string, question: string) => Promise<Result<RagAnswerPayload>>;
+    chat: (workspaceId: string, question: string, history?: RagChatMessagePayload[], requestStats?: RagRequestStatsPayload) => Promise<Result<RagAnswerPayload>>;
     askStream: {
-      start: (requestId: string, workspaceId: string, question: string) => Promise<Result<void>>;
+      start: (requestId: string, workspaceId: string, question: string, history?: RagChatMessagePayload[], requestStats?: RagRequestStatsPayload) => Promise<Result<void>>;
+      cancel: (requestId: string) => Promise<Result<void>>;
+      onEvent: (listener: (payload: RagStreamEventPayload) => void) => () => void;
+    };
+    indexStream: {
+      start: (requestId: string, workspaceId: string) => Promise<Result<void>>;
       cancel: (requestId: string) => Promise<Result<void>>;
       onEvent: (listener: (payload: RagStreamEventPayload) => void) => () => void;
     };

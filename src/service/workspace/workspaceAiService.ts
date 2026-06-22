@@ -32,6 +32,32 @@ interface AiAssistantMessage {
     buttonText: string
     disabled?: boolean
   }[]
+  timeline?: AiAssistantTimelineStep[]
+}
+
+type AiAssistantTimelineStepStatus = 'pending' | 'active' | 'completed' | 'error'
+type AiAssistantTimelineOutputType = 'text' | 'source' | 'metric' | 'code' | 'json' | 'error'
+
+interface AiAssistantTimelineOutput {
+  id: string
+  type: AiAssistantTimelineOutputType
+  title?: string
+  content?: string
+  value?: string | number
+  unit?: string
+  path?: string
+  metadata?: Record<string, unknown>
+}
+
+interface AiAssistantTimelineStep {
+  id: string
+  title: string
+  description?: string
+  detail?: string
+  status: AiAssistantTimelineStepStatus
+  startedAt: number
+  endedAt?: number
+  outputs: AiAssistantTimelineOutput[]
 }
 
 const createConversationId = () => `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -128,6 +154,52 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
     return normalized.length > 0 ? normalized : undefined
   }
 
+  const normalizeTimelineOutputs = (outputs: unknown): AiAssistantTimelineOutput[] => (
+    Array.isArray(outputs)
+      ? outputs
+        .filter((item: any) =>
+          item
+          && typeof item.id === 'string'
+          && (item.type === 'text' || item.type === 'source' || item.type === 'metric' || item.type === 'code' || item.type === 'json' || item.type === 'error'),
+        )
+        .map((item: any) => ({
+          id: item.id,
+          type: item.type,
+          title: typeof item.title === 'string' ? item.title : undefined,
+          content: typeof item.content === 'string' ? item.content : undefined,
+          value: typeof item.value === 'string' || typeof item.value === 'number' ? item.value : undefined,
+          unit: typeof item.unit === 'string' ? item.unit : undefined,
+          path: typeof item.path === 'string' ? item.path : undefined,
+          metadata: item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata)
+            ? item.metadata as Record<string, unknown>
+            : undefined,
+        }))
+      : []
+  )
+
+  const normalizeTimeline = (timeline: unknown) => {
+    if (!Array.isArray(timeline)) return undefined
+    const normalized = timeline
+      .filter((item: any) =>
+        item
+        && typeof item.id === 'string'
+        && typeof item.title === 'string'
+        && (item.status === 'pending' || item.status === 'active' || item.status === 'completed' || item.status === 'error')
+        && typeof item.startedAt === 'number',
+      )
+      .map((item: any) => ({
+        id: item.id,
+        title: item.title,
+        description: typeof item.description === 'string' ? item.description : undefined,
+        detail: typeof item.detail === 'string' ? item.detail : undefined,
+        status: item.status,
+        startedAt: item.startedAt,
+        endedAt: typeof item.endedAt === 'number' ? item.endedAt : undefined,
+        outputs: normalizeTimelineOutputs(item.outputs),
+      }))
+    return normalized.length > 0 ? normalized : undefined
+  }
+
   const normalizeMessages = (messages: unknown): AiAssistantMessage[] => (
     Array.isArray(messages)
       ? messages
@@ -143,6 +215,7 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
           text: item.text,
           createdAt: typeof item.createdAt === 'number' ? item.createdAt : item.id,
           actions: normalizeActions(item.actions),
+          timeline: normalizeTimeline(item.timeline),
         }))
       : []
   )

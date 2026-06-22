@@ -90,7 +90,14 @@ export const useSettingsStore = defineStore('settings', {
         ai: {
           ...this.settings.ai,
           ...next,
-          provider: 'ollama',
+          chat: {
+            ...this.settings.ai.chat,
+            ...next.chat,
+          },
+          embedding: {
+            ...this.settings.ai.embedding,
+            ...next.embedding,
+          },
         },
       }).ai
       await this.persist()

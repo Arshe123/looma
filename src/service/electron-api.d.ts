@@ -67,16 +67,35 @@ interface AiAssistantConversationPayload {
   draft: string;
 }
 
+interface WorkspaceTabPayloadBase {
+  id: string;
+}
+
+interface FileWorkspaceTabPayload extends WorkspaceTabPayloadBase {
+  kind: 'file';
+  relativePath: string;
+}
+
+interface SystemWorkspaceTabPayload extends WorkspaceTabPayloadBase {
+  kind: 'system';
+  page: 'settings';
+}
+
+type WorkspaceTabPayload = FileWorkspaceTabPayload | SystemWorkspaceTabPayload;
+
 interface WorkspaceMetaPayload {
   expandedDirs: string[];
   selectedPaths: string[];
   noteOrder: Record<string, string[]>;
   openedFiles?: string[];
   activeFile?: string;
+  tabs?: WorkspaceTabPayload[];
+  activeTabId?: string;
   fileSessions?: Record<string, any>;
   activeSidebarPanel?: SidebarPanelId | null;
   sidebarPanels?: SidebarPanelState[];
 }
+
 interface RagChatMessagePayload {
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createMarkdownSerializationGate } from './markdown-serialization-gate'
+import { createMarkdownSerializationGate } from '../markdown-serialization-gate'
 
 describe('createMarkdownSerializationGate', () => {
   it('does not serialize when the rich-text preview has not changed', () => {

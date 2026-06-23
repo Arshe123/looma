@@ -12,7 +12,7 @@ import { MarkdownManager } from '@tiptap/markdown'
 import {
   prepareMarkdownForRichText,
   serializeMarkdownAst,
-} from './markdown-rich-text'
+} from '../markdown-rich-text'
 
 const createManager = () => new MarkdownManager({
   extensions: [

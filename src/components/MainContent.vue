@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { FileQuestion, FileText } from 'lucide-vue-next'
-import { useWorkspaceStore } from '../store/workspace'
+import { useWorkspaceStore, type FileWorkspaceTab } from '../store/workspace'
 import EditorLoadError from './editor/EditorLoadError.vue'
 import EditorTabs from './EditorTabs.vue'
 import SettingsPage from './SettingsPage.vue'
@@ -44,15 +44,23 @@ const editorByExt = {
   '.txt': createAsyncEditor(() => import('./editor/PlainTextEditor.vue')),
 } as const
 
+const activeTab = computed(() => workspaceStore.tabs.find((tab) => tab.id === workspaceStore.activeTabId) || null)
+const fileTabPaths = computed(() => workspaceStore.tabs
+  .filter((tab): tab is FileWorkspaceTab => tab.kind === 'file')
+  .map((tab) => tab.relativePath))
+const hasSettingsTab = computed(() => workspaceStore.tabs.some((tab) => tab.kind === 'system' && tab.page === 'settings'))
+const isActiveSettingsTab = computed(() => activeTab.value?.kind === 'system' && activeTab.value.page === 'settings')
+const isActiveFileTab = computed(() => activeTab.value?.kind === 'file')
 const activeExt = computed(() => getExt(workspaceStore.activeFilePath))
 const currentEditor = computed(() => (editorByExt as any)[activeExt.value] || null)
-const isActiveMedia = computed(() => isMediaPath(workspaceStore.activeFilePath))
+const isActiveMedia = computed(() => isActiveFileTab.value && isMediaPath(workspaceStore.activeFilePath))
 const isSupportedFile = computed(() => isActiveMedia.value || Boolean(currentEditor.value))
-const mediaPreviewTabs = computed(() => getMediaPreviewTabs(workspaceStore.openedFiles, workspaceStore.activeWorkspace?.path || ''))
-const hasOpenTabs = computed(() => workspaceStore.openedFiles.length > 0 || workspaceStore.openedSystemPages.length > 0)
+const mediaPreviewTabs = computed(() => getMediaPreviewTabs(fileTabPaths.value, workspaceStore.activeWorkspace?.path || ''))
+const hasOpenTabs = computed(() => workspaceStore.tabs.length > 0)
+const hasFileTabs = computed(() => fileTabPaths.value.length > 0)
 const textEditorTabs = computed(() => {
   const workspacePath = workspaceStore.activeWorkspace?.path || ''
-  return workspaceStore.openedFiles
+  return fileTabPaths.value
     .filter(isEditableTextPath)
     .map((relativePath) => {
       const ext = getExt(relativePath)
@@ -103,9 +111,9 @@ watch(
 )
 
 watch(
-  () => [workspaceStore.activeWorkspace?.path || '', workspaceStore.openedFiles.join('\0')] as const,
+  () => [workspaceStore.activeWorkspace?.path || '', fileTabPaths.value.join('\0')] as const,
   () => {
-    for (const relPath of workspaceStore.openedFiles) {
+    for (const relPath of fileTabPaths.value) {
       if (isEditableTextPath(relPath)) {
         workspaceStore.loadTextFileContent(relPath).catch(() => {})
       }
@@ -167,9 +175,12 @@ onUnmounted(() => {
   <div class="h-full flex flex-col flex-1 overflow-hidden rounded-lg bg-panel">
     <EditorTabs v-if="hasOpenTabs" />
 
-    <SettingsPage v-if="workspaceStore.activeSystemPage === 'settings'" />
+    <SettingsPage
+      v-if="hasSettingsTab"
+      v-show="isActiveSettingsTab"
+    />
 
-    <main v-else-if="workspaceStore.activeFilePath" class="flex-1 flex overflow-hidden">
+    <main v-if="hasFileTabs" v-show="isActiveFileTab" class="flex-1 flex overflow-hidden">
       <div class="relative flex-1 overflow-hidden">
         <div v-if="!isSupportedFile" class="h-full w-full flex flex-col items-center justify-center text-text-subtle p-12 text-center bg-panel/50">
           <FileQuestion :size="64" class="mb-6 opacity-30 text-text-muted" />
@@ -205,7 +216,7 @@ onUnmounted(() => {
       </div>
     </main>
 
-    <div v-else class="flex-1 flex flex-col items-center justify-center text-text-subtle p-12 text-center">
+    <div v-if="!hasOpenTabs || (!isActiveFileTab && !isActiveSettingsTab)" class="flex-1 flex flex-col items-center justify-center text-text-subtle p-12 text-center">
       <FileText :size="64" class="mb-6 opacity-20" />
       <h3 class="text-xl font-medium mb-2">欢迎来到您的笔记中</h3>
       <p class="max-w-xs text-sm opacity-60">从列表中选择一个笔记或创建一个新的笔记以开始。</p>

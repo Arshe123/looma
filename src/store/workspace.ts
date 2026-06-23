@@ -21,8 +21,20 @@ import { executeRedoAction, executeUndoAction, type HistoryEffects } from './wor
 import {
   buildWorkspaceMetaPayload,
 } from './workspace-meta-utils'
-import type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantState, EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SystemPageId, ThemeName, UndoAction, Workspace } from './workspace-types'
-export type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, AiAssistantTimelineOutput, AiAssistantTimelineOutputType, AiAssistantTimelineStep, AiAssistantTimelineStepStatus, EditorSession, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, ThemeName, UndoAction, Workspace, WorkspaceMeta } from './workspace-types'
+import {
+  createFileTab,
+  createSystemTab,
+  createTabsFromOpenedFiles,
+  getFilePathsFromTabs,
+  getFileTabId,
+  getSystemTabId,
+  getTabTitle,
+  normalizeWorkspaceTabs,
+  remapFileTabsByMoves,
+  removeFileTabsByPaths,
+} from './workspace-tab-utils'
+import type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantState, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceTab } from './workspace-types'
+export type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, AiAssistantTimelineOutput, AiAssistantTimelineOutputType, AiAssistantTimelineStep, AiAssistantTimelineStepStatus, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceMeta, WorkspaceTab } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
 let systemThemeCleanup: (() => void) | null = null
@@ -248,6 +260,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     openedTextFileContents: {} as Record<string, OpenTextFileState>,
     openedFiles: [] as string[],
     openedSystemPages: [] as SystemPageId[],
+    tabs: [] as WorkspaceTab[],
+    activeTabId: '' as string,
     activeSystemPage: null as SystemPageId | null,
     activeSettingsSection: 'appearance' as SettingsSectionId,
     activeSidebarPanel: DEFAULT_ACTIVE_SIDEBAR_PANEL as SidebarPanelId | null,
@@ -288,6 +302,17 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!this.isSupportedActiveFile) return false
       if (!isEditableTextPath(state.activeFilePath)) return false // Media files don't have unsaved changes
       return state.activeFileContent !== state.activeFileLoadedContent
+    },
+    activeTab(state): WorkspaceTab | null {
+      return state.tabs.find((tab) => tab.id === state.activeTabId) || null
+    },
+    activeFileTab(): FileWorkspaceTab | null {
+      const tab = this.activeTab
+      return tab?.kind === 'file' ? tab : null
+    },
+    activeSystemTab(): SystemWorkspaceTab | null {
+      const tab = this.activeTab
+      return tab?.kind === 'system' ? tab : null
     },
     keyOfDir: () => (dir: string) => normalizeDir(dir),
     activeDirEntries(state): FsEntry[] {
@@ -580,25 +605,197 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeFileSaveError = ''
     },
 
-    openSettingsPage(section: SettingsSectionId = 'appearance') {
-      if (!this.openedSystemPages.includes('settings')) {
-        this.openedSystemPages.push('settings')
+    syncLegacyTabState() {
+      this.openedFiles = getFilePathsFromTabs(this.tabs)
+      this.openedSystemPages = this.tabs
+        .filter((tab): tab is SystemWorkspaceTab => tab.kind === 'system')
+        .map((tab) => tab.page)
+
+      const active = this.tabs.find((tab) => tab.id === this.activeTabId) || null
+      this.activeSystemPage = active?.kind === 'system' ? active.page : null
+    },
+
+    setTabs(nextTabs: WorkspaceTab[], activeTabId?: string) {
+      const nextActiveTabId = activeTabId ?? this.activeTabId
+      this.tabs = normalizeWorkspaceTabs(nextTabs)
+      this.activeTabId = nextActiveTabId && this.tabs.some((tab) => tab.id === nextActiveTabId) ? nextActiveTabId : ''
+      this.syncLegacyTabState()
+    },
+
+    openFileTab(relativePath: string) {
+      const rel = normalizeDir(relativePath)
+      if (!rel) {
+        this.activeTabId = ''
+        this.activeSystemPage = null
+        this.resetActiveFileState()
+        return
       }
-      this.activeSettingsSection = section
-      this.activeSystemPage = 'settings'
-      this.resetActiveFileState()
+
+      const id = getFileTabId(rel)
+      if (!this.tabs.some((tab) => tab.id === id)) {
+        this.tabs.push(createFileTab(rel))
+      }
+      this.activateTab(id)
+    },
+
+    openSystemTab(page: SystemPageId, options: { section?: SettingsSectionId } = {}) {
+      const id = getSystemTabId(page)
+      if (!this.tabs.some((tab) => tab.id === id)) {
+        this.tabs.push(createSystemTab(page))
+      }
+      if (page === 'settings') {
+        this.activeSettingsSection = options.section || this.activeSettingsSection
+      }
+      this.activateTab(id)
+    },
+
+    activateTab(tabId: string) {
+      const tab = this.tabs.find((item) => item.id === tabId)
+      if (!tab) return
+
+      this.activeTabId = tab.id
+      if (tab.kind === 'file') {
+        this.activateFileTab(tab.relativePath)
+      } else {
+        this.activateSystemTab(tab.page)
+      }
+      this.syncLegacyTabState()
+      this.saveWorkspaceMeta().catch(() => {})
+    },
+
+    openSettingsPage(section: SettingsSectionId = 'appearance') {
+      this.openSystemTab('settings', { section })
     },
 
     closeSystemPage(page: SystemPageId) {
-      this.openedSystemPages = this.openedSystemPages.filter((item) => item !== page)
-      if (this.activeSystemPage !== page) return
+      this.closeTab(getSystemTabId(page)).catch(() => {})
+    },
 
-      this.activeSystemPage = null
-      const nextFile = this.openedFiles[this.openedFiles.length - 1]
-      if (nextFile) {
-        this.setActiveFileRelative(nextFile)
-      } else {
-        this.resetActiveFileState()
+    isFileDirty(relativePath: string) {
+      const rel = normalizeDir(relativePath)
+      const state = this.openedTextFileContents[rel]
+      if (!state) return false
+      return state.content !== state.loadedContent
+    },
+
+    isSystemTabDirty(_page: SystemPageId) {
+      return false
+    },
+
+    isTabDirty(tabId: string) {
+      const tab = this.tabs.find((item) => item.id === tabId)
+      if (!tab) return false
+      if (tab.kind === 'file') return this.isFileDirty(tab.relativePath)
+      return this.isSystemTabDirty(tab.page)
+    },
+
+    async confirmCloseDirtyTab(tab: WorkspaceTab): Promise<'save' | 'discard' | 'cancel'> {
+      const title = getTabTitle(tab)
+      const result = await window.electronAPI.app.showMessageBox({
+        type: 'warning',
+        title: '内容尚未保存',
+        message: `${title} 有未保存的更改，关闭前要保存吗？`,
+        buttons: ['保存', '不保存', '取消'],
+        defaultId: 0,
+        cancelId: 2,
+      })
+      if (result.response === 0) return 'save'
+      if (result.response === 1) return 'discard'
+      return 'cancel'
+    },
+
+    async saveTab(tab: WorkspaceTab): Promise<boolean> {
+      if (tab.kind === 'file') {
+        const state = this.openedTextFileContents[tab.relativePath]
+        const result = await this.saveActiveFileContent(state?.content, tab.relativePath)
+        return result.success
+      }
+      return true
+    },
+
+    discardTabChanges(tab: WorkspaceTab) {
+      if (tab.kind !== 'file') return
+      const state = this.openedTextFileContents[tab.relativePath]
+      if (!state) return
+      this.openedTextFileContents[tab.relativePath] = {
+        ...state,
+        content: state.loadedContent,
+        saveError: '',
+      }
+      this.mirrorActiveTextFileState(tab.relativePath)
+    },
+
+    cleanupTabState(tab: WorkspaceTab) {
+      if (tab.kind === 'file') {
+        this.removeOpenedTextFileStates([tab.relativePath])
+      }
+    },
+
+    removeTab(tabId: string) {
+      const idx = this.tabs.findIndex((tab) => tab.id === tabId)
+      if (idx === -1) return
+
+      const [removed] = this.tabs.splice(idx, 1)
+      this.cleanupTabState(removed)
+
+      if (this.activeTabId === tabId) {
+        const nextTab = this.tabs[idx] || this.tabs[idx - 1]
+        if (nextTab) {
+          this.activeTabId = nextTab.id
+          if (nextTab.kind === 'file') this.activateFileTab(nextTab.relativePath)
+          else this.activateSystemTab(nextTab.page)
+        } else {
+          this.activeTabId = ''
+          this.activeSystemPage = null
+          this.resetActiveFileState()
+        }
+      }
+      this.syncLegacyTabState()
+    },
+
+    async closeTab(tabId: string): Promise<boolean> {
+      const tab = this.tabs.find((item) => item.id === tabId)
+      if (!tab) return true
+
+      if (this.isTabDirty(tabId)) {
+        const decision = await this.confirmCloseDirtyTab(tab)
+        if (decision === 'cancel') return false
+        if (decision === 'save') {
+          const saved = await this.saveTab(tab)
+          if (!saved) return false
+        } else {
+          this.discardTabChanges(tab)
+        }
+      }
+
+      this.removeTab(tabId)
+      await this.saveWorkspaceMeta()
+      return true
+    },
+
+    async closeTabsToRight(tabId: string) {
+      const idx = this.tabs.findIndex((tab) => tab.id === tabId)
+      if (idx === -1) return
+      const toClose = this.tabs.slice(idx + 1)
+      for (const tab of toClose) {
+        const ok = await this.closeTab(tab.id)
+        if (!ok) break
+      }
+    },
+
+    async closeSavedTabs() {
+      const toClose = this.tabs.filter((tab) => !this.isTabDirty(tab.id))
+      for (const tab of toClose) {
+        const ok = await this.closeTab(tab.id)
+        if (!ok) break
+      }
+    },
+
+    async closeAllTabs() {
+      const toClose = [...this.tabs]
+      for (const tab of toClose) {
+        const ok = await this.closeTab(tab.id)
+        if (!ok) break
       }
     },
 
@@ -623,15 +820,18 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     removeOpenedTextFileStates(relativePaths: string[]) {
-      for (const path of relativePaths) {
+      const targets = relativePaths.map(normalizeDir).filter(Boolean)
+      for (const path of Object.keys(this.openedTextFileContents)) {
         const rel = normalizeDir(path)
-        delete this.openedTextFileContents[rel]
+        if (targets.some((target) => isSameOrChildPath(target, rel))) {
+          delete this.openedTextFileContents[rel]
+        }
       }
     },
 
     remapOpenedTextFileStates(items: { from: string; to: string }[]) {
       const nextStates: Record<string, OpenTextFileState> = {}
-      for (const [relPath, state] of Object.entries(this.openedTextFileContents)) {
+      for (const [relPath, state] of Object.entries(this.openedTextFileContents) as [string, OpenTextFileState][]) {
         nextStates[remapByMoves(relPath, items)] = state
       }
       this.openedTextFileContents = nextStates
@@ -691,21 +891,35 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     syncOpenedFilesAfterRemoval(removedPaths: string[]) {
-      const prevLen = this.openedFiles.length
-      this.openedFiles = removePathsAndDescendants(this.openedFiles, removedPaths)
+      const prevIds = this.tabs.map((tab) => tab.id).join('\0')
+      this.tabs = removeFileTabsByPaths(this.tabs, removedPaths)
       this.removeOpenedTextFileStates(removedPaths)
-      return this.openedFiles.length !== prevLen
+      if (this.activeFileRelativePath && removedPaths.some((path) => isSameOrChildPath(path, this.activeFileRelativePath))) {
+        const nextTab = this.tabs[0]
+        if (nextTab) {
+          this.activeTabId = nextTab.id
+          if (nextTab.kind === 'file') this.activateFileTab(nextTab.relativePath)
+          else this.activateSystemTab(nextTab.page)
+        } else {
+          this.activeTabId = ''
+          this.resetActiveFileState()
+        }
+      }
+      this.syncLegacyTabState()
+      return this.tabs.map((tab) => tab.id).join('\0') !== prevIds
     },
 
     syncOpenedFilesAfterMove(items: { from: string; to: string }[]) {
-      let changed = false
-      this.openedFiles = this.openedFiles.map((of) => {
-        const next = remapByMoves(of, items)
-        if (next !== of) changed = true
-        return next
-      })
+      const result = remapFileTabsByMoves(this.tabs, items)
+      this.tabs = result.tabs
+      const activeTab = this.activeTabId ? this.tabs.find((tab) => tab.id === this.activeTabId) : null
+      if (!activeTab && this.activeFileRelativePath) {
+        const remappedActive = remapByMoves(this.activeFileRelativePath, items)
+        this.activeTabId = this.tabs.some((tab) => tab.id === getFileTabId(remappedActive)) ? getFileTabId(remappedActive) : this.activeTabId
+      }
       this.remapOpenedTextFileStates(items)
-      return changed
+      this.syncLegacyTabState()
+      return result.changed
     },
 
     async applyHistoryEffects(effects: HistoryEffects, options: { reopenRestored?: boolean } = {}) {
@@ -944,6 +1158,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeWorkspaceId = null
       this.resetActiveFileState()
       this.openedSystemPages = []
+      this.tabs = []
+      this.activeTabId = ''
       this.activeSystemPage = null
       this.watchedWorkspaceId = null
       this.openedFiles = []
@@ -956,6 +1172,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.dirEntries = {}
       this.undoStack = []
       this.redoStack = []
+
       await window.electronAPI.workspace.setActive(null)
     },
 
@@ -1024,6 +1241,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.noteOrder = {}
         this.openedFiles = []
         this.openedSystemPages = []
+        this.tabs = []
+        this.activeTabId = ''
         this.activeSystemPage = null
         this.openedTextFileContents = {}
         this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
@@ -1035,9 +1254,19 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.expandedDirs = Array.isArray(metaResult.data.expandedDirs) ? metaResult.data.expandedDirs : []
       this.selectedPaths = Array.isArray(metaResult.data.selectedPaths) ? metaResult.data.selectedPaths.map(normalizeDir) : []
       this.noteOrder = metaResult.data.noteOrder || {}
-      this.openedFiles = Array.isArray(metaResult.data.openedFiles) ? metaResult.data.openedFiles.map(normalizeDir) : []
-      this.openedSystemPages = []
-      this.activeSystemPage = null
+      const legacyOpenedFiles = Array.isArray(metaResult.data.openedFiles) ? metaResult.data.openedFiles.map(normalizeDir) : []
+      const restoredTabs = normalizeWorkspaceTabs(metaResult.data.tabs)
+      this.tabs = restoredTabs.length > 0 ? restoredTabs : createTabsFromOpenedFiles(legacyOpenedFiles)
+
+      const activeTabIdFromMeta = typeof metaResult.data.activeTabId === 'string' ? metaResult.data.activeTabId : ''
+      const activeFileTabId = metaResult.data.activeFile ? getFileTabId(metaResult.data.activeFile) : ''
+      this.activeTabId = this.tabs.some((tab) => tab.id === activeTabIdFromMeta)
+        ? activeTabIdFromMeta
+        : this.tabs.some((tab) => tab.id === activeFileTabId)
+          ? activeFileTabId
+          : this.tabs[this.tabs.length - 1]?.id || ''
+      this.syncLegacyTabState()
+
       this.fileSessions = metaResult.data.fileSessions || {}
       await this.loadAiAssistantState(id)
       this.openedTextFileContents = {}
@@ -1046,11 +1275,9 @@ export const useWorkspaceStore = defineStore('workspace', {
         metaResult.data.sidebarPanels,
       )
       
-      // Restore active file
-      if (metaResult.data.activeFile && this.openedFiles.includes(metaResult.data.activeFile)) {
-        await this.setActiveFileRelative(metaResult.data.activeFile)
-      } else if (this.openedFiles.length > 0) {
-        await this.setActiveFileRelative(this.openedFiles[this.openedFiles.length - 1])
+      // Restore active tab
+      if (this.activeTabId) {
+        this.activateTab(this.activeTabId)
       }
     },
 
@@ -1077,6 +1304,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         selectedPaths: this.selectedPaths,
         noteOrder: this.noteOrder,
         openedFiles: this.openedFiles,
+        tabs: this.tabs,
+        activeTabId: this.activeTabId,
         activeSidebarPanel: this.activeSidebarPanel,
         activeFileRelativePath: this.activeFileRelativePath,
         fileSessions: this.fileSessions,
@@ -1197,6 +1426,10 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     setActiveFileRelative(relativePath: string) {
+      this.openFileTab(relativePath)
+    },
+
+    activateFileTab(relativePath: string) {
       const rel = normalizeDir(relativePath)
       if (!rel) {
         this.resetActiveFileState()
@@ -1207,13 +1440,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!ws) return
       this.activeSystemPage = null
       this.activeFileRelativePath = rel
-      
-      if (!this.openedFiles.includes(rel)) {
-        this.openedFiles.push(rel)
-        this.saveWorkspaceMeta().catch(() => {})
-      }
-
       this.activeFilePath = this.resolveAbsolutePath(rel)
+
       const existing = this.openedTextFileContents[rel]
       if (existing) {
         this.mirrorActiveTextFileState(rel)
@@ -1224,6 +1452,10 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.activeFileSaveError = ''
       }
       this.loadTextFileContent(rel).catch(() => {})
+    },
+
+    activateSystemTab(page: SystemPageId) {
+      this.activeSystemPage = page
     },
 
     setActiveFileContent(content: string, relativePath?: string) {
@@ -1446,15 +1678,10 @@ export const useWorkspaceStore = defineStore('workspace', {
           this.saveWorkspaceMeta().catch(console.error)
         }
         
-        for (const item of items) {
-          if (this.activeFileRelativePath === item.from) {
-            this.openedFiles = this.openedFiles.filter(of => of !== item.from)
-            this.setActiveFileRelative(item.to)
-            break
-          }
-        }
-        
+        const wasActiveFile = items.some((item) => this.activeFileRelativePath === item.from)
+        const activeAfterMove = wasActiveFile ? remapByMoves(this.activeFileRelativePath, items) : ''
         if (this.syncOpenedFilesAfterMove(items)) {
+          if (activeAfterMove) this.activateFileTab(activeAfterMove)
           this.saveWorkspaceMeta().catch(() => {})
         }
       }
@@ -1475,14 +1702,11 @@ export const useWorkspaceStore = defineStore('workspace', {
         return
       }
       
-      // Update openedFiles
-      const renamedIdx = this.openedFiles.indexOf(from)
-      if (renamedIdx > -1) {
-        this.openedFiles.splice(renamedIdx, 1, to)
+      if (this.syncOpenedFilesAfterMove([{ from, to }])) {
+        if (this.activeFileRelativePath === from) this.activateFileTab(to)
         this.saveWorkspaceMeta().catch(() => {})
       }
 
-      if (this.activeFileRelativePath === from) this.setActiveFileRelative(to)
       this.undoStack.unshift({ type: 'move', items: [{ from, to }] })
       this.redoStack = []
     },

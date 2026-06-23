@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isMissingDirectoryResult } from './workspace-utils'
+import { isMissingDirectoryResult } from '../workspace-utils'
 
 const missingDirResult = {
   success: false,

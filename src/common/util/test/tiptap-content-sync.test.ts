@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { replaceExternalMarkdownContent } from './tiptap-content-sync'
+import { replaceExternalMarkdownContent } from '../tiptap-content-sync'
 
 describe('replaceExternalMarkdownContent', () => {
   it('sets external content explicitly as markdown without emitting an editor update', () => {

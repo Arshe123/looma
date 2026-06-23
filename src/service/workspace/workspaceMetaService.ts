@@ -6,12 +6,18 @@ import { workspaceService } from './workspaceService'
 const META_DIR_NAME = '.looma'
 const META_FILE_NAME = 'workspace.json'
 
+export type WorkspaceTab =
+  | { id: string; kind: 'file'; relativePath: string }
+  | { id: string; kind: 'system'; page: 'settings' }
+
 export interface WorkspaceMeta {
   expandedDirs: string[]
   selectedPaths: string[]
   noteOrder: Record<string, string[]>
   openedFiles?: string[]
   activeFile?: string
+  tabs?: WorkspaceTab[]
+  activeTabId?: string
   fileSessions?: Record<string, any>
   activeSidebarPanel?: 'files' | 'outline' | 'ai' | null
   sidebarPanels?: { id: 'files' | 'outline' | 'ai'; size: number }[]
@@ -96,6 +102,8 @@ export const workspaceMetaService = {
         noteOrder: typeof parsed.noteOrder === 'object' && parsed.noteOrder ? (parsed.noteOrder as any) : {},
         openedFiles: Array.isArray(parsed.openedFiles) ? parsed.openedFiles : [],
         activeFile: typeof parsed.activeFile === 'string' ? parsed.activeFile : undefined,
+        tabs: Array.isArray(parsed.tabs) ? parsed.tabs : undefined,
+        activeTabId: typeof parsed.activeTabId === 'string' ? parsed.activeTabId : undefined,
         fileSessions: typeof parsed.fileSessions === 'object' && parsed.fileSessions ? parsed.fileSessions : {},
         activeSidebarPanel:
           parsed.activeSidebarPanel === null || parsed.activeSidebarPanel === 'files' || parsed.activeSidebarPanel === 'outline' || parsed.activeSidebarPanel === 'ai'
@@ -103,7 +111,7 @@ export const workspaceMetaService = {
             : undefined,
         sidebarPanels: Array.isArray(parsed.sidebarPanels) ? parsed.sidebarPanels : undefined,
       }
-      
+
       return {
         success: true,
         data: migratedMeta,

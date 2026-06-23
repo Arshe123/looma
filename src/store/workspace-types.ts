@@ -96,6 +96,22 @@ export type SidebarPanelId = 'files' | 'outline' | 'ai'
 export type SystemPageId = 'settings'
 export type SettingsSectionId = 'appearance' | 'editor' | 'ai'
 
+export type WorkspaceTabKind = 'file' | 'system'
+
+export interface FileWorkspaceTab {
+  id: string
+  kind: 'file'
+  relativePath: string
+}
+
+export interface SystemWorkspaceTab {
+  id: string
+  kind: 'system'
+  page: SystemPageId
+}
+
+export type WorkspaceTab = FileWorkspaceTab | SystemWorkspaceTab
+
 export interface SidebarPanelState {
   id: SidebarPanelId
   size: number
@@ -107,6 +123,8 @@ export interface WorkspaceMeta {
   noteOrder: Record<string, string[]>
   openedFiles?: string[]
   activeFile?: string
+  tabs?: WorkspaceTab[]
+  activeTabId?: string
   fileSessions?: Record<string, EditorSession>
   activeSidebarPanel?: SidebarPanelId | null
   sidebarPanels?: SidebarPanelState[]

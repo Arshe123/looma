@@ -1,51 +1,24 @@
 <script setup lang="ts">
-import { useWorkspaceStore } from '../store/workspace'
+import { useWorkspaceStore, type WorkspaceTab } from '../store/workspace'
 import { X } from 'lucide-vue-next'
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { FILE_TREE_REVEAL_ACTIVE_FILE_EVENT } from '@/common/util/file-tree-utils'
+import { getTabTitle } from '@/store/workspace-tab-utils'
 
 const workspaceStore = useWorkspaceStore()
 
-const getTabDisplayName = (relPath: string) => {
-  const fileName = relPath.split('/').pop() || relPath
-  const dotIndex = fileName.lastIndexOf('.')
-  const ext = dotIndex > 0 && dotIndex < fileName.length - 1 ? fileName.slice(dotIndex) : ''
-  return ext ? fileName.slice(0, -ext.length) : fileName
-}
-
-const closeTab = (e: Event | null, relPath: string) => {
+const closeTab = async (e: Event | null, tabId: string) => {
   if (e) e.stopPropagation()
-  const idx = workspaceStore.openedFiles.indexOf(relPath)
-  if (idx > -1) {
-    workspaceStore.openedFiles.splice(idx, 1)
-    workspaceStore.removeOpenedTextFileStates([relPath])
-    workspaceStore.saveWorkspaceMeta().catch(() => {})
-    
-    if (workspaceStore.activeFileRelativePath === relPath) {
-      const nextTab = workspaceStore.openedFiles[idx] || workspaceStore.openedFiles[idx - 1]
-      if (nextTab) {
-        workspaceStore.setActiveFileRelative(nextTab)
-      } else {
-        workspaceStore.setActiveFileRelative('')
-      }
-    }
+  await workspaceStore.closeTab(tabId)
+}
+
+const selectTab = (tab: WorkspaceTab) => {
+  if (workspaceStore.activeTabId !== tab.id) {
+    workspaceStore.activateTab(tab.id)
   }
-}
-
-const selectTab = (relPath: string) => {
-  if (workspaceStore.activeFileRelativePath !== relPath) {
-    workspaceStore.setActiveFileRelative(relPath)
+  if (tab.kind === 'file') {
+    window.dispatchEvent(new CustomEvent(FILE_TREE_REVEAL_ACTIVE_FILE_EVENT))
   }
-  window.dispatchEvent(new CustomEvent(FILE_TREE_REVEAL_ACTIVE_FILE_EVENT))
-}
-
-const selectSettingsTab = () => {
-  workspaceStore.openSettingsPage()
-}
-
-const closeSettingsTab = (e: Event) => {
-  e.stopPropagation()
-  workspaceStore.closeSystemPage('settings')
 }
 
 let draggedIndex = -1
@@ -61,11 +34,11 @@ const onDragOver = (e: DragEvent, index: number) => {
   e.preventDefault()
   if (draggedIndex === -1 || draggedIndex === index) return
   
-  const items = [...workspaceStore.openedFiles]
+  const items = [...workspaceStore.tabs]
   const [removed] = items.splice(draggedIndex, 1)
   items.splice(index, 0, removed)
   
-  workspaceStore.openedFiles = items
+  workspaceStore.setTabs(items, workspaceStore.activeTabId)
   draggedIndex = index
   workspaceStore.saveWorkspaceMeta().catch(() => {})
 }
@@ -86,15 +59,17 @@ const onWheel = (e: WheelEvent) => {
 const menuOpen = ref(false)
 const menuX = ref(0)
 const menuY = ref(0)
-const contextMenuTab = ref<string>('')
+const contextMenuTabId = ref<string>('')
+const contextMenuTab = computed(() => workspaceStore.tabs.find((tab) => tab.id === contextMenuTabId.value) || null)
+const isContextMenuFileTab = computed(() => contextMenuTab.value?.kind === 'file')
 
 const closeMenu = () => {
   menuOpen.value = false
 }
 
-const onContextMenu = (event: MouseEvent, relPath: string) => {
+const onContextMenu = (event: MouseEvent, tab: WorkspaceTab) => {
   event.preventDefault()
-  contextMenuTab.value = relPath
+  contextMenuTabId.value = tab.id
   const pad = 8
   const width = 180
   const height = 260
@@ -105,73 +80,50 @@ const onContextMenu = (event: MouseEvent, relPath: string) => {
   menuOpen.value = true
 }
 
-const handleCloseTab = () => {
-  if (!contextMenuTab.value) return
-  closeTab(null, contextMenuTab.value)
+const handleCloseTab = async () => {
+  if (!contextMenuTabId.value) return
+  await workspaceStore.closeTab(contextMenuTabId.value)
   closeMenu()
 }
 
-const handleCloseRightTabs = () => {
-  if (!contextMenuTab.value) return
-  const idx = workspaceStore.openedFiles.indexOf(contextMenuTab.value)
-  if (idx > -1) {
-    const toRemove = workspaceStore.openedFiles.slice(idx + 1)
-    if (toRemove.length > 0) {
-      workspaceStore.openedFiles.splice(idx + 1)
-      workspaceStore.removeOpenedTextFileStates(toRemove)
-      workspaceStore.saveWorkspaceMeta().catch(() => {})
-      if (toRemove.includes(workspaceStore.activeFileRelativePath)) {
-        workspaceStore.setActiveFileRelative(contextMenuTab.value)
-      }
-    }
-  }
+const handleCloseRightTabs = async () => {
+  if (!contextMenuTabId.value) return
+  await workspaceStore.closeTabsToRight(contextMenuTabId.value)
   closeMenu()
 }
 
-const handleCloseSavedTabs = () => {
-  const activeUnsaved = workspaceStore.hasUnsavedChanges
-  const activeRel = workspaceStore.activeFileRelativePath
-  
-  if (activeUnsaved && activeRel) {
-    const toRemove = workspaceStore.openedFiles.filter((rel) => rel !== activeRel)
-    workspaceStore.openedFiles = [activeRel]
-    workspaceStore.removeOpenedTextFileStates(toRemove)
-  } else {
-    workspaceStore.removeOpenedTextFileStates(workspaceStore.openedFiles)
-    workspaceStore.openedFiles = []
-    workspaceStore.setActiveFileRelative('')
-  }
-  workspaceStore.saveWorkspaceMeta().catch(() => {})
+const handleCloseSavedTabs = async () => {
+  await workspaceStore.closeSavedTabs()
   closeMenu()
 }
 
-const handleCloseAllTabs = () => {
-  workspaceStore.removeOpenedTextFileStates(workspaceStore.openedFiles)
-  workspaceStore.openedFiles = []
-  workspaceStore.setActiveFileRelative('')
-  workspaceStore.saveWorkspaceMeta().catch(() => {})
+const handleCloseAllTabs = async () => {
+  await workspaceStore.closeAllTabs()
   closeMenu()
 }
 
 const handleCopyPath = () => {
-  if (!contextMenuTab.value || !workspaceStore.activeWorkspace) return
+  const tab = contextMenuTab.value
+  if (!tab || tab.kind !== 'file' || !workspaceStore.activeWorkspace) return
   const wsPath = workspaceStore.activeWorkspace.path
   const sep = wsPath.includes('\\') ? '\\' : '/'
   const root = wsPath.endsWith(sep) ? wsPath.slice(0, -1) : wsPath
-  const absPath = `${root}${sep}${contextMenuTab.value.split('/').join(sep)}`
+  const absPath = `${root}${sep}${tab.relativePath.split('/').join(sep)}`
   navigator.clipboard.writeText(absPath).catch(() => {})
   closeMenu()
 }
 
 const handleCopyRelativePath = () => {
-  if (!contextMenuTab.value) return
-  navigator.clipboard.writeText(contextMenuTab.value).catch(() => {})
+  const tab = contextMenuTab.value
+  if (!tab || tab.kind !== 'file') return
+  navigator.clipboard.writeText(tab.relativePath).catch(() => {})
   closeMenu()
 }
 
 const handleRevealInExplorer = async () => {
-  if (!contextMenuTab.value) return
-  await workspaceStore.showItemInFolder(contextMenuTab.value)
+  const tab = contextMenuTab.value
+  if (!tab || tab.kind !== 'file') return
+  await workspaceStore.showItemInFolder(tab.relativePath)
   closeMenu()
 }
 
@@ -198,11 +150,11 @@ onUnmounted(() => {
       @wheel="onWheel"
     >
       <div
-        v-for="(relPath, index) in workspaceStore.openedFiles"
-        :key="relPath"
+        v-for="(tab, index) in workspaceStore.tabs"
+        :key="tab.id"
         class="group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full border-r border-border-soft cursor-pointer relative shrink-0 transition-colors rounded-t-lg"
         :class="[
-          workspaceStore.activeFileRelativePath === relPath
+          workspaceStore.activeTabId === tab.id
             ? 'bg-surface text-accent'
             : 'border-b bg-panel-soft text-text-muted hover:bg-accent-soft'
         ]"
@@ -210,41 +162,18 @@ onUnmounted(() => {
         @dragstart="(e) => onDragStart(e, index)"
         @dragover="(e) => onDragOver(e, index)"
         @dragend="onDragEnd"
-        @click="selectTab(relPath)"
-        @contextmenu="(e) => onContextMenu(e, relPath)"
-        :title="relPath"
+        @click="selectTab(tab)"
+        @contextmenu="(e) => onContextMenu(e, tab)"
+        :title="tab.kind === 'file' ? tab.relativePath : getTabTitle(tab)"
       >
-        <span class="text-xs truncate flex-1">{{ getTabDisplayName(relPath) }}</span>
+        <span class="text-xs truncate flex-1">{{ getTabTitle(tab) }}</span>
         
-        <!-- Save indicator dot (only for active tab if unsaved, but we don't track per-file unsaved state easily right now, so we use global isSaving for active tab) -->
-        <div v-if="workspaceStore.activeFileRelativePath === relPath && workspaceStore.hasUnsavedChanges" class="w-2 h-2 rounded-full bg-text-subtle group-hover:hidden"></div>
+        <div v-if="workspaceStore.isTabDirty(tab.id)" class="w-2 h-2 rounded-full bg-text-subtle group-hover:hidden"></div>
 
         <button
           class="w-5 h-5 flex items-center justify-center rounded hover:bg-accent-soft opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-          :class="{ 'opacity-100': workspaceStore.activeFileRelativePath === relPath && !workspaceStore.hasUnsavedChanges }"
-          @click="(e) => closeTab(e, relPath)"
-        >
-          <X :size="12" />
-        </button>
-      </div>
-
-      <div
-        v-if="workspaceStore.openedSystemPages.includes('settings')"
-        class="group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full border-r border-border-soft cursor-pointer relative shrink-0 transition-colors rounded-t-lg"
-        :class="[
-          workspaceStore.activeSystemPage === 'settings'
-            ? 'bg-surface text-accent'
-            : 'border-b bg-panel-soft text-text-muted hover:bg-accent-soft'
-        ]"
-        title="系统设置"
-        @click="selectSettingsTab"
-      >
-        <span class="text-xs truncate flex-1">系统设置</span>
-
-        <button
-          class="w-5 h-5 flex items-center justify-center rounded hover:bg-accent-soft opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-          :class="{ 'opacity-100': workspaceStore.activeSystemPage === 'settings' }"
-          @click="closeSettingsTab"
+          :class="{ 'opacity-100': workspaceStore.activeTabId === tab.id && !workspaceStore.isTabDirty(tab.id) }"
+          @click="(e) => closeTab(e, tab.id)"
         >
           <X :size="12" />
         </button>
@@ -272,17 +201,19 @@ onUnmounted(() => {
       <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCloseAllTabs">
         关闭全部标签页
       </button>
-      <div class="h-px bg-accent-soft my-1"></div>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCopyPath">
-        复制路径
-      </button>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCopyRelativePath">
-        复制相对路径
-      </button>
-      <div class="h-px bg-accent-soft my-1"></div>
-      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleRevealInExplorer">
-        在文件资源管理器中显示
-      </button>
+      <template v-if="isContextMenuFileTab">
+        <div class="h-px bg-accent-soft my-1"></div>
+        <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCopyPath">
+          复制路径
+        </button>
+        <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCopyRelativePath">
+          复制相对路径
+        </button>
+        <div class="h-px bg-accent-soft my-1"></div>
+        <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleRevealInExplorer">
+          在文件资源管理器中显示
+        </button>
+      </template>
     </div>
   </header>
 </template>

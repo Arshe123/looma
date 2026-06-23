@@ -73,6 +73,7 @@ export interface AiAssistantMessage {
   role: AiAssistantMessageRole
   text: string
   createdAt: number
+  aiName?: string
   actions?: AiAssistantMessageAction[]
   timeline?: AiAssistantTimelineStep[]
 }

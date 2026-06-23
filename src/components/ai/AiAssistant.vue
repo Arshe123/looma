@@ -2,11 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Bot, Clipboard, Copy, History, Loader2, MessageSquare, Paperclip, Plus, RotateCcw, Send, Settings, Sparkles, Trash2, User } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/store/workspace'
+import { useSettingsStore } from '@/store/settings'
 import type { AiAssistantMessageAction, AiAssistantTimelineOutput, AiAssistantTimelineStep } from '@/store/workspace'
 import AiMarkdown from './AiMarkdown.vue'
 import { applyRagTimelineEvent, createIndexTimeline, failAiTimelineStep, formatAiRuntimeError, getAiTimelineStepDuration } from './aiTimeline'
 
 const workspaceStore = useWorkspaceStore()
+const settingsStore = useSettingsStore()
 const BUILD_INDEX_ACTION_TYPE: AiAssistantMessageAction['type'] = 'build-index'
 const MISSING_INDEX_MESSAGE = '为了让 Looma AI 能检索你的笔记，需要先为当前工作空间建立本地索引。这个提示来自应用状态，不是 AI 回答。'
 const isIndexing = ref(false)
@@ -53,6 +55,21 @@ const inputPlaceholder = computed(() => {
   if (isAsking.value) return '正在思考...'
   return '询问当前工作空间中的笔记'
 })
+const providerLabels: Record<string, string> = {
+  ollama: 'Ollama',
+  openai: 'OpenAI',
+  'openai-compatible': 'OpenAI Compatible',
+  deepseek: 'DeepSeek',
+  qwen: '通义千问',
+  custom: '自定义 HTTP API',
+}
+const aiDisplayName = computed(() => {
+  const chat = settingsStore.aiSettings.chat
+  const provider = providerLabels[chat.provider] ?? chat.provider
+  const model = chat.model?.trim() || '未选择模型'
+  return `${provider} · ${model}`
+})
+const getMessageAiName = (message: { aiName?: string }) => message.aiName?.trim() || 'Looma AI'
 
 const scrollToBottom = () => {
   nextTick(() => {
@@ -60,8 +77,8 @@ const scrollToBottom = () => {
   })
 }
 
-const appendMessage = (role: 'assistant' | 'user' | 'system', text: string, actions?: AiAssistantMessageAction[]) => {
-  const id = workspaceStore.appendAiAssistantMessage(role, text, actions)
+const appendMessage = (role: 'assistant' | 'user' | 'system', text: string, actions?: AiAssistantMessageAction[], meta?: { aiName?: string }) => {
+  const id = workspaceStore.appendAiAssistantMessage(role, text, actions, meta)
   scrollToBottom()
   return id
 }
@@ -614,11 +631,12 @@ const askQuestion = async () => {
     return
   }
 
+  const assistantName = aiDisplayName.value
   const { history, stats } = buildConversationHistoryForRequest(text)
   workspaceStore.setAiAssistantDraft('')
   isAsking.value = true
   appendMessage('user', text)
-  const assistantMessageId = appendMessage('assistant', '')
+  const assistantMessageId = appendMessage('assistant', '', undefined, { aiName: assistantName })
   const requestId = createStreamRequestId()
   activeStreamRequestId.value = requestId
   activeAssistantMessageId.value = assistantMessageId
@@ -743,7 +761,7 @@ watch(activeConversationId, () => {
         </div>
         <div class="min-w-0 flex-1">
           <h1 class="truncate text-[15px] font-semibold leading-5 tracking-normal text-text-main">
-            Looma AI
+            {{ aiDisplayName }}
           </h1>
           <p class="mt-0.5 truncate text-[11px] leading-4 text-text-muted">
             {{ activeConversation.title }}
@@ -864,12 +882,10 @@ watch(activeConversationId, () => {
               ]"
             >
               <template v-if="message.role === 'user'">
-                <span>你</span>
-                <User :size="12" />
               </template>
               <template v-else>
                 <Bot :size="12" />
-                <span>Looma AI</span>
+                <span>{{ getMessageAiName(message) }}</span>
               </template>
             </div>
 

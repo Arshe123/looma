@@ -43,6 +43,7 @@ const createAiConversation = (messages?: AiAssistantMessage[], draft = ''): AiAs
       role: 'assistant',
       text: '你好，我是 Looma AI 助手。请先为当前工作空间建立索引，然后就可以向我提问。',
       createdAt: 1,
+      aiName: 'Looma AI',
     },
   ]
   const timestamps = nextMessages.map((message) => message.createdAt).filter(Number.isFinite)
@@ -163,6 +164,9 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
         role: message.role,
         text: message.text,
         createdAt: typeof message.createdAt === 'number' ? message.createdAt : message.id,
+        aiName: typeof (message as any).aiName === 'string' && (message as any).aiName.trim()
+          ? (message as any).aiName.trim()
+          : undefined,
         actions: normalizeActions(message.actions),
         timeline: normalizeTimeline(message.timeline),
       }))
@@ -442,7 +446,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       conversation.title = getAiConversationTitle(conversation.messages)
     },
 
-    appendAiAssistantMessage(role: AiAssistantMessage['role'], text: string, actions?: AiAssistantMessageAction[]) {
+    appendAiAssistantMessage(role: AiAssistantMessage['role'], text: string, actions?: AiAssistantMessageAction[], meta?: { aiName?: string }) {
       const now = Date.now()
       const conversation = this.ensureActiveAiAssistantConversation()
       const id = now + conversation.messages.length
@@ -451,6 +455,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         role,
         text,
         createdAt: now,
+        aiName: role === 'assistant' && meta?.aiName?.trim() ? meta.aiName.trim() : undefined,
         actions,
       })
       this.touchAiAssistantConversation(conversation)

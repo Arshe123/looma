@@ -1,4 +1,5 @@
 import type { Result } from '../common/interface/Result'
+import type { AppSettings as AppSettingsPayload } from '../common/util/app-settings'
 
 type SidebarPanelId = 'files' | 'outline' | 'ai';
 
@@ -14,6 +15,7 @@ interface AiAssistantMessagePayload {
   role: AiAssistantMessageRole;
   text: string;
   createdAt: number;
+  aiName?: string;
   actions?: AiAssistantMessageActionPayload[];
   timeline?: AiAssistantTimelineStepPayload[];
 }
@@ -75,45 +77,6 @@ interface WorkspaceMetaPayload {
   activeSidebarPanel?: SidebarPanelId | null;
   sidebarPanels?: SidebarPanelState[];
 }
-
-type AiProviderPayload = 'ollama' | 'openai' | 'openai-compatible' | 'deepseek' | 'qwen' | 'custom';
-
-interface ChatProviderConfigPayload {
-  model: string;
-  baseUrl?: string;
-  apiKey?: string;
-  temperature?: number;
-  maxTokens?: number;
-}
-
-interface EmbeddingProviderConfigPayload {
-  model: string;
-  baseUrl?: string;
-  apiKey?: string;
-  dimension?: number;
-}
-
-interface AppSettingsPayload {
-  inlineMenu: {
-    items: string[];
-  };
-  ai: {
-    chat: ChatProviderConfigPayload & {
-      provider: AiProviderPayload;
-    };
-    embedding: EmbeddingProviderConfigPayload & {
-      provider: AiProviderPayload;
-    };
-    chatProviderConfigs: Record<AiProviderPayload, ChatProviderConfigPayload>;
-    embeddingProviderConfigs: Record<AiProviderPayload, EmbeddingProviderConfigPayload>;
-    vectorStorePath: string;
-    indexingMode: 'manual' | 'incremental' | 'idle';
-    enableAiTimeline: boolean;
-    enableSourceCitation: boolean;
-    localFirstMode: boolean;
-  };
-}
-
 interface RagChatMessagePayload {
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;

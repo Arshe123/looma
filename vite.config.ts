@@ -28,7 +28,7 @@ export default defineConfig(({ mode }) => {
             electron([
               {
                 // Main process entry
-                entry: 'src/service/index.ts',
+                entry: 'src/main/index.ts',
               },
             ]),
             renderer(),

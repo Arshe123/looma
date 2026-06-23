@@ -16,12 +16,29 @@ const run = (cmd, args) =>
 await run(process.execPath, [tscJs, '-p', tsconfigPath])
 
 const outDir = path.join(rootDir, 'dist-electron')
-const jsPath = path.join(outDir, 'preload.js')
 const cjsPath = path.join(outDir, 'preload.cjs')
+const candidateJsPaths = [
+  path.join(outDir, 'preload.js'),
+  path.join(outDir, 'index.js'),
+]
 
 await fs.mkdir(outDir, { recursive: true })
 try {
   await fs.rm(cjsPath, { force: true })
 } catch {}
-await fs.rename(jsPath, cjsPath)
+
+let emittedJsPath = null
+for (const candidate of candidateJsPaths) {
+  try {
+    await fs.access(candidate)
+    emittedJsPath = candidate
+    break
+  } catch {}
+}
+
+if (!emittedJsPath) {
+  throw new Error(`Preload build output not found. Checked: ${candidateJsPaths.join(', ')}`)
+}
+
+await fs.rename(emittedJsPath, cjsPath)
 

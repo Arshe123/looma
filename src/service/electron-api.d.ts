@@ -76,26 +76,36 @@ interface WorkspaceMetaPayload {
   sidebarPanels?: SidebarPanelState[];
 }
 
+type AiProviderPayload = 'ollama' | 'openai' | 'openai-compatible' | 'deepseek' | 'qwen' | 'custom';
+
+interface ChatProviderConfigPayload {
+  model: string;
+  baseUrl?: string;
+  apiKey?: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+interface EmbeddingProviderConfigPayload {
+  model: string;
+  baseUrl?: string;
+  apiKey?: string;
+  dimension?: number;
+}
+
 interface AppSettingsPayload {
   inlineMenu: {
     items: string[];
   };
   ai: {
-    chat: {
-      provider: 'ollama' | 'openai' | 'openai-compatible' | 'deepseek' | 'qwen' | 'custom';
-      model: string;
-      baseUrl?: string;
-      apiKey?: string;
-      temperature?: number;
-      maxTokens?: number;
+    chat: ChatProviderConfigPayload & {
+      provider: AiProviderPayload;
     };
-    embedding: {
-      provider: 'ollama' | 'openai' | 'openai-compatible' | 'deepseek' | 'qwen' | 'custom';
-      model: string;
-      baseUrl?: string;
-      apiKey?: string;
-      dimension?: number;
+    embedding: EmbeddingProviderConfigPayload & {
+      provider: AiProviderPayload;
     };
+    chatProviderConfigs: Record<AiProviderPayload, ChatProviderConfigPayload>;
+    embeddingProviderConfigs: Record<AiProviderPayload, EmbeddingProviderConfigPayload>;
     vectorStorePath: string;
     indexingMode: 'manual' | 'incremental' | 'idle';
     enableAiTimeline: boolean;

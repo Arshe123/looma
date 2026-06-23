@@ -18,7 +18,7 @@ export interface ModelOption {
   size?: string
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   title: string
   subtitle: string
   modelValue: string
@@ -28,7 +28,18 @@ const props = defineProps<{
   isPulling: boolean
   isModelPulling?: (model: string) => boolean
   isModelDeleting?: (model: string) => boolean
-}>()
+  localManaged?: boolean
+  emptyDescription?: string
+  availableLabel?: string
+  missingLabel?: string
+  searchPlaceholder?: string
+}>(), {
+  localManaged: true,
+  emptyDescription: '已安装的本地模型',
+  availableLabel: '已安装',
+  missingLabel: '未下载',
+  searchPlaceholder: '搜索模型...',
+})
 
 const emit = defineEmits<{
   (event: 'update:open', value: boolean): void
@@ -46,7 +57,7 @@ const selectedOption = computed(() => {
 })
 
 const selectedDescription = computed(() => {
-  return selectedOption.value?.desc ?? '已安装的本地模型'
+  return selectedOption.value?.desc ?? props.emptyDescription
 })
 
 const filteredOptions = computed(() => {
@@ -55,9 +66,26 @@ const filteredOptions = computed(() => {
   return props.options.filter((option) => option.name.toLowerCase().includes(query))
 })
 
-const canPullSearchQuery = computed(() => {
+const hasSearchExactMatch = computed(() => {
+  const query = trimmedSearchQuery.value.toLowerCase()
+  if (!query) return false
+  return props.options.some((option) => option.name.toLowerCase() === query)
+})
+
+const canUseSearchQuery = computed(() => {
   const model = trimmedSearchQuery.value
-  return Boolean(model && !filteredOptions.value.length && !isOptionPulling(model))
+  if (!model || hasSearchExactMatch.value) return false
+  return props.localManaged ? !filteredOptions.value.length && !isOptionPulling(model) : true
+})
+
+const statusLabel = computed(() => {
+  if (!props.localManaged) return props.availableLabel
+  return props.needsPull ? props.missingLabel : props.availableLabel
+})
+
+const statusClass = computed(() => {
+  if (!props.localManaged) return 'border-accent/20 bg-accent-soft text-accent'
+  return props.needsPull ? 'border-danger/20 bg-danger/10 text-danger' : 'border-success/20 bg-success/10 text-success'
 })
 
 const toggleOpen = () => {
@@ -73,12 +101,14 @@ const isOptionPulling = (model: string) => {
 }
 
 const pullModel = (model: string, selectAfterPull = true) => {
+  if (!props.localManaged) return
   emit('pull', model, selectAfterPull)
 }
 
-const pullSearchQueryModel = () => {
-  if (!canPullSearchQuery.value) return
-  pullModel(trimmedSearchQuery.value, false)
+const useSearchQueryModel = () => {
+  if (!canUseSearchQuery.value) return
+  if (props.localManaged) pullModel(trimmedSearchQuery.value, false)
+  else selectModel(trimmedSearchQuery.value)
 }
 
 const isOptionDeleting = (model: string) => {
@@ -86,6 +116,7 @@ const isOptionDeleting = (model: string) => {
 }
 
 const deleteModel = (model: string) => {
+  if (!props.localManaged) return
   emit('delete', model)
 }
 
@@ -120,9 +151,9 @@ watch(
                 <span class="truncate text-sm font-semibold text-text-main">{{ modelValue || '未选择模型' }}</span>
                 <span
                   class="inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[10px] font-medium"
-                  :class="needsPull ? 'border-danger/20 bg-danger/10 text-danger' : 'border-success/20 bg-success/10 text-success'"
+                  :class="statusClass"
                 >
-                  {{ needsPull ? '未下载' : '已安装' }}
+                  {{ statusLabel }}
                 </span>
               </span>
               <span class="mt-1 block truncate text-[11px] text-text-muted">
@@ -149,9 +180,9 @@ watch(
           <input
             v-model="searchQuery"
             class="min-w-0 flex-1 bg-transparent text-xs text-text-main outline-none placeholder:text-text-subtle"
-            placeholder="搜索模型..."
+            :placeholder="searchPlaceholder"
             spellcheck="false"
-            @keydown.enter.prevent="pullSearchQueryModel"
+            @keydown.enter.prevent="useSearchQueryModel"
           />
         </label>
       </div>
@@ -160,7 +191,7 @@ watch(
           v-for="option in filteredOptions"
           :key="option.name"
           type="button"
-        class="group mb-1 flex w-full min-w-0 items-start justify-between gap-3 rounded-2xl border px-3 py-3 text-left transition-colors"
+          class="group mb-1 flex w-full min-w-0 items-start justify-between gap-3 rounded-2xl border px-3 py-3 text-left transition-colors"
           :class="option.selected ? 'border-accent/50 bg-accent-soft/60' : 'border-transparent bg-panel hover:border-border-soft hover:bg-panel-soft'"
           @click="selectModel(option.name)"
         >
@@ -170,7 +201,7 @@ watch(
               :class="option.selected ? 'border-accent/30 bg-panel' : 'border-border-soft bg-panel-soft'"
             >
               <Check v-if="option.selected" :size="15" class="text-success" />
-              <HardDrive v-else-if="option.installed" :size="15" class="text-text-muted" />
+              <HardDrive v-else-if="option.installed || !localManaged" :size="15" class="text-text-muted" />
               <Download v-else :size="15" class="text-danger" />
             </span>
             <span class="min-w-0">
@@ -183,13 +214,14 @@ watch(
           </span>
           <span class="flex shrink-0 flex-col items-end gap-1">
             <span
-              v-if="option.installed"
-              class="rounded-full border border-success/20 bg-success/10 px-2 py-1 text-[10px] font-medium text-success"
+              v-if="option.installed || !localManaged"
+              class="rounded-full border px-2 py-1 text-[10px] font-medium"
+              :class="localManaged ? 'border-success/20 bg-success/10 text-success' : 'border-accent/20 bg-accent-soft text-accent'"
             >
-              已下载
+              {{ localManaged ? '已下载' : '可选择' }}
             </span>
             <button
-              v-if="option.installed"
+              v-if="localManaged && option.installed"
               type="button"
               class="inline-flex h-7 items-center justify-center gap-1 rounded-lg border border-danger/20 bg-danger/10 px-2 text-[10px] font-medium text-danger transition-colors hover:border-danger/40 hover:bg-danger/15 disabled:cursor-not-allowed disabled:border-border-soft disabled:bg-panel-soft disabled:text-text-subtle"
               :disabled="isOptionDeleting(option.name) || isOptionPulling(option.name)"
@@ -200,7 +232,7 @@ watch(
               <span>{{ isOptionDeleting(option.name) ? '删除中' : '删除' }}</span>
             </button>
             <button
-              v-else
+              v-else-if="localManaged"
               type="button"
               class="inline-flex h-7 items-center justify-center gap-1 rounded-lg border border-accent/20 bg-accent-soft px-2 text-[10px] font-medium text-accent transition-colors hover:border-accent/40 hover:bg-accent-soft/80 disabled:cursor-not-allowed disabled:border-border-soft disabled:bg-panel-soft disabled:text-text-subtle"
               :disabled="isOptionPulling(option.name)"
@@ -215,16 +247,19 @@ watch(
         <div v-if="!filteredOptions.length" class="rounded-xl bg-panel-soft px-3 py-4 text-center text-xs text-text-muted">
           <template v-if="trimmedSearchQuery">
             <div class="font-medium text-text-main">没有匹配的模型</div>
-            <div class="mt-1">按 Enter 下载「{{ trimmedSearchQuery }}」</div>
+            <div class="mt-1">
+              {{ localManaged ? `按 Enter 下载「${trimmedSearchQuery}」` : `按 Enter 使用「${trimmedSearchQuery}」` }}
+            </div>
             <button
               type="button"
               class="mt-3 inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-accent/20 bg-accent-soft px-3 text-xs font-medium text-accent transition-colors hover:border-accent/40 hover:bg-accent-soft/80 disabled:cursor-not-allowed disabled:border-border-soft disabled:bg-panel disabled:text-text-subtle"
-              :disabled="!canPullSearchQuery"
-              @click="pullSearchQueryModel"
+              :disabled="!canUseSearchQuery"
+              @click="useSearchQueryModel"
             >
-              <Loader2 v-if="isOptionPulling(trimmedSearchQuery)" :size="12" class="animate-spin" />
-              <Download v-else :size="12" />
-              <span>{{ isOptionPulling(trimmedSearchQuery) ? '下载中' : '下载当前名称' }}</span>
+              <Loader2 v-if="localManaged && isOptionPulling(trimmedSearchQuery)" :size="12" class="animate-spin" />
+              <Download v-else-if="localManaged" :size="12" />
+              <Check v-else :size="12" />
+              <span>{{ localManaged ? (isOptionPulling(trimmedSearchQuery) ? '下载中' : '下载当前名称') : '使用当前名称' }}</span>
             </button>
           </template>
           <template v-else>

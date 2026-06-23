@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Bot, Clipboard, Copy, History, Loader2, MessageSquare, Paperclip, Plus, RotateCcw, Send, Settings, Sparkles, Trash2, User } from 'lucide-vue-next'
+import { Bot, Clipboard, Copy, FileText, History, Loader2, MessageSquare, Paperclip, Plus, RotateCcw, Send, Settings, Sparkles, Trash2, User } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useSettingsStore } from '@/store/settings'
 import type { AiAssistantMessageAction, AiAssistantTimelineOutput, AiAssistantTimelineStep } from '@/store/workspace'
@@ -299,6 +299,43 @@ const getTimelineOutputText = (output: AiAssistantTimelineOutput) => {
   return ''
 }
 
+const normalizeTimelineSourcePath = (path?: string) => {
+  const value = (path || '').trim().replace(/\\+/g, '/')
+  if (!value) return ''
+  const workspacePath = workspaceStore.activeWorkspace?.path?.replace(/\\+/g, '/').replace(/\/+$/, '')
+  if (workspacePath && value.toLowerCase().startsWith(`${workspacePath.toLowerCase()}/`)) {
+    return value.slice(workspacePath.length + 1).replace(/^\/+/, '')
+  }
+  return value.replace(/^\/+/, '')
+}
+
+const getTimelineSourcePath = (output: AiAssistantTimelineOutput) => {
+  const metadata = output.metadata || {}
+  const path = output.path
+    || (typeof metadata.source === 'string' ? metadata.source : '')
+    || (typeof metadata.file_path === 'string' ? metadata.file_path : '')
+    || (typeof metadata.path === 'string' ? metadata.path : '')
+  return normalizeTimelineSourcePath(path)
+}
+
+const getTimelineSourceName = (output: AiAssistantTimelineOutput) => {
+  const path = getTimelineSourcePath(output)
+  if (!path) return output.title || '检索片段'
+  return path.split('/').filter(Boolean).pop() || path
+}
+
+const getTimelineSourceScore = (output: AiAssistantTimelineOutput) => {
+  const score = output.metadata?.score
+  if (typeof score !== 'number' || !Number.isFinite(score)) return ''
+  return score >= 0 && score <= 1 ? `${Math.round(score * 100)}%` : score.toFixed(3)
+}
+
+const openTimelineSource = (output: AiAssistantTimelineOutput) => {
+  const path = getTimelineSourcePath(output)
+  if (!path) return
+  workspaceStore.setActiveFileRelative(path)
+}
+
 const createSourceOutputs = (sources: Array<{ score: number | null; text: string; metadata: Record<string, unknown> }>): AiAssistantTimelineOutput[] =>
   sources.slice(0, 5).map((source, index) => {
     const path = typeof source.metadata?.source === 'string'
@@ -312,9 +349,12 @@ const createSourceOutputs = (sources: Array<{ score: number | null; text: string
       id: `source-${index + 1}`,
       type: 'source',
       title: path ? `来源 ${index + 1}` : `片段 ${index + 1}`,
-      content: source.text.slice(0, 120),
+      content: source.text.slice(0, 260),
       path,
-      metadata: source.metadata,
+      metadata: {
+        ...source.metadata,
+        score: source.score,
+      },
     }
   })
 
@@ -853,18 +893,14 @@ watch(activeConversationId, () => {
             'flex',
             message.role === 'user'
               ? 'justify-end'
-              : message.role === 'system'
-                ? 'justify-center'
-                : 'justify-start',
+              : 'justify-center',
           ]"
         >
           <div
             :class="[
               message.role === 'user'
                 ? 'max-w-[82%]'
-                : message.role === 'system'
-                  ? 'w-full max-w-[94%]'
-                  : 'max-w-[90%]',
+                : 'w-full max-w-[90%]',
             ]"
           >
             <div
@@ -878,7 +914,7 @@ watch(activeConversationId, () => {
               v-else
               :class="[
                 'mb-1.5 flex items-center gap-1.5 px-1 text-[10px] leading-4 text-text-subtle',
-                message.role === 'user' ? 'justify-end' : 'justify-start',
+                message.role === 'user' ? 'justify-end' : 'justify-center',
               ]"
             >
               <template v-if="message.role === 'user'">
@@ -891,7 +927,7 @@ watch(activeConversationId, () => {
 
             <div
               v-if="message.role === 'assistant' && message.timeline?.length"
-              class="mb-2 ml-1 max-w-full select-text pl-3 text-[12px] text-text-muted"
+              class="mx-auto mb-3 max-w-[760px] select-text text-[12px] text-text-muted"
             >
               <div class="relative flex flex-col gap-1.5 before:absolute before:left-[3px] before:top-2 before:bottom-2 before:w-px before:bg-border-soft">
                 <details
@@ -900,7 +936,7 @@ watch(activeConversationId, () => {
                   class="group relative pl-4"
                   :open="step.status === 'active' || step.outputs.length > 0"
                 >
-                  <summary class="flex cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-1.5 py-1 text-[12px] leading-5 transition-colors hover:bg-panel [&::-webkit-details-marker]:hidden">
+                  <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-1.5 py-1 text-[12px] leading-5 transition-colors hover:text-text-main [&::-webkit-details-marker]:hidden">
                     <span
                       class="absolute left-0 top-2.5 h-1.5 w-1.5 rounded-full ring-4 ring-panel-soft"
                       :class="getTimelineStatusClass(step.status)"
@@ -914,7 +950,7 @@ watch(activeConversationId, () => {
                   </summary>
                   <div
                     v-if="step.detail || step.outputs.length"
-                    class="mb-1 ml-1 rounded-lg border border-border-soft bg-panel/80 px-2.5 py-2 text-[11px] leading-5 text-text-muted"
+                    class="mb-2 ml-1 px-2.5 py-1.5 text-[11px] leading-5 text-text-muted"
                   >
                     <div v-if="step.detail">
                       {{ step.detail }}
@@ -922,10 +958,37 @@ watch(activeConversationId, () => {
                     <div
                       v-for="output in step.outputs"
                       :key="`${step.id}:${output.id}`"
-                      class="mt-1 first:mt-0"
+                      class="mt-2 first:mt-0"
                     >
-                      <span v-if="output.title" class="font-medium text-text-main">{{ output.title }}：</span>
-                      <span>{{ getTimelineOutputText(output) }}</span>
+                      <button
+                        v-if="output.type === 'source'"
+                        type="button"
+                        class="group w-full rounded-xl border border-border-soft bg-panel/70 px-3 py-2.5 text-left cursor-pointer transition-colors hover:border-accent/30 hover:bg-panel"
+                        :disabled="!getTimelineSourcePath(output)"
+                        @click="openTimelineSource(output)"
+                      >
+                        <div class="mb-1.5 flex items-center justify-between gap-3">
+                          <span class="flex min-w-0 items-center gap-2">
+                            <FileText :size="13" class="shrink-0 text-accent" />
+                            <span class="truncate text-[12px] font-medium text-text-main">
+                              {{ getTimelineSourceName(output) }}
+                            </span>
+                          </span>
+                          <span v-if="getTimelineSourceScore(output)" class="shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] text-accent">
+                            {{ getTimelineSourceScore(output) }}
+                          </span>
+                        </div>
+                        <div v-if="getTimelineSourcePath(output)" class="mb-1 truncate text-[10px] text-text-subtle">
+                          {{ getTimelineSourcePath(output) }}
+                        </div>
+                        <p class="line-clamp-3 text-[11px] leading-5 text-text-muted">
+                          {{ output.content || getTimelineOutputText(output) }}
+                        </p>
+                      </button>
+                      <template v-else>
+                        <span v-if="output.title" class="font-medium text-text-main">{{ output.title }}：</span>
+                        <span>{{ getTimelineOutputText(output) }}</span>
+                      </template>
                     </div>
                   </div>
                 </details>
@@ -934,14 +997,14 @@ watch(activeConversationId, () => {
 
             <div
               :class="[
-                'break-words px-3.5 py-3 text-sm leading-6 shadow-sm',
-                message.role === 'assistant' ? 'select-text' : '',
+                'break-words text-sm leading-6',
+                message.role === 'assistant' ? 'mx-auto max-w-[760px] select-text px-1 py-1 text-text-main' : '',
                 message.role === 'assistant' ? '' : 'whitespace-pre-wrap',
                 message.role === 'user'
-                  ? 'rounded-2xl rounded-tr-md bg-accent text-white'
+                  ? 'rounded-2xl rounded-tr-md bg-accent px-3.5 py-3 text-white shadow-sm'
                   : message.role === 'system'
-                    ? 'mx-auto rounded-2xl border border-dashed border-accent/40 bg-panel/80 text-center text-text-muted'
-                    : 'rounded-2xl rounded-tl-md border border-border-soft bg-panel text-text-main',
+                    ? 'mx-auto max-w-[760px] px-1 py-2 text-center text-text-muted'
+                    : '',
               ]"
             >
               <AiMarkdown
@@ -970,7 +1033,7 @@ watch(activeConversationId, () => {
 
               <div
                 v-if="message.role === 'assistant' && message.id !== activeAssistantMessageId && !(message.actions && message.actions.length)"
-                class="mt-3 flex flex-wrap items-center gap-2 border-t border-border-soft pt-2"
+                class="mt-4 flex flex-wrap items-center justify-center gap-2 pt-1"
               >
                 <button
                   class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main"
@@ -992,8 +1055,8 @@ watch(activeConversationId, () => {
             <div
               v-for="action in message.actions || []"
               :key="`${message.id}:${action.type}`"
-              class="mt-2 rounded-2xl border bg-panel p-3.5 text-text-main shadow-sm"
-              :class="message.role === 'system' ? 'mx-auto max-w-md border-dashed border-accent/40 text-center' : 'w-full border-border-soft'"
+              class="mx-auto mt-3 max-w-[760px] px-1 py-2 text-text-main"
+              :class="message.role === 'system' ? 'text-center' : 'w-full'"
             >
               <div class="mb-3 flex items-center justify-between gap-3">
                 <div class="flex min-w-0 items-center gap-2">

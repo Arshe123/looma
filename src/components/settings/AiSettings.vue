@@ -463,9 +463,6 @@ watch(
         <p class="mt-1 text-sm leading-6 text-text-muted">
           按通用设置、提示词、对话模型、向量模型分节管理。对话模型和向量模型拥有独立的 Provider 与 API 接入配置。
         </p>
-        <p class="text-xs leading-5 text-text-muted">
-          {{ (isLlmOllama || isEmbedOllama) ? `已安装 Ollama 模型：${ollamaModels.length ? ollamaModels.join('、') : (isLoadingModels ? '正在读取...' : '暂无可用列表')}` : '当前选择云端/兼容提供商：将校验 Base URL、API Key 和模型名称。' }}
-        </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <button
@@ -560,6 +557,9 @@ watch(
                 {{ option.label }}
               </option>
             </select>
+            <p class="text-xs leading-5 text-text-muted">
+              {{ ( isLlmOllama ) ? `已安装 Ollama 模型：${ollamaModels.length ? ollamaModels.join('、') : (isLoadingModels ? '正在读取...' : '暂无可用列表')}` : '当前选择云端/兼容提供商：将校验 Base URL、API Key 和模型名称。' }}
+            </p>
           </label>
 
           <label class="grid gap-2 text-sm text-text-main" v-if="aiSettings.chat.provider !== 'ollama'">
@@ -663,6 +663,9 @@ watch(
                 {{ option.label }} Embeddings
               </option>
             </select>
+            <p class="text-xs leading-5 text-text-muted">
+              {{ ( isEmbedOllama ) ? `已安装 Ollama 模型：${ollamaModels.length ? ollamaModels.join('、') : (isLoadingModels ? '正在读取...' : '暂无可用列表')}` : '当前选择云端/兼容提供商：将校验 Base URL、API Key 和模型名称。' }}
+            </p>
           </label>
 
           <label class="grid gap-2 text-sm text-text-main" v-if="aiSettings.embedding.provider !== 'ollama'">

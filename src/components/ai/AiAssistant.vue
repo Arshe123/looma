@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Bot, Clipboard, Copy, FileText, History, Loader2, MessageSquare, Paperclip, Plus, RotateCcw, Send, Settings, Sparkles, Trash2, User } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useSettingsStore } from '@/store/settings'
-import type { AiAssistantMessageAction, AiAssistantTimelineOutput, AiAssistantTimelineStep } from '@/store/workspace'
+import type { AiAssistantMessage, AiAssistantMessageAction, AiAssistantTimelineOutput, AiAssistantTimelineStep } from '@/store/workspace'
 import AiMarkdown from './AiMarkdown.vue'
 import { applyRagTimelineEvent, createIndexTimeline, failAiTimelineStep, formatAiRuntimeError, getAiTimelineStepDuration } from './aiTimeline'
 
@@ -25,6 +25,7 @@ const activeAssistantTimeline = ref<AiAssistantTimelineStep[]>([])
 const activeIndexRequestId = ref<string | null>(null)
 const activeIndexMessageId = ref<number | null>(null)
 const activeIndexTimeline = ref<AiAssistantTimelineStep[]>([])
+const copiedMessageId = ref<number | null>(null)
 const historyOpen = ref(false)
 const aiContextMenu = ref({
   visible: false,
@@ -382,14 +383,21 @@ const estimateTokenCount = (text: string) => {
 const estimateMessageTokens = (message: RagChatMessagePayload) =>
   estimateTokenCount(message.content) + 4
 
-const buildConversationHistoryForRequest = (currentQuestion: string) => {
-  const history = messages.value
+const buildConversationHistoryForRequest = (
+  currentQuestion: string,
+  options?: {
+    sourceMessages?: AiAssistantMessage[]
+    excludeMessageIds?: Set<number>
+  },
+) => {
+  const excluded = options?.excludeMessageIds ?? new Set<number>()
+  const history = (options?.sourceMessages ?? messages.value)
     .filter((message) => (
       (message.role === 'user' || message.role === 'assistant')
+      && !excluded.has(message.id)
       && !message.actions?.length
       && message.createdAt !== 1
       && message.text.trim().length > 0
-      && message.text.trim() !== currentQuestion.trim()
     ))
     .map((message): RagChatMessagePayload => ({
       role: message.role === 'assistant' ? 'assistant' : 'user',
@@ -662,26 +670,20 @@ const indexWorkspace = async () => {
   }
 }
 
-const askQuestion = async () => {
-  const workspaceId = getActiveWorkspaceId()
-  const text = question.value.trim()
-  if (!workspaceId || !text || isAsking.value) return
-  if (!hasIndex.value) {
-    ensureBuildIndexPrompt()
-    return
-  }
-
-  const assistantName = aiDisplayName.value
-  const { history, stats } = buildConversationHistoryForRequest(text)
-  workspaceStore.setAiAssistantDraft('')
-  isAsking.value = true
-  appendMessage('user', text)
-  const assistantMessageId = appendMessage('assistant', '', undefined, { aiName: assistantName })
+const startAssistantRequest = async (
+  workspaceId: string,
+  text: string,
+  assistantMessageId: number,
+  history: RagChatMessagePayload[],
+  stats: RagRequestStatsPayload,
+) => {
   const requestId = createStreamRequestId()
   activeStreamRequestId.value = requestId
   activeAssistantMessageId.value = assistantMessageId
   activeAssistantText.value = ''
+  workspaceStore.updateAiAssistantMessageText(assistantMessageId, '', { persist: false })
   syncActiveTimeline(createConversationContextTimeline(stats), { persist: true })
+  scrollToBottom()
 
   try {
     const result = await window.electronAPI.rag.askStream.start(requestId, workspaceId, text, history, stats)
@@ -702,6 +704,78 @@ const askQuestion = async () => {
   }
 }
 
+const askQuestion = async () => {
+  const workspaceId = getActiveWorkspaceId()
+  const text = question.value.trim()
+  if (!workspaceId || !text || isAsking.value) return
+  if (!hasIndex.value) {
+    ensureBuildIndexPrompt()
+    return
+  }
+
+  const assistantName = aiDisplayName.value
+  const { history, stats } = buildConversationHistoryForRequest(text)
+  workspaceStore.setAiAssistantDraft('')
+  isAsking.value = true
+  appendMessage('user', text)
+  const assistantMessageId = appendMessage('assistant', '', undefined, { aiName: assistantName })
+  await startAssistantRequest(workspaceId, text, assistantMessageId, history, stats)
+}
+
+const copyAssistantMessage = async (message: AiAssistantMessage) => {
+  const text = message.text.trim()
+  if (!text) return
+
+  try {
+    await navigator.clipboard.writeText(text)
+    copiedMessageId.value = message.id
+    window.setTimeout(() => {
+      if (copiedMessageId.value === message.id) copiedMessageId.value = null
+    }, 1400)
+  } catch (error) {
+    appendMessage('system', '复制失败，请检查浏览器剪贴板权限后重试。')
+    console.error(error)
+  }
+}
+
+const regenerateAssistantMessage = async (message: AiAssistantMessage) => {
+  const workspaceId = getActiveWorkspaceId()
+  if (!workspaceId || isAsking.value || message.role !== 'assistant') return
+  if (!hasIndex.value) {
+    ensureBuildIndexPrompt()
+    return
+  }
+
+  const conversationMessages = messages.value
+  const assistantIndex = conversationMessages.findIndex((item) => item.id === message.id)
+  if (assistantIndex < 0) return
+
+  let userIndex = -1
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    const candidate = conversationMessages[index]
+    if (candidate.role === 'user' && candidate.text.trim()) {
+      userIndex = index
+      break
+    }
+  }
+
+  if (userIndex < 0) {
+    appendMessage('system', '找不到这条回复对应的上一条用户问题，无法重新生成。')
+    return
+  }
+
+  const userMessage = conversationMessages[userIndex]
+  const text = userMessage.text.trim()
+  const assistantName = aiDisplayName.value
+  const { history, stats } = buildConversationHistoryForRequest(text, {
+    sourceMessages: conversationMessages.slice(0, userIndex),
+  })
+
+  isAsking.value = true
+  workspaceStore.updateAiAssistantMessageMeta(message.id, { aiName: assistantName })
+  await startAssistantRequest(workspaceId, text, message.id, history, stats)
+}
+
 const handleComposerKeydown = (event: KeyboardEvent) => {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
 
@@ -719,6 +793,11 @@ const runAction = (action: AiAssistantMessageAction) => {
 
 const isActionDisabled = (action: AiAssistantMessageAction) =>
   Boolean(action.disabled || hasIndex.value || isCheckingIndex.value || !hasWorkspace.value)
+
+const backfillLegacyAiNames = () => {
+  if (!settingsStore.isLoaded) return
+  workspaceStore.backfillAiAssistantMessageNames(aiDisplayName.value)
+}
 
 const createConversation = () => {
   cancelActiveStream()
@@ -759,6 +838,7 @@ onMounted(() => {
   unsubscribeStreamEvents = window.electronAPI.rag.askStream.onEvent(handleStreamEvent)
   unsubscribeIndexStreamEvents = window.electronAPI.rag.indexStream.onEvent(handleIndexStreamEvent)
   workspaceStore.removeAiAssistantMessagesByText(['Not Found'])
+  backfillLegacyAiNames()
   scrollToBottom()
   checkIndexStatus().catch(console.error)
 })
@@ -781,15 +861,18 @@ watch(() => workspaceStore.activeWorkspaceId, () => {
   isIndexing.value = false
   historyOpen.value = false
   closeAiContextMenu()
+  backfillLegacyAiNames()
   checkIndexStatus().catch(console.error)
 })
 watch(activeConversationId, () => {
   closeAiContextMenu()
+  backfillLegacyAiNames()
   if (!hasIndex.value && !isCheckingIndex.value) {
     ensureBuildIndexPrompt()
   }
   scrollToBottom()
 })
+watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
 </script>
 
 <template>
@@ -997,8 +1080,8 @@ watch(activeConversationId, () => {
 
             <div
               :class="[
-                'break-words text-sm leading-6',
-                message.role === 'assistant' ? 'mx-auto max-w-[760px] select-text px-1 py-1 text-text-main' : '',
+                'break-words text-sm leading-6 select-text',
+                message.role === 'assistant' ? 'mx-auto max-w-[760px] px-1 py-1 text-text-main' : '',
                 message.role === 'assistant' ? '' : 'whitespace-pre-wrap',
                 message.role === 'user'
                   ? 'rounded-2xl rounded-tr-md bg-accent px-3.5 py-3 text-white shadow-sm'
@@ -1036,15 +1119,19 @@ watch(activeConversationId, () => {
                 class="mt-4 flex flex-wrap items-center justify-center gap-2 pt-1"
               >
                 <button
-                  class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main"
+                  class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-text-muted"
                   type="button"
+                  :disabled="!message.text.trim()"
+                  @click="copyAssistantMessage(message)"
                 >
                   <Copy :size="12" />
-                  复制
+                  {{ copiedMessageId === message.id ? '已复制' : '复制' }}
                 </button>
                 <button
-                  class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main"
+                  class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-text-muted"
                   type="button"
+                  :disabled="isAsking || isIndexing || isCheckingIndex || !hasWorkspace || !hasIndex"
+                  @click="regenerateAssistantMessage(message)"
                 >
                   <RotateCcw :size="12" />
                   重新生成

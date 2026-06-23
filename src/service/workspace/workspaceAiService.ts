@@ -25,6 +25,7 @@ interface AiAssistantMessage {
   role: 'assistant' | 'user' | 'system'
   text: string
   createdAt: number
+  aiName?: string
   actions?: {
     type: 'build-index'
     title: string
@@ -76,6 +77,7 @@ const createDefaultConversation = (messages?: AiAssistantMessage[], draft = '') 
       role: 'assistant',
       text: '你好，我是 Looma AI 助手。请先为当前工作空间建立索引，然后就可以向我提问。',
       createdAt: 1,
+      aiName: 'Looma AI',
     },
   ]
   const timestamps = nextMessages.map((message) => message.createdAt).filter(Number.isFinite)
@@ -214,6 +216,7 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
           role: item.role,
           text: item.text,
           createdAt: typeof item.createdAt === 'number' ? item.createdAt : item.id,
+          aiName: typeof item.aiName === 'string' && item.aiName.trim() ? item.aiName.trim() : undefined,
           actions: normalizeActions(item.actions),
           timeline: normalizeTimeline(item.timeline),
         }))

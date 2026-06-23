@@ -508,6 +508,36 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.saveAiAssistantState()
     },
 
+    updateAiAssistantMessageMeta(id: number, meta: { aiName?: string }, options?: { persist?: boolean }) {
+      const conversation = this.ensureActiveAiAssistantConversation()
+      const message = conversation.messages.find((item) => item.id === id)
+      if (!message) return
+      if (message.role === 'assistant') {
+        message.aiName = meta.aiName?.trim() || undefined
+      }
+      this.touchAiAssistantConversation(conversation)
+      if (options?.persist === false) return
+      this.saveAiAssistantState()
+    },
+
+    backfillAiAssistantMessageNames(aiName: string) {
+      const value = aiName.trim()
+      if (!value) return
+
+      let changed = false
+      this.aiAssistant.conversations.forEach((conversation) => {
+        conversation.messages.forEach((message) => {
+          if (message.role !== 'assistant' || message.aiName?.trim()) return
+          message.aiName = message.createdAt === 1 ? 'Looma AI' : value
+          changed = true
+        })
+      })
+
+      if (changed) {
+        this.saveAiAssistantState()
+      }
+    },
+
     appendAiAssistantMessageText(id: number, text: string) {
       const conversation = this.ensureActiveAiAssistantConversation()
       const message = conversation.messages.find((item) => item.id === id)

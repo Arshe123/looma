@@ -6,15 +6,26 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from config import with_global_ai_config, with_global_knowledge_config
 from providers.factory import create_chat_provider
 from prompt.main import BASE_SYSTEM_PROMPT, build_rag_context_prompt
 from rag.index_service import build_index as build_knowledge_index, build_index_events, get_index_status
+from rag.index_manager import (
+    build_managed_index,
+    build_managed_index_events,
+    build_status_snapshot,
+    delete_file_index,
+    delete_index_data,
+    get_file_chunks,
+    reindex_file,
+)
 from rag.query_service import retrieve_context_sources
 from schemas import (
     AgentRunRequest,
     ChatMessage,
     ChatRequest,
     IndexRequest,
+    IndexBuildRequest,
     IndexStatusRequest,
     RagQueryRequest,
 )
@@ -34,7 +45,15 @@ def ndjson_event(event_type: str, **payload) -> str:
     return json.dumps({"type": event_type, **payload}, ensure_ascii=False) + "\n"
 
 
+def resolve_request_config(request: ChatRequest | RagQueryRequest | IndexRequest | IndexBuildRequest | AgentRunRequest):
+    request.ai_config = with_global_ai_config(request.ai_config)
+    if hasattr(request, "knowledge"):
+        request.knowledge = with_global_knowledge_config(getattr(request, "knowledge"))
+    return request
+
+
 def require_embedding_config(request: RagQueryRequest | IndexRequest):
+    request = resolve_request_config(request)
     embedding = request.ai_config.embedding
     if embedding is None:
         raise HTTPException(status_code=422, detail="ai_config.embedding is required for RAG operations")
@@ -42,6 +61,7 @@ def require_embedding_config(request: RagQueryRequest | IndexRequest):
 
 
 def build_chat_messages(request: ChatRequest) -> list[ChatMessage]:
+    request = resolve_request_config(request)
     return [
         ChatMessage(role="system", content=BASE_SYSTEM_PROMPT),
         *request.history,
@@ -50,7 +70,15 @@ def build_chat_messages(request: ChatRequest) -> list[ChatMessage]:
 
 
 def get_index_status_result(request: IndexStatusRequest):
-    return get_index_status(request.workspace_path, request.vector_store_path)
+    ai_config = with_global_ai_config(None)
+    knowledge = with_global_knowledge_config()
+    if request.vector_store_path:
+        knowledge.vector_store_path = request.vector_store_path
+    return build_status_snapshot(IndexRequest(
+        workspace={"workspace_path": request.workspace_path},
+        knowledge=knowledge,
+        ai_config=ai_config,
+    ))
 
 
 @app.get("/health")
@@ -63,6 +91,7 @@ def health():
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
+    request = resolve_request_config(request)
     chat_provider = create_chat_provider(request.ai_config.chat)
     answer = await chat_provider.chat(build_chat_messages(request))
     return {"answer": answer}
@@ -70,6 +99,7 @@ async def chat(request: ChatRequest):
 
 @app.post("/chat/stream")
 async def stream_chat(request: ChatRequest):
+    request = resolve_request_config(request)
     chat_provider = create_chat_provider(request.ai_config.chat)
     messages = build_chat_messages(request)
 
@@ -86,6 +116,7 @@ async def stream_chat(request: ChatRequest):
 
 async def rag_query_events(request: RagQueryRequest) -> AsyncIterator[str]:
     try:
+        request = resolve_request_config(request)
         yield ndjson_event(
             "timeline",
             stepId="validate-workspace",
@@ -147,6 +178,7 @@ async def rag_query_events(request: RagQueryRequest) -> AsyncIterator[str]:
 
 
 async def rag_answer_result(request: RagQueryRequest):
+    request = resolve_request_config(request)
     chat_provider = create_chat_provider(request.ai_config.chat)
     require_embedding_config(request)
     sources = await retrieve_context_sources(request)
@@ -175,6 +207,7 @@ async def rag_query_stream(request: RagQueryRequest):
 
 
 async def build_index_result(request: IndexRequest):
+    request = resolve_request_config(request)
     require_embedding_config(request)
     return await asyncio.to_thread(build_knowledge_index, request)
 
@@ -189,8 +222,55 @@ def rag_index_status(request: IndexStatusRequest):
     return get_index_status_result(request)
 
 
+@app.post("/rag/index/build")
+async def rag_index_build(request: IndexBuildRequest):
+    request = resolve_request_config(request)
+    index_request = IndexRequest(workspace=request.workspace, knowledge=request.knowledge, ai_config=request.ai_config)
+    return await asyncio.to_thread(build_managed_index, index_request, request.mode)
+
+
+@app.post("/rag/index/build/stream")
+async def rag_index_build_stream(request: IndexBuildRequest):
+    request = resolve_request_config(request)
+    index_request = IndexRequest(workspace=request.workspace, knowledge=request.knowledge, ai_config=request.ai_config)
+
+    async def ndjson_stream() -> AsyncIterator[str]:
+        async for event in build_managed_index_events(index_request, request.mode):
+            yield ndjson_event(event.pop("type", "done"), **event)
+
+    return StreamingResponse(
+        ndjson_stream(),
+        media_type="application/x-ndjson; charset=utf-8",
+    )
+
+
+@app.post("/rag/index/file/chunks")
+async def rag_index_file_chunks(request: IndexBuildRequest):
+    request = resolve_request_config(request)
+    return await asyncio.to_thread(get_file_chunks, request)
+
+
+@app.post("/rag/index/file/reindex")
+async def rag_index_file_reindex(request: IndexBuildRequest):
+    request = resolve_request_config(request)
+    return await asyncio.to_thread(reindex_file, request)
+
+
+@app.delete("/rag/index/file")
+async def rag_index_file_delete(request: IndexBuildRequest):
+    request = resolve_request_config(request)
+    return await asyncio.to_thread(delete_file_index, request)
+
+
+@app.delete("/rag/index")
+async def rag_index_delete(request: IndexBuildRequest):
+    request = resolve_request_config(request)
+    return await asyncio.to_thread(delete_index_data, request)
+
+
 async def index_events(request: IndexRequest) -> AsyncIterator[str]:
     try:
+        request = resolve_request_config(request)
         async for event in build_index_events(request):
             event_type = event.pop("type")
             yield ndjson_event(event_type, **event)
@@ -210,6 +290,7 @@ async def rag_index_stream(request: IndexRequest):
 
 @app.post("/agent/run/stream")
 async def agent_run_stream(request: AgentRunRequest):
+    request = resolve_request_config(request)
     async def generate() -> AsyncIterator[str]:
         yield ndjson_event(
             "timeline",

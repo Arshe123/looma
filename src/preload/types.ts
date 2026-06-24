@@ -78,7 +78,7 @@ interface FileWorkspaceTabPayload extends WorkspaceTabPayloadBase {
 
 interface SystemWorkspaceTabPayload extends WorkspaceTabPayloadBase {
   kind: 'system';
-  page: 'settings';
+  page: 'settings' | 'rag-index';
 }
 
 type WorkspaceTabPayload = FileWorkspaceTabPayload | SystemWorkspaceTabPayload;
@@ -131,10 +131,64 @@ interface RagIndexPayload {
   error?: string;
 }
 
+interface RagIndexSummaryPayload {
+  indexed: number;
+  notIndexed: number;
+  outdated: number;
+  deleted: number;
+  failed: number;
+  ignored: number;
+}
+
+interface RagIndexCompatibilityPayload {
+  compatible: boolean;
+  needRebuild: boolean;
+  reason: string;
+}
+
+interface RagIndexFileStatusPayload {
+  path: string;
+  status: 'indexed' | 'not_indexed' | 'outdated' | 'deleted' | 'failed' | 'ignored';
+  contentHash?: string;
+  mtimeMs?: number;
+  size?: number;
+  chunkIds?: string[];
+  chunkCount?: number;
+  lastIndexedAt?: string | null;
+  error?: string | null;
+}
+
+interface RagFileChunkPayload {
+  id: string;
+  index: number;
+  text: string;
+  textLength?: number;
+  metadata: Record<string, unknown>;
+  filePath?: string;
+}
+
+interface RagFileChunksPayload {
+  status: string;
+  path: string;
+  chunkCount: number;
+  chunks: RagFileChunkPayload[];
+  manifest?: RagIndexFileStatusPayload | null;
+  persist_dir?: string;
+  requiresRebuild?: boolean;
+  error?: string;
+}
+
 interface RagIndexStatusPayload {
   exists: boolean;
   persist_dir?: string;
   error?: string;
+  workspaceId?: string;
+  indexCompatible?: boolean;
+  needRebuild?: boolean;
+  compatibility?: RagIndexCompatibilityPayload;
+  summary?: RagIndexSummaryPayload;
+  files?: RagIndexFileStatusPayload[];
+  metadata?: Record<string, unknown> | null;
 }
 
 type RagStreamEventPayload =
@@ -218,10 +272,16 @@ interface ElectronAPI {
       onEvent: (listener: (payload: RagStreamEventPayload) => void) => () => void;
     };
     indexStream: {
-      start: (requestId: string, workspaceId: string) => Promise<Result<void>>;
+      start: (requestId: string, workspaceId: string, mode?: 'incremental' | 'full' | 'retry_failed') => Promise<Result<void>>;
       cancel: (requestId: string) => Promise<Result<void>>;
       onEvent: (listener: (payload: RagStreamEventPayload) => void) => () => void;
     };
+    indexFile: {
+      reindex: (workspaceId: string, relativePath: string) => Promise<Result<RagIndexPayload>>;
+      chunks: (workspaceId: string, relativePath: string) => Promise<Result<RagFileChunksPayload>>;
+      delete: (workspaceId: string, relativePath: string) => Promise<Result<RagIndexPayload>>;
+    };
+    deleteIndex: (workspaceId: string) => Promise<Result<void>>;
   };
   fs: {
     listDir: (workspaceId: string, dirRelativePath: string) => Promise<Result<Array<{ name: string; relativePath: string; isDirectory: boolean; size: number; mtimeMs: number }>>>;

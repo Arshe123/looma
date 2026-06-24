@@ -106,8 +106,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       },
     },
     indexStream: {
-      start: (requestId: string, workspaceId: string) =>
-        ipcRenderer.invoke('rag:indexStream:start', requestId, workspaceId),
+      start: (requestId: string, workspaceId: string, mode: 'incremental' | 'full' | 'retry_failed' = 'incremental') =>
+        ipcRenderer.invoke('rag:indexStream:start', requestId, workspaceId, mode),
       cancel: (requestId: string) => ipcRenderer.invoke('rag:indexStream:cancel', requestId),
       onEvent: (listener: (payload: RagStreamEventPayload) => void) => {
         const handler = (_: unknown, payload: RagStreamEventPayload) => listener(payload);
@@ -115,6 +115,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return () => ipcRenderer.removeListener('rag:indexStream:event', handler);
       },
     },
+    indexFile: {
+      reindex: (workspaceId: string, relativePath: string) => ipcRenderer.invoke('rag:indexFile:reindex', workspaceId, relativePath),
+      chunks: (workspaceId: string, relativePath: string) => ipcRenderer.invoke('rag:indexFile:chunks', workspaceId, relativePath),
+      delete: (workspaceId: string, relativePath: string) => ipcRenderer.invoke('rag:indexFile:delete', workspaceId, relativePath),
+    },
+    deleteIndex: (workspaceId: string) => ipcRenderer.invoke('rag:index:delete', workspaceId),
   },
   fs: {
     listDir: (workspaceId: string, dirRelativePath: string) => ipcRenderer.invoke('fs:listDir', workspaceId, dirRelativePath),

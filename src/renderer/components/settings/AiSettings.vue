@@ -490,48 +490,8 @@ watch(
     </div>
 
     <div class="grid gap-0">
-      <section class="grid grid-cols-[2.4rem_minmax(0,1fr)] gap-3 border-b border-border-soft py-5 first:pt-0">
-        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">01</div>
-        <div class="grid min-w-0 gap-4">
-          <div class="flex flex-wrap items-start gap-3">
-            <div>
-              <h2 class="text-base font-bold text-text-main">通用设置</h2>
-              <p class="mt-1 text-xs leading-5 text-text-muted">控制索引位置、AI 行为记录和隐私策略。</p>
-            </div>
-          </div>
-
-          <div class="grid gap-4">
-            <label class="grid gap-2 text-sm text-text-main">
-              <span class="text-xs font-semibold text-text-main">向量存储位置</span>
-              <input
-                class="h-11 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none placeholder:text-text-subtle focus:border-accent"
-                :value="aiSettings.vectorStorePath"
-                spellcheck="false"
-                placeholder=".looma/rag-index"
-                @change="updateTextSetting('vectorStorePath', $event)"
-              />
-              <span class="text-xs leading-5 text-text-muted">修改后需要重新建立索引，旧索引不会自动转换。</span>
-            </label>
-
-            <label class="grid gap-2 text-sm text-text-main">
-              <span class="text-xs font-semibold text-text-main">索引更新策略</span>
-              <select
-                class="h-11 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none focus:border-accent"
-                :value="aiSettings.indexingMode"
-                @change="updateTextSetting('indexingMode', $event)"
-              >
-                <option v-for="option in indexingModeOptions" :key="option.value" :value="option.value">
-                  {{ option.label }}
-                </option>
-              </select>
-              <span class="text-xs leading-5 text-text-muted">手动更稳，增量或空闲更新更适合频繁编辑。</span>
-            </label>
-          </div>
-        </div>
-      </section>
-
       <section class="grid grid-cols-[2.4rem_minmax(0,1fr)] gap-3 border-b border-border-soft py-5">
-        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">02</div>
+        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">01</div>
         <div class="grid min-w-0 gap-4">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -637,7 +597,7 @@ watch(
       </section>
 
       <section class="grid grid-cols-[2.4rem_minmax(0,1fr)] gap-3 py-5 pb-0">
-        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">03</div>
+        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">02</div>
         <div class="grid min-w-0 gap-4">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>

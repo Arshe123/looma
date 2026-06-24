@@ -34,6 +34,9 @@ export interface AppSettings {
     chatProviderConfigs: ChatProviderConfigs
     embeddingProviderConfigs: EmbeddingProviderConfigs
     vectorStorePath: string
+    topK: number
+    chunkSize: number
+    chunkOverlap: number
     indexingMode: 'manual' | 'incremental' | 'idle'
     enableAiTimeline: boolean
     enableSourceCitation: boolean
@@ -163,6 +166,9 @@ const createDefaultAppSettings = (): AppSettings => {
       chatProviderConfigs,
       embeddingProviderConfigs,
       vectorStorePath: '.looma/rag-index',
+      topK: 5,
+      chunkSize: 800,
+      chunkOverlap: 100,
       indexingMode: 'manual',
       enableAiTimeline: true,
       enableSourceCitation: true,
@@ -202,6 +208,12 @@ const normalizeBoolean = (raw: unknown, fallback: boolean) =>
 
 const normalizeIndexingMode = (raw: unknown, fallback: AppSettings['ai']['indexingMode']) =>
   raw === 'manual' || raw === 'incremental' || raw === 'idle' ? raw : fallback
+
+const normalizeBoundedInteger = (raw: unknown, fallback: number, min: number, max: number) => {
+  const parsed = normalizeOptionalNumber(raw, fallback)
+  const numberValue = Number.isFinite(parsed) ? Math.round(parsed as number) : fallback
+  return Math.min(max, Math.max(min, numberValue))
+}
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? value as Record<string, unknown> : {}
@@ -325,6 +337,9 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
       chatProviderConfigs,
       embeddingProviderConfigs,
       vectorStorePath: normalizeNonEmptyString(rawAi.vectorStorePath, defaults.ai.vectorStorePath),
+      topK: normalizeBoundedInteger(rawAi.topK ?? rawAi.top_k, defaults.ai.topK, 1, 50),
+      chunkSize: normalizeBoundedInteger(rawAi.chunkSize ?? rawAi.chunk_size, defaults.ai.chunkSize, 128, 8192),
+      chunkOverlap: normalizeBoundedInteger(rawAi.chunkOverlap ?? rawAi.chunk_overlap, defaults.ai.chunkOverlap, 0, 2048),
       indexingMode: normalizeIndexingMode(rawAi.indexingMode, defaults.ai.indexingMode),
       enableAiTimeline: normalizeBoolean(rawAi.enableAiTimeline, defaults.ai.enableAiTimeline),
       enableSourceCitation: normalizeBoolean(rawAi.enableSourceCitation, defaults.ai.enableSourceCitation),

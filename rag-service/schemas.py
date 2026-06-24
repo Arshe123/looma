@@ -45,6 +45,8 @@ class KnowledgeConfig(BaseModel):
     top_k: int = Field(default=5, gt=0, le=50)
     include_sources: bool = True
     rerank: bool = False
+    chunk_size: int = Field(default=800, ge=128, le=8192)
+    chunk_overlap: int = Field(default=100, ge=0, le=2048)
 
 
 class ChatMessage(BaseModel):
@@ -62,7 +64,7 @@ class RequestStats(BaseModel):
 
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1)
-    ai_config: AIConfig
+    ai_config: Optional[AIConfig] = None
     history: list[ChatMessage] = Field(default_factory=list)
     request_stats: Optional[RequestStats] = None
 
@@ -70,24 +72,34 @@ class ChatRequest(BaseModel):
 class RagQueryRequest(BaseModel):
     question: str = Field(..., min_length=1)
     workspace: WorkspaceContext
-    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
-    ai_config: AIConfig
+    knowledge: Optional[KnowledgeConfig] = None
+    ai_config: Optional[AIConfig] = None
     history: list[ChatMessage] = Field(default_factory=list)
     request_stats: Optional[RequestStats] = None
 
 
 class IndexRequest(BaseModel):
     workspace: WorkspaceContext
-    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
-    ai_config: AIConfig
+    knowledge: Optional[KnowledgeConfig] = None
+    ai_config: Optional[AIConfig] = None
 
 
 class IndexStatusRequest(BaseModel):
     workspace_path: str = Field(..., min_length=1)
-    vector_store_path: str = ".looma/rag-index"
+    vector_store_path: Optional[str] = None
 
 
 AgentMode = Literal["chat", "rag", "agent"]
+
+IndexBuildMode = Literal["incremental", "full", "retry_failed"]
+
+
+class IndexBuildRequest(BaseModel):
+    workspace: WorkspaceContext
+    mode: IndexBuildMode = "incremental"
+    path: Optional[str] = None
+    knowledge: Optional[KnowledgeConfig] = None
+    ai_config: Optional[AIConfig] = None
 
 ToolName = Literal[
     "rag_search",
@@ -117,6 +129,6 @@ class AgentRunRequest(BaseModel):
     input: str = Field(..., min_length=1)
     workspace: Optional[WorkspaceContext] = None
     knowledge: Optional[KnowledgeConfig] = None
-    ai_config: AIConfig
+    ai_config: Optional[AIConfig] = None
     agent: AgentConfig = Field(default_factory=AgentConfig)
     history: list[ChatMessage] = Field(default_factory=list)

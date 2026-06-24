@@ -116,6 +116,8 @@ const resolveNpmRunner = () => {
 
 const ragPort = await findAvailablePort(parsePreferredRagPort())
 const ragServiceUrl = `http://127.0.0.1:${ragPort}`
+const loomaSettingsPath = process.env.LOOMA_SETTINGS_PATH
+  || (process.env.APPDATA ? path.join(process.env.APPDATA, 'workspace-meta', 'looma', 'settings.json') : '')
 process.stdout.write(`[rag] starting on ${ragServiceUrl}\n`)
 
 ragService = spawn(pythonBinary, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(ragPort)], {
@@ -125,6 +127,7 @@ ragService = spawn(pythonBinary, ['-m', 'uvicorn', 'main:app', '--host', '127.0.
     ...process.env,
     RAG_SERVICE_URL: ragServiceUrl,
     RAG_SERVICE_PORT: String(ragPort),
+    ...(loomaSettingsPath ? { LOOMA_SETTINGS_PATH: loomaSettingsPath } : {}),
   },
   windowsHide: true,
 })
@@ -195,6 +198,7 @@ const maybeStartElectron = () => {
           VITE_DEV_SERVER_URL: devServerUrl,
           RAG_SERVICE_URL: ragServiceUrl,
           RAG_SERVICE_PORT: String(ragPort),
+          ...(loomaSettingsPath ? { LOOMA_SETTINGS_PATH: loomaSettingsPath } : {}),
         },
         windowsHide: true,
       })

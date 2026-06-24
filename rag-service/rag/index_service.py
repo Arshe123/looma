@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import threading
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
@@ -142,6 +143,12 @@ def make_embedding_model(config: EmbeddingModelConfig):
     return ProviderEmbedding(config)
 
 
+def file_doc_id(workspace_path: Path, relative: str) -> str:
+    """Stable per-file doc_id used as ref_doc_id for all chunks of a file."""
+    raw = f"{workspace_path}|{relative}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def load_documents(input_files: Iterable[Path], workspace_path: Path):
     from llama_index.core import Document, SimpleDirectoryReader
 
@@ -158,7 +165,8 @@ def load_documents(input_files: Iterable[Path], workspace_path: Path):
         if suffix in {".md", ".txt"}:
             text = file_path.read_text(encoding="utf-8", errors="ignore")
             if text.strip():
-                documents.append(Document(text=text, metadata=metadata))
+                doc_id = file_doc_id(workspace_path, relative)
+                documents.append(Document(text=text, metadata=metadata, doc_id=doc_id))
             continue
 
         # Let llama-index handle PDFs and any parser-specific metadata.
@@ -169,12 +177,12 @@ def load_documents(input_files: Iterable[Path], workspace_path: Path):
     return documents
 
 
-def configure_llama_index(embedding_config: EmbeddingModelConfig):
+def configure_llama_index(embedding_config: EmbeddingModelConfig, chunk_size: int = 800, chunk_overlap: int = 100):
     from llama_index.core import Settings
     from llama_index.core.node_parser import SentenceSplitter
 
     Settings.embed_model = make_embedding_model(embedding_config)
-    Settings.node_parser = SentenceSplitter(chunk_size=800, chunk_overlap=100)
+    Settings.node_parser = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     # Avoid llama-index trying to instantiate its own default LLM during indexing.
     Settings.llm = None
 
@@ -182,7 +190,7 @@ def configure_llama_index(embedding_config: EmbeddingModelConfig):
 def build_index(request: IndexRequest) -> dict[str, Any]:
     from llama_index.core import VectorStoreIndex
 
-    if request.ai_config.embedding is None:
+    if request.ai_config is None or request.ai_config.embedding is None:
         raise ValueError("ai_config.embedding is required for index building")
 
     workspace = get_workspace_path(request)
@@ -200,7 +208,7 @@ def build_index(request: IndexRequest) -> dict[str, Any]:
             "persist_dir": str(persist_dir),
         }
 
-    configure_llama_index(request.ai_config.embedding)
+    configure_llama_index(request.ai_config.embedding, request.knowledge.chunk_size, request.knowledge.chunk_overlap)
     documents = load_documents(input_files, workspace)
     if not documents:
         return {
@@ -224,6 +232,8 @@ def build_index(request: IndexRequest) -> dict[str, Any]:
         "persist_dir": str(persist_dir),
         "embedding_model": request.ai_config.embedding.model,
         "embedding_provider": request.ai_config.embedding.provider,
+        "chunk_size": request.knowledge.chunk_size,
+        "chunk_overlap": request.knowledge.chunk_overlap,
     }
 
 
@@ -240,7 +250,7 @@ async def build_index_events(request: IndexRequest) -> AsyncIterator[dict[str, A
     }
     if not workspace.exists() or not workspace.is_dir():
         raise ValueError("工作空间不存在或不是文件夹。")
-    if request.ai_config.embedding is None:
+    if request.ai_config is None or request.ai_config.embedding is None:
         raise ValueError("ai_config.embedding is required for index building")
     yield {"type": "timeline", "stepId": "validate-workspace", "status": "completed", "detail": "工作空间可用。"}
 
@@ -257,7 +267,7 @@ async def build_index_events(request: IndexRequest) -> AsyncIterator[dict[str, A
         yield {"type": "done", "result": {"status": "ok", "document_count": 0, "exists": False, "persist_dir": str(persist_dir)}}
         return
 
-    configure_llama_index(request.ai_config.embedding)
+    configure_llama_index(request.ai_config.embedding, request.knowledge.chunk_size, request.knowledge.chunk_overlap)
     yield {"type": "timeline", "stepId": "load-documents", "status": "active", "title": "读取文档", "detail": "正在读取文件内容。"}
     documents = []
     for index, file_path in enumerate(input_files, start=1):
@@ -304,6 +314,8 @@ async def build_index_events(request: IndexRequest) -> AsyncIterator[dict[str, A
         "persist_dir": str(persist_dir),
         "embedding_model": request.ai_config.embedding.model,
         "embedding_provider": request.ai_config.embedding.provider,
+        "chunk_size": request.knowledge.chunk_size,
+        "chunk_overlap": request.knowledge.chunk_overlap,
     }
     yield {"type": "timeline", "stepId": "verify-index", "status": "completed", "title": "验证索引", "detail": "索引文件验证完成。"}
     yield {"type": "done", "result": result, **result}

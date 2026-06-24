@@ -5,6 +5,7 @@ import { useWorkspaceStore, type FileWorkspaceTab } from '../stores/workspace'
 import EditorLoadError from './editor/EditorLoadError.vue'
 import EditorTabs from './EditorTabs.vue'
 import SettingsPage from './SettingsPage.vue'
+import RagIndexPage from './rag/RagIndexPage.vue'
 import { getMediaPreviewTabs, isMediaPath, resolveWorkspaceFilePath } from '@/shared/utils/main-content-routing'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import { FILE_TREE_CREATE_FILE_EVENT } from '@/shared/utils/file-tree-utils'
@@ -49,7 +50,9 @@ const fileTabPaths = computed(() => workspaceStore.tabs
   .filter((tab): tab is FileWorkspaceTab => tab.kind === 'file')
   .map((tab) => tab.relativePath))
 const hasSettingsTab = computed(() => workspaceStore.tabs.some((tab) => tab.kind === 'system' && tab.page === 'settings'))
+const hasRagIndexTab = computed(() => workspaceStore.tabs.some((tab) => tab.kind === 'system' && tab.page === 'rag-index'))
 const isActiveSettingsTab = computed(() => activeTab.value?.kind === 'system' && activeTab.value.page === 'settings')
+const isActiveRagIndexTab = computed(() => activeTab.value?.kind === 'system' && activeTab.value.page === 'rag-index')
 const isActiveFileTab = computed(() => activeTab.value?.kind === 'file')
 const activeExt = computed(() => getExt(workspaceStore.activeFilePath))
 const currentEditor = computed(() => (editorByExt as any)[activeExt.value] || null)
@@ -180,6 +183,11 @@ onUnmounted(() => {
       v-show="isActiveSettingsTab"
     />
 
+    <RagIndexPage
+      v-if="hasRagIndexTab"
+      v-show="isActiveRagIndexTab"
+    />
+
     <main v-if="hasFileTabs" v-show="isActiveFileTab" class="flex-1 flex overflow-hidden">
       <div class="relative flex-1 overflow-hidden">
         <div v-if="!isSupportedFile" class="h-full w-full flex flex-col items-center justify-center text-text-subtle p-12 text-center bg-panel/50">
@@ -216,7 +224,7 @@ onUnmounted(() => {
       </div>
     </main>
 
-    <div v-if="!hasOpenTabs || (!isActiveFileTab && !isActiveSettingsTab)" class="flex-1 flex flex-col items-center justify-center text-text-subtle p-12 text-center">
+    <div v-if="!hasOpenTabs || (!isActiveFileTab && !isActiveSettingsTab && !isActiveRagIndexTab)" class="flex-1 flex flex-col items-center justify-center text-text-subtle p-12 text-center">
       <FileText :size="64" class="mb-6 opacity-20" />
       <h3 class="text-xl font-medium mb-2">欢迎来到您的笔记中</h3>
       <p class="max-w-xs text-sm opacity-60">从列表中选择一个笔记或创建一个新的笔记以开始。</p>

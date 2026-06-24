@@ -460,7 +460,7 @@ ipcMain.handle('rag:status', async (_, workspaceId: string) => {
   return await aiService.getIndexStatus(workspacePath, await getRagAiSettings());
 });
 
-ipcMain.handle('rag:indexStream:start', async (event, requestId: string, workspaceId: string) => {
+ipcMain.handle('rag:indexStream:start', async (event, requestId: string, workspaceId: string, mode: 'incremental' | 'full' | 'retry_failed' = 'incremental') => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
 
@@ -470,9 +470,9 @@ ipcMain.handle('rag:indexStream:start', async (event, requestId: string, workspa
   const sender = event.sender;
 
   aiService
-    .streamBuildVectorIndex(
+    .streamBuildManagedIndex(
       workspacePath,
-      await getRagAiSettings(),
+      mode,
       (payload) => {
         if (sender.isDestroyed()) return;
         sender.send('rag:indexStream:event', { requestId, ...payload });
@@ -501,6 +501,34 @@ ipcMain.handle('rag:indexStream:cancel', async (_, requestId: string) => {
   activeRagIndexStreams.get(requestId)?.abort();
   activeRagIndexStreams.delete(requestId);
   return { success: true };
+});
+
+
+ipcMain.handle('rag:indexFile:chunks', async (_, workspaceId: string, relativePath: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  if (!relativePath?.trim()) return { success: false, error: 'Path is required' };
+  return await aiService.getFileChunks(workspacePath, relativePath);
+});
+
+ipcMain.handle('rag:indexFile:reindex', async (_, workspaceId: string, relativePath: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  if (!relativePath?.trim()) return { success: false, error: 'Path is required' };
+  return await aiService.reindexFile(workspacePath, relativePath);
+});
+
+ipcMain.handle('rag:index:delete', async (_, workspaceId: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  return await aiService.deleteAllIndex(workspacePath);
+});
+
+ipcMain.handle('rag:indexFile:delete', async (_, workspaceId: string, relativePath: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  if (!relativePath?.trim()) return { success: false, error: 'Path is required' };
+  return await aiService.deleteFileIndex(workspacePath, relativePath);
 });
 
 ipcMain.handle('rag:chat', async (_, workspaceId: string, question: string, history?: unknown, requestStats?: unknown) => {

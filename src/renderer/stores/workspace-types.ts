@@ -93,7 +93,7 @@ export interface AiAssistantState {
 }
 
 export type SidebarPanelId = 'files' | 'outline' | 'ai'
-export type SystemPageId = 'settings'
+export type SystemPageId = 'settings' | 'rag-index'
 export type SettingsSectionId = 'appearance' | 'editor' | 'ai'
 
 export type WorkspaceTabKind = 'file' | 'system'

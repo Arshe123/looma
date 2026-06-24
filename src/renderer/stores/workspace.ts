@@ -697,6 +697,10 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.openSystemTab('settings', { section })
     },
 
+    openRagIndexPage() {
+      this.openSystemTab('rag-index')
+    },
+
     closeSystemPage(page: SystemPageId) {
       this.closeTab(getSystemTabId(page)).catch(() => {})
     },

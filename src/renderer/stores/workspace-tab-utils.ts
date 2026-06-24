@@ -36,8 +36,8 @@ export const normalizeWorkspaceTabs = (tabs: unknown): WorkspaceTab[] => {
     if (tab.kind === 'file' && typeof (tab as any).relativePath === 'string') {
       const rel = normalizeDir((tab as any).relativePath)
       if (rel) next = createFileTab(rel)
-    } else if (tab.kind === 'system' && (tab as any).page === 'settings') {
-      next = createSystemTab('settings')
+    } else if (tab.kind === 'system' && ((tab as any).page === 'settings' || (tab as any).page === 'rag-index')) {
+      next = createSystemTab((tab as any).page)
     }
 
     if (!next || seen.has(next.id)) continue
@@ -62,6 +62,7 @@ export const createTabsFromOpenedFiles = (openedFiles: string[] = []) => {
 export const getTabTitle = (tab: WorkspaceTab) => {
   if (tab.kind === 'system') {
     if (tab.page === 'settings') return '系统设置'
+    if (tab.page === 'rag-index') return '索引库'
     return '系统页面'
   }
 

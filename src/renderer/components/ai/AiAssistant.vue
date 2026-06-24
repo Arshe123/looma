@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Bot, Clipboard, Copy, FileText, History, Loader2, MessageSquare, Paperclip, Plus, RotateCcw, Send, Settings, Sparkles, Trash2, User } from 'lucide-vue-next'
+import { Bot, Clipboard, Copy, Database, FileText, History, Loader2, MessageSquare, Paperclip, Plus, RotateCcw, Send, Settings, Sparkles, Trash2, User } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import type { AiAssistantMessage, AiAssistantMessageAction, AiAssistantTimelineOutput, AiAssistantTimelineStep } from '@/renderer/stores/workspace'
@@ -585,6 +585,12 @@ const getActiveWorkspaceId = () => {
   return workspaceId
 }
 
+const openIndexLibrary = () => {
+  const workspaceId = getActiveWorkspaceId()
+  if (!workspaceId) return
+  workspaceStore.openRagIndexPage()
+}
+
 const createBuildIndexAction = (disabled = false): AiAssistantMessageAction => ({
   type: BUILD_INDEX_ACTION_TYPE,
   title: '建立当前工作空间索引',
@@ -891,6 +897,15 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
           </p>
         </div>
         <div class="flex shrink-0 items-center gap-1">
+            <button
+              class="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main"
+              type="button"
+              title="索引库"
+              :disabled="!hasWorkspace"
+              @click="openIndexLibrary"
+            >
+              <Database :size="16" />
+            </button>
           <button
             class="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main"
             type="button"

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { AlertTriangle, CheckCircle2, Database, FileText, Loader2, RefreshCw, RotateCcw, Search, Settings, Trash2, XCircle, X } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { AlertTriangle, CheckCircle2, Database, FileText, Loader2, RefreshCw, RotateCcw, Search, Settings, Trash2, XCircle } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
-import { useSettingsStore } from '@/renderer/stores/settings'
+import RagIndexSettingsDialog from './RagIndexSettingsDialog.vue'
 
 type IndexStatus = 'indexed' | 'not_indexed' | 'outdated' | 'deleted' | 'failed' | 'ignored'
 type BuildMode = 'incremental' | 'full' | 'retry_failed'
@@ -80,25 +80,7 @@ type IndexStatusPayload = {
 }
 
 const workspaceStore = useWorkspaceStore()
-const settingsStore = useSettingsStore()
 const showSettings = ref(false)
-const aiSettings = computed(() => settingsStore.aiSettings)
-
-const indexingModeOptions = [
-  { value: 'manual', label: '手动' },
-  { value: 'incremental', label: '自动增量' },
-  { value: 'idle', label: '应用空闲时自动' },
-] as const
-
-const updateRagSetting = async (field: string, event: Event) => {
-  const el = event.target as HTMLInputElement | HTMLSelectElement
-  const raw = el.value
-  let value: any = raw
-  if (field === 'topK' || field === 'chunkSize' || field === 'chunkOverlap') {
-    value = Number(raw)
-  }
-  await settingsStore.setAiSettings({ [field]: value } as any)
-}
 const status = ref<IndexStatusPayload | null>(null)
 const isLoading = ref(false)
 const isBuilding = ref(false)
@@ -107,13 +89,23 @@ const buildMode = ref<BuildMode | ''>('')
 const errorText = ref('')
 const searchQuery = ref('')
 const statusFilter = ref<'all' | IndexStatus>('all')
+const filePage = ref(1)
+const filePageSize = ref(20)
+const filePageSizeOptions = [10, 20, 50, 100]
 const buildLog = ref<string[]>([])
 const selectedFile = ref<IndexFile | null>(null)
 const fileChunks = ref<FileChunk[]>([])
 const isLoadingChunks = ref(false)
 const chunkError = ref('')
 const chunkSearchQuery = ref('')
+const reindexingFilePath = ref('')
+const reindexStartedAt = ref<number | null>(null)
+const reindexElapsedSeconds = ref(0)
+const reindexMessage = ref('')
+const reindexError = ref('')
+const reindexSuccessPath = ref('')
 let unsubscribeIndexStream: (() => void) | null = null
+let reindexTimer: number | null = null
 
 const activeWorkspaceId = computed(() => workspaceStore.activeWorkspaceId)
 const activeWorkspaceName = computed(() => workspaceStore.activeWorkspace?.name || '当前工作空间')
@@ -126,6 +118,11 @@ const summary = computed<IndexSummary>(() => status.value?.summary ?? {
   ignored: 0,
 })
 const totalActionable = computed(() => summary.value.notIndexed + summary.value.outdated + summary.value.deleted + summary.value.failed)
+const isFileReindexing = computed(() => Boolean(reindexingFilePath.value))
+const activeReindexFile = computed(() =>
+  (status.value?.files ?? []).find((file) => file.path === reindexingFilePath.value) ?? null,
+)
+const reindexElapsedLabel = computed(() => `${Math.max(0, reindexElapsedSeconds.value)}s`)
 const indexMetadata = computed(() => status.value?.metadata ?? null)
 const lastBuild = computed(() => indexMetadata.value?.lastBuild ?? null)
 const metadataEmbeddingLabel = computed(() => {
@@ -161,6 +158,21 @@ const filteredFiles = computed(() => {
     .filter((file) => statusFilter.value === 'all' || file.status === statusFilter.value)
     .filter((file) => !q || file.path.toLowerCase().includes(q))
 })
+const totalFilteredFiles = computed(() => filteredFiles.value.length)
+const fileTotalPages = computed(() => Math.max(1, Math.ceil(totalFilteredFiles.value / filePageSize.value)))
+const filePageStart = computed(() => totalFilteredFiles.value === 0 ? 0 : (filePage.value - 1) * filePageSize.value + 1)
+const filePageEnd = computed(() => Math.min(totalFilteredFiles.value, filePage.value * filePageSize.value))
+const paginatedFiles = computed(() => {
+  const start = (filePage.value - 1) * filePageSize.value
+  return filteredFiles.value.slice(start, start + filePageSize.value)
+})
+const filePageNumbers = computed(() => {
+  const total = fileTotalPages.value
+  const current = filePage.value
+  const start = Math.max(1, Math.min(current - 2, total - 4))
+  const end = Math.min(total, start + 4)
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index)
+})
 const filteredChunks = computed(() => {
   const q = chunkSearchQuery.value.trim().toLowerCase()
   if (!q) return fileChunks.value
@@ -190,6 +202,52 @@ const statusClasses: Record<IndexStatus, string> = {
 }
 
 const makeRequestId = () => `${Date.now()}:${Math.random().toString(36).slice(2)}`
+
+const goToFilePage = (page: number) => {
+  filePage.value = Math.min(Math.max(1, page), fileTotalPages.value)
+}
+
+const handleFilePageSizeChange = (event: Event) => {
+  const value = Number((event.target as HTMLSelectElement).value)
+  filePageSize.value = Number.isFinite(value) && value > 0 ? value : 20
+  filePage.value = 1
+}
+
+const stopReindexTimer = () => {
+  if (reindexTimer !== null) {
+    window.clearInterval(reindexTimer)
+    reindexTimer = null
+  }
+}
+
+const startReindexTimer = () => {
+  stopReindexTimer()
+  reindexStartedAt.value = Date.now()
+  reindexElapsedSeconds.value = 0
+  reindexTimer = window.setInterval(() => {
+    if (!reindexStartedAt.value) return
+    reindexElapsedSeconds.value = Math.max(0, Math.floor((Date.now() - reindexStartedAt.value) / 1000))
+  }, 500)
+}
+
+const clearReindexFeedbackLater = (path: string) => {
+  window.setTimeout(() => {
+    if (reindexSuccessPath.value === path && !reindexingFilePath.value) {
+      reindexSuccessPath.value = ''
+      reindexMessage.value = ''
+    }
+  }, 2400)
+}
+
+const formatFileName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || path
+
+const formatFileSize = (size?: number) => {
+  if (!Number.isFinite(size)) return '—'
+  const value = size as number
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
 
 const formatTime = (value?: string | null) => {
   if (!value) return '—'
@@ -248,13 +306,50 @@ const buildIndex = async (mode: BuildMode) => {
 
 const reindexFile = async (path: string) => {
   const workspaceId = activeWorkspaceId.value
-  if (!workspaceId || isBuilding.value) return
-  const result = await window.electronAPI.rag.indexFile.reindex(workspaceId, path)
-  if (!result.success) {
-    errorText.value = result.error || `重建 ${path} 索引失败。`
-    return
+  if (!workspaceId || isBuilding.value || isFileReindexing.value) return
+
+  errorText.value = ''
+  reindexError.value = ''
+  reindexSuccessPath.value = ''
+  reindexingFilePath.value = path
+  reindexMessage.value = `正在重建 ${formatFileName(path)} 的索引...`
+  startReindexTimer()
+
+  try {
+    const result = await window.electronAPI.rag.indexFile.reindex(workspaceId, path)
+    if (!result.success) {
+      reindexError.value = result.error || `重建 ${path} 索引失败。`
+      errorText.value = reindexError.value
+      return
+    }
+    if (result.data?.error) {
+      reindexError.value = result.data.error
+      errorText.value = result.data.error
+      return
+    }
+
+    const chunks = (result.data as any)?.chunks ?? result.data?.document_count ?? 0
+    reindexSuccessPath.value = path
+    reindexMessage.value = `已完成 ${formatFileName(path)} 的索引重建，生成 ${chunks} 个 chunk。`
+    await refreshStatus()
+    if (selectedFile.value?.path === path) {
+      const latest = (status.value?.files ?? []).find((file) => file.path === path)
+      if (latest) {
+        selectedFile.value = latest
+        await openFileChunks(latest)
+      } else if (selectedFile.value) {
+        await openFileChunks(selectedFile.value)
+      }
+    }
+    clearReindexFeedbackLater(path)
+  } catch (error: any) {
+    reindexError.value = error?.message ?? String(error)
+    errorText.value = reindexError.value
+  } finally {
+    stopReindexTimer()
+    reindexStartedAt.value = null
+    reindexingFilePath.value = ''
   }
-  await refreshStatus()
 }
 
 const closeChunkDrawer = () => {
@@ -366,8 +461,17 @@ onMounted(() => {
   refreshStatus().catch(() => {})
 })
 
+watch([searchQuery, statusFilter], () => {
+  filePage.value = 1
+})
+
+watch(fileTotalPages, (total) => {
+  if (filePage.value > total) filePage.value = total
+})
+
 onBeforeUnmount(() => {
   cancelBuild().catch(() => {})
+  stopReindexTimer()
   unsubscribeIndexStream?.()
   unsubscribeIndexStream = null
 })
@@ -383,29 +487,29 @@ onBeforeUnmount(() => {
           <p class="mt-1 text-sm text-text-muted">管理 {{ activeWorkspaceName }} 的本地 RAG 索引、文件状态和配置兼容性。</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-border-soft bg-panel-soft px-3 text-xs font-medium hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle" :disabled="isLoading || isBuilding" @click="refreshStatus">
+          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-border-soft bg-panel-soft px-3 text-xs font-medium hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle" :disabled="isLoading || isBuilding || isFileReindexing" @click="refreshStatus">
             <Loader2 v-if="isLoading" :size="14" class="animate-spin" />
             <RefreshCw v-else :size="14" />
             刷新状态
           </button>
-          <button class="inline-flex h-9 items-center gap-2 rounded-xl bg-accent px-3 text-xs font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-accent-soft disabled:text-text-muted" :disabled="isBuilding" @click="buildIndex('incremental')">
+          <button class="inline-flex h-9 items-center gap-2 rounded-xl bg-accent px-3 text-xs font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-accent-soft disabled:text-text-muted" :disabled="isBuilding || isFileReindexing" @click="buildIndex('incremental')">
             <Loader2 v-if="isBuilding && buildMode === 'incremental'" :size="14" class="animate-spin" />
             <Database v-else :size="14" />
             增量更新
           </button>
-          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-border-soft bg-panel-soft px-3 text-xs font-medium hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle" :disabled="isBuilding" @click="buildIndex('retry_failed')">
+          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-border-soft bg-panel-soft px-3 text-xs font-medium hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle" :disabled="isBuilding || isFileReindexing" @click="buildIndex('retry_failed')">
             <RotateCcw :size="14" />
             重试失败
           </button>
-          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 text-xs font-medium text-danger hover:bg-danger/15 disabled:cursor-not-allowed disabled:opacity-60" :disabled="isBuilding" @click="buildIndex('full')">
+          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 text-xs font-medium text-danger hover:bg-danger/15 disabled:cursor-not-allowed disabled:opacity-60" :disabled="isBuilding || isFileReindexing" @click="buildIndex('full')">
             <Trash2 :size="14" />
             全量重建
           </button>
-          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-danger/20 bg-panel-soft px-3 text-xs font-medium text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50" :disabled="isBuilding" @click="deleteAllIndex">
+          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-danger/20 bg-panel-soft px-3 text-xs font-medium text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50" :disabled="isBuilding || isFileReindexing" @click="deleteAllIndex">
             <Trash2 :size="14" />
             删除全部索引
           </button>
-          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-border-soft bg-panel-soft px-3 text-xs font-medium hover:bg-accent-soft" :class="{ 'bg-accent-soft text-accent': showSettings }" @click="showSettings = !showSettings">
+          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-border-soft bg-panel-soft px-3 text-xs font-medium hover:bg-accent-soft" :class="{ 'bg-accent-soft text-accent': showSettings }" @click="showSettings = true">
             <Settings :size="14" />
             设置
           </button>
@@ -413,94 +517,57 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <div v-if="showSettings" class="shrink-0 border-b border-border-soft bg-panel-soft px-5 py-4">
-      <div class="mb-3 flex items-center justify-between">
-        <div>
-          <h2 class="text-sm font-semibold text-text-main">RAG 索引设置</h2>
-          <p class="mt-0.5 text-xs text-text-muted">这些设置影响索引构建行为和检索精度。修改后可能需要重建索引。</p>
-        </div>
-        <button class="flex h-7 w-7 items-center justify-center rounded-lg text-text-muted hover:bg-panel hover:text-text-main" @click="showSettings = false">
-          <X :size="14" />
-        </button>
-      </div>
-
-      <div class="grid gap-4">
-        <label class="grid gap-2 text-sm text-text-main">
-          <span class="text-xs font-semibold text-text-main">向量存储位置</span>
-          <input
-            class="h-11 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none placeholder:text-text-subtle focus:border-accent"
-            :value="aiSettings.vectorStorePath"
-            spellcheck="false"
-            placeholder=".looma/rag-index"
-            @change="(e) => updateRagSetting('vectorStorePath', e)"
-          />
-          <span class="text-xs leading-5 text-text-muted">修改后需要重新建立索引，旧索引不会自动转换。</span>
-        </label>
-
-        <div class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-4">
-          <label class="grid gap-2 text-sm text-text-main">
-            <span class="text-xs font-semibold text-text-main">检索片段数 Top K</span>
-            <input
-              class="h-11 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none placeholder:text-text-subtle focus:border-accent"
-              :value="aiSettings.topK"
-              type="number"
-              min="1"
-              max="50"
-              step="1"
-              @change="(e) => updateRagSetting('topK', e)"
-            />
-            <span class="text-xs leading-5 text-text-muted">每次提问从索引中取回的相关片段数量。</span>
-          </label>
-
-          <label class="grid gap-2 text-sm text-text-main">
-            <span class="text-xs font-semibold text-text-main">切块大小</span>
-            <input
-              class="h-11 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none placeholder:text-text-subtle focus:border-accent"
-              :value="aiSettings.chunkSize"
-              type="number"
-              min="128"
-              max="8192"
-              step="1"
-              @change="(e) => updateRagSetting('chunkSize', e)"
-            />
-            <span class="text-xs leading-5 text-text-muted">重建索引时每个文本块的目标长度。</span>
-          </label>
-
-          <label class="grid gap-2 text-sm text-text-main">
-            <span class="text-xs font-semibold text-text-main">切块重叠</span>
-            <input
-              class="h-11 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none placeholder:text-text-subtle focus:border-accent"
-              :value="aiSettings.chunkOverlap"
-              type="number"
-              min="0"
-              max="2048"
-              step="1"
-              @change="(e) => updateRagSetting('chunkOverlap', e)"
-            />
-            <span class="text-xs leading-5 text-text-muted">相邻文本块保留的上下文重叠长度。</span>
-          </label>
-        </div>
-
-        <label class="grid gap-2 text-sm text-text-main">
-          <span class="text-xs font-semibold text-text-main">索引更新策略</span>
-          <select
-            class="h-11 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none focus:border-accent"
-            :value="aiSettings.indexingMode"
-            @change="(e) => updateRagSetting('indexingMode', e)"
-          >
-            <option v-for="option in indexingModeOptions" :key="option.value" :value="option.value">
-              {{ option.label }}
-            </option>
-          </select>
-          <span class="text-xs leading-5 text-text-muted">手动更稳，增量或空闲更新更适合频繁编辑。</span>
-        </label>
-      </div>
-    </div>
+    <RagIndexSettingsDialog
+      :open="showSettings"
+      :disabled="isBuilding || isFileReindexing"
+      @close="showSettings = false"
+      @saved="refreshStatus"
+      @save-and-rebuild="buildIndex('full')"
+    />
 
     <main class="min-h-0 flex-1 overflow-y-auto p-5">
       <div v-if="errorText" class="mb-4 rounded-2xl border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
         {{ errorText }}
       </div>
+
+      <section
+        v-if="isFileReindexing || reindexMessage || reindexError"
+        class="mb-4 overflow-hidden rounded-2xl border p-4"
+        :class="reindexError
+          ? 'border-danger/30 bg-danger/10 text-danger'
+          : isFileReindexing
+            ? 'border-accent/30 bg-accent-soft/70 text-text-main'
+            : 'border-success/30 bg-success/10 text-success'"
+      >
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="flex min-w-0 items-start gap-3">
+            <span class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-panel shadow-sm">
+              <Loader2 v-if="isFileReindexing" :size="16" class="animate-spin text-accent" />
+              <CheckCircle2 v-else-if="!reindexError" :size="16" class="text-success" />
+              <AlertTriangle v-else :size="16" class="text-danger" />
+            </span>
+            <div class="min-w-0">
+              <h2 class="text-sm font-semibold">
+                {{ isFileReindexing ? '正在重建单文件索引' : reindexError ? '单文件重建失败' : '单文件重建完成' }}
+              </h2>
+              <p class="mt-1 truncate text-xs" :class="reindexError ? 'text-danger' : 'text-text-muted'">
+                {{ reindexError || reindexMessage }}
+              </p>
+              <div v-if="isFileReindexing" class="mt-3 h-1.5 overflow-hidden rounded-full bg-panel">
+                <div class="h-full w-1/3 animate-pulse rounded-full bg-accent" />
+              </div>
+              <div v-if="isFileReindexing && activeReindexFile" class="mt-2 flex flex-wrap gap-2 text-[11px] text-text-muted">
+                <span class="rounded-full border border-border-soft bg-panel px-2 py-0.5">{{ activeReindexFile.status ? statusLabels[activeReindexFile.status] : '待处理' }}</span>
+                <span class="rounded-full border border-border-soft bg-panel px-2 py-0.5">原 Chunks：{{ activeReindexFile.chunkCount ?? 0 }}</span>
+                <span class="rounded-full border border-border-soft bg-panel px-2 py-0.5">大小：{{ formatFileSize(activeReindexFile.size) }}</span>
+              </div>
+            </div>
+          </div>
+          <span v-if="isFileReindexing" class="shrink-0 rounded-full border border-accent/20 bg-panel px-3 py-1 text-xs font-medium text-accent">
+            已耗时 {{ reindexElapsedLabel }}
+          </span>
+        </div>
+      </section>
 
       <section class="grid gap-4 lg:grid-cols-[1.2fr_2fr]">
         <div class="rounded-2xl border border-border-soft bg-panel-soft p-4">
@@ -564,7 +631,7 @@ onBeforeUnmount(() => {
             <div class="mt-1 text-[11px] text-text-muted">维度：{{ indexMetadata.embedding?.dimension ?? '未记录' }}</div>
           </div>
           <div class="rounded-xl border border-border-soft bg-panel p-3">
-            <div class="text-[11px] font-medium text-text-subtle">切块 / Parser</div>
+            <div class="text-[11px] font-medium text-text-subtle">切块大小 / 重叠部分大小</div>
             <div class="mt-1 text-sm font-semibold text-text-main">{{ metadataChunkingLabel }}</div>
             <div class="mt-1 text-[11px] text-text-muted">
               {{ indexMetadata.parser?.type || 'parser' }} v{{ indexMetadata.parser?.version ?? '—' }}
@@ -606,6 +673,13 @@ onBeforeUnmount(() => {
               <option value="failed">失败</option>
               <option value="ignored">已忽略</option>
             </select>
+            <select
+              class="h-9 rounded-xl border border-border-soft bg-panel px-3 text-xs outline-none focus:border-accent"
+              :value="filePageSize"
+              @change="handleFilePageSizeChange"
+            >
+              <option v-for="size in filePageSizeOptions" :key="size" :value="size">每页 {{ size }} 条</option>
+            </select>
           </div>
         </div>
 
@@ -622,16 +696,47 @@ onBeforeUnmount(() => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="file in filteredFiles" :key="`${file.status}:${file.path}`" class="cursor-pointer border-t border-border-soft hover:bg-panel/70" @click="openFileChunks(file)">
-                <td class="max-w-[360px] px-4 py-3 text-text-main"><div class="flex items-center gap-2"><FileText :size="14" class="shrink-0 text-text-muted" /><span class="truncate">{{ file.path }}</span></div></td>
+              <tr
+                v-for="file in paginatedFiles"
+                :key="`${file.status}:${file.path}`"
+                class="cursor-pointer border-t border-border-soft transition-colors hover:bg-panel/70"
+                :class="{
+                  'bg-accent-soft/60 ring-1 ring-inset ring-accent/20': reindexingFilePath === file.path,
+                  'bg-success/5': reindexSuccessPath === file.path,
+                }"
+                @click="openFileChunks(file)"
+              >
+                <td class="max-w-[360px] px-4 py-3 text-text-main">
+                  <div class="flex items-center gap-2">
+                    <Loader2 v-if="reindexingFilePath === file.path" :size="14" class="shrink-0 animate-spin text-accent" />
+                    <FileText v-else :size="14" class="shrink-0 text-text-muted" />
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate">{{ file.path }}</div>
+                      <div v-if="reindexingFilePath === file.path" class="mt-1 flex items-center gap-1.5 text-[10px] text-accent">
+                        <span class="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+                        正在删除旧 chunk 并写入新向量 · {{ reindexElapsedLabel }}
+                      </div>
+                      <div v-else-if="reindexSuccessPath === file.path" class="mt-1 text-[10px] text-success">刚刚重建完成</div>
+                    </div>
+                  </div>
+                </td>
                 <td class="px-4 py-3"><span class="rounded-full border px-2.5 py-1" :class="statusClasses[file.status]">{{ statusLabels[file.status] }}</span></td>
                 <td class="px-4 py-3 text-text-muted">{{ file.chunkCount ?? 0 }}</td>
                 <td class="px-4 py-3 text-text-muted">{{ formatTime(file.lastIndexedAt) }}</td>
                 <td class="max-w-[260px] px-4 py-3 text-danger"><span class="line-clamp-2">{{ file.error || '—' }}</span></td>
                 <td class="px-4 py-3 text-right">
                   <div class="inline-flex items-center gap-1">
-                    <button v-if="file.status !== 'ignored' && file.status !== 'deleted'" class="rounded-lg px-2 py-1 text-text-muted hover:bg-accent-soft hover:text-text-main disabled:opacity-50" :disabled="isBuilding" @click.stop="reindexFile(file.path)">重建</button>
-                    <button v-if="file.status === 'deleted'" class="rounded-lg px-2 py-1 text-danger hover:bg-danger/10 disabled:opacity-50" :disabled="isBuilding" @click.stop="deleteFileIndex(file.path)">清理</button>
+                    <button
+                      v-if="file.status !== 'ignored' && file.status !== 'deleted'"
+                      class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-text-muted hover:bg-accent-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-60"
+                      :class="reindexingFilePath === file.path ? 'bg-accent-soft text-accent' : ''"
+                      :disabled="isBuilding || (isFileReindexing && reindexingFilePath !== file.path)"
+                      @click.stop="reindexFile(file.path)"
+                    >
+                      <Loader2 v-if="reindexingFilePath === file.path" :size="12" class="animate-spin" />
+                      {{ reindexingFilePath === file.path ? '重建中' : '重建' }}
+                    </button>
+                    <button v-if="file.status === 'deleted'" class="rounded-lg px-2 py-1 text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50" :disabled="isBuilding || isFileReindexing" @click.stop="deleteFileIndex(file.path)">清理</button>
                   </div>
                 </td>
               </tr>
@@ -643,6 +748,54 @@ onBeforeUnmount(() => {
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <div v-if="totalFilteredFiles > 0" class="flex flex-wrap items-center justify-between gap-3 border-t border-border-soft px-4 py-3 text-xs text-text-muted">
+          <div>
+            显示第 {{ filePageStart }}-{{ filePageEnd }} 条，共 {{ totalFilteredFiles }} 条
+            <span v-if="(status?.files?.length ?? 0) !== totalFilteredFiles">（已从 {{ status?.files?.length ?? 0 }} 个文件中过滤）</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button
+              class="rounded-lg border border-border-soft bg-panel px-2.5 py-1.5 hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle disabled:hover:bg-panel"
+              :disabled="filePage <= 1"
+              @click="goToFilePage(1)"
+            >
+              首页
+            </button>
+            <button
+              class="rounded-lg border border-border-soft bg-panel px-2.5 py-1.5 hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle disabled:hover:bg-panel"
+              :disabled="filePage <= 1"
+              @click="goToFilePage(filePage - 1)"
+            >
+              上一页
+            </button>
+            <button
+              v-for="page in filePageNumbers"
+              :key="page"
+              class="min-w-8 rounded-lg border px-2.5 py-1.5 font-medium transition-colors"
+              :class="page === filePage
+                ? 'border-accent bg-accent text-white'
+                : 'border-border-soft bg-panel hover:bg-accent-soft hover:text-text-main'"
+              @click="goToFilePage(page)"
+            >
+              {{ page }}
+            </button>
+            <button
+              class="rounded-lg border border-border-soft bg-panel px-2.5 py-1.5 hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle disabled:hover:bg-panel"
+              :disabled="filePage >= fileTotalPages"
+              @click="goToFilePage(filePage + 1)"
+            >
+              下一页
+            </button>
+            <button
+              class="rounded-lg border border-border-soft bg-panel px-2.5 py-1.5 hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle disabled:hover:bg-panel"
+              :disabled="filePage >= fileTotalPages"
+              @click="goToFilePage(fileTotalPages)"
+            >
+              末页
+            </button>
+          </div>
         </div>
       </section>
     </main>

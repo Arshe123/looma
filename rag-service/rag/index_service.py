@@ -154,7 +154,7 @@ def load_documents(input_files: Iterable[Path], workspace_path: Path):
 
     documents = []
     for file_path in input_files:
-        relative = str(file_path.resolve().relative_to(workspace_path))
+        relative = str(file_path.resolve().relative_to(workspace_path)).replace("\\", "/")
         suffix = file_path.suffix.lower()
         metadata = {
             "source": relative,
@@ -171,8 +171,10 @@ def load_documents(input_files: Iterable[Path], workspace_path: Path):
 
         # Let llama-index handle PDFs and any parser-specific metadata.
         loaded = SimpleDirectoryReader(input_files=[str(file_path)]).load_data()
+        doc_id = file_doc_id(workspace_path, relative)
         for document in loaded:
             document.metadata = {**metadata, **getattr(document, "metadata", {})}
+            document.doc_id = doc_id
             documents.append(document)
     return documents
 
@@ -182,7 +184,12 @@ def configure_llama_index(embedding_config: EmbeddingModelConfig, chunk_size: in
     from llama_index.core.node_parser import SentenceSplitter
 
     Settings.embed_model = make_embedding_model(embedding_config)
-    Settings.node_parser = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    node_parser = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    Settings.node_parser = node_parser
+    # LlamaIndex caches Settings.transformations after the first access. Updating
+    # Settings.node_parser alone does not invalidate that cache, so rebuilds in
+    # the same RAG process can keep using the old splitter until app restart.
+    Settings.transformations = [node_parser]
     # Avoid llama-index trying to instantiate its own default LLM during indexing.
     Settings.llm = None
 

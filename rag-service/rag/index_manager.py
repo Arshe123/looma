@@ -5,7 +5,10 @@ import fnmatch
 import hashlib
 import json
 import shutil
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 
@@ -30,6 +33,55 @@ EXCLUDE_GLOBS = {
     "*.exe",
 }
 STATUSES = ["indexed", "not_indexed", "outdated", "deleted", "failed", "ignored"]
+REQUIRED_INDEX_FILES = {"index_store.json", "docstore.json", "default__vector_store.json"}
+_index_locks: dict[str, threading.RLock] = {}
+_index_locks_guard = threading.Lock()
+
+
+class CorruptIndexError(RuntimeError):
+    def __init__(self, persist_dir: Path, detail: str):
+        self.persist_dir = persist_dir
+        self.detail = detail
+        super().__init__("本地向量索引文件已损坏，无法安全执行单文件操作。请先在索引库执行“全量重建”。")
+
+
+def normalize_relative_path(path: str | Path) -> str:
+    return str(path).replace("\\", "/").strip("/")
+
+
+@contextmanager
+def index_operation_lock(persist_dir: Path):
+    key = str(persist_dir.resolve())
+    with _index_locks_guard:
+        lock = _index_locks.setdefault(key, threading.RLock())
+    with lock:
+        yield
+
+
+def validate_persisted_index_json(persist_dir: Path) -> None:
+    for filename in REQUIRED_INDEX_FILES:
+        path = persist_dir / filename
+        if not path.is_file():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                json.load(handle)
+        except JSONDecodeError as exc:
+            raise CorruptIndexError(persist_dir, f"{filename}: {exc}") from exc
+
+
+def corrupt_index_response(error: CorruptIndexError, path: str = "") -> dict[str, Any]:
+    return {
+        "success": False,
+        "status": "corrupt_index",
+        "path": path,
+        "chunkCount": 0,
+        "chunks": [],
+        "error": str(error),
+        "technicalDetail": error.detail,
+        "persist_dir": str(error.persist_dir),
+        "requiresRebuild": True,
+    }
 
 
 
@@ -38,14 +90,14 @@ def file_doc_id(workspace: Path, rel: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _remove_doc_vectors(workspace: Path, persist_dir: Path, doc_id: str) -> int:
-    """Delete all vector nodes whose ref_doc_id matches doc_id.  Returns count removed."""
+def _remove_doc_vectors(workspace: Path, persist_dir: Path, doc_id: str, rel: str | None = None) -> int:
+    """Delete all vector nodes for a file. Returns count removed."""
     if not persist_dir.is_dir():
         return 0
-    required = {"index_store.json", "docstore.json", "default__vector_store.json"}
-    if not all((persist_dir / f).is_file() for f in required):
+    if not all((persist_dir / f).is_file() for f in REQUIRED_INDEX_FILES):
         return 0
 
+    validate_persisted_index_json(persist_dir)
     from llama_index.core import StorageContext, load_index_from_storage
 
     storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
@@ -54,20 +106,37 @@ def _remove_doc_vectors(workspace: Path, persist_dir: Path, doc_id: str) -> int:
     if not hasattr(vector_store, "_data"):
         return 0
 
+    normalized_rel = normalize_relative_path(rel or "")
     data = vector_store._data
     nodes_to_delete: set[str] = set()
     for node_id, ref_id in list(data.text_id_to_ref_doc_id.items()):
         if ref_id == doc_id:
             nodes_to_delete.add(node_id)
 
+    # Compatibility fallback: older Windows-built indexes used backslash paths in
+    # doc_id and metadata. Match metadata too so reindex removes duplicate old chunks.
+    if normalized_rel:
+        for node_id, metadata in list(getattr(data, "metadata_dict", {}).items()):
+            source = normalize_relative_path(
+                metadata.get("source") or metadata.get("path") or metadata.get("file_path") or ""
+            )
+            if source == normalized_rel or source.endswith(f"/{normalized_rel}"):
+                nodes_to_delete.add(node_id)
+
     removed = len(nodes_to_delete)
     for node_id in nodes_to_delete:
-        if node_id in data.embedding_dict:
-            del data.embedding_dict[node_id]
-        if node_id in data.text_id_to_ref_doc_id:
-            del data.text_id_to_ref_doc_id[node_id]
-        if node_id in data.metadata_dict:
-            del data.metadata_dict[node_id]
+        data.embedding_dict.pop(node_id, None)
+        data.text_id_to_ref_doc_id.pop(node_id, None)
+        data.metadata_dict.pop(node_id, None)
+        docstore = getattr(storage_context, "docstore", None)
+        if docstore and hasattr(docstore, "delete_document"):
+            try:
+                docstore.delete_document(node_id, raise_error=False)
+            except TypeError:
+                try:
+                    docstore.delete_document(node_id)
+                except Exception:
+                    pass
 
     if removed:
         index.storage_context.persist(persist_dir=str(persist_dir))
@@ -79,7 +148,7 @@ def _insert_doc_vectors(workspace: Path, persist_dir: Path, file_path: Path, req
     from llama_index.core import StorageContext, load_index_from_storage
     from llama_index.core import Document
 
-    relative = str(file_path.resolve().relative_to(workspace))
+    relative = normalize_relative_path(file_path.resolve().relative_to(workspace))
     doc_id = file_doc_id(workspace, relative)
 
     suffix = file_path.suffix.lower()
@@ -106,6 +175,7 @@ def _insert_doc_vectors(workspace: Path, persist_dir: Path, file_path: Path, req
         return 0
 
     # Load existing index and insert
+    validate_persisted_index_json(persist_dir)
     storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
     index = load_index_from_storage(storage_context)
     index.insert(doc)
@@ -177,6 +247,7 @@ def save_manifest(workspace: Path, manifest: dict[str, Any]) -> None:
 
 def current_metadata(request: IndexRequest, workspace: Path) -> dict[str, Any]:
     embedding = request.ai_config.embedding if request.ai_config else None
+    knowledge = request.knowledge or KnowledgeConfig()
     timestamp = now_iso()
     return {
         "indexVersion": INDEX_VERSION,
@@ -189,8 +260,8 @@ def current_metadata(request: IndexRequest, workspace: Path) -> dict[str, Any]:
             "dimension": embedding.dimension if embedding else None,
         },
         "chunking": {
-            "chunkSize": request.knowledge.chunk_size,
-            "chunkOverlap": request.knowledge.chunk_overlap,
+            "chunkSize": knowledge.chunk_size,
+            "chunkOverlap": knowledge.chunk_overlap,
         },
         "parser": {
             "type": PARSER_TYPE,
@@ -381,10 +452,22 @@ def build_status_snapshot(request: IndexRequest | IndexStatusRequest) -> dict[st
         compatibility = validate_metadata_compatibility(current, load_metadata(workspace))
         persist_dir = get_persist_dir(workspace, request.knowledge.vector_store_path)
         vector_exists = has_index(workspace, request.knowledge.vector_store_path)
+        try:
+            if vector_exists:
+                validate_persisted_index_json(persist_dir)
+        except CorruptIndexError as exc:
+            vector_exists = False
+            compatibility = {"compatible": False, "needRebuild": True, "reason": str(exc), "technicalDetail": exc.detail}
     else:
         compatibility = {"compatible": True, "needRebuild": False, "reason": "未提供当前模型配置，仅返回文件状态。"}
         persist_dir = get_persist_dir(workspace, request.vector_store_path or ".looma/rag-index")
         vector_exists = persist_dir.exists()
+        try:
+            if vector_exists and all((persist_dir / file_name).is_file() for file_name in REQUIRED_INDEX_FILES):
+                validate_persisted_index_json(persist_dir)
+        except CorruptIndexError as exc:
+            vector_exists = False
+            compatibility = {"compatible": False, "needRebuild": True, "reason": str(exc), "technicalDetail": exc.detail}
 
     return {
         "workspaceId": workspace_id_for_path(workspace),
@@ -406,6 +489,101 @@ def build_status_snapshot(request: IndexRequest | IndexStatusRequest) -> dict[st
     }
 
 
+def summarize_indexed_manifest_files(manifest: dict[str, Any]) -> dict[str, int]:
+    indexed_files = [
+        item for item in manifest.get("files", {}).values()
+        if isinstance(item, dict) and item.get("status") == "indexed"
+    ]
+    total_chunks = sum(int(item.get("chunkCount") or 0) for item in indexed_files)
+    return {
+        "fileCount": len(indexed_files),
+        "documentCount": len(indexed_files),
+        "chunkCount": total_chunks,
+    }
+
+
+def create_last_build_metadata(metadata: dict[str, Any], indexed_at: str, summary: dict[str, int], status: str = "ok", mode: str | None = None) -> dict[str, Any]:
+    result = {
+        "indexedAt": indexed_at,
+        "documentCount": summary.get("documentCount", 0),
+        "fileCount": summary.get("fileCount", 0),
+        "chunkCount": summary.get("chunkCount", 0),
+        "status": status,
+        "embeddingProvider": metadata.get("embedding", {}).get("provider"),
+        "embeddingModel": metadata.get("embedding", {}).get("model"),
+        "chunkSize": metadata.get("chunking", {}).get("chunkSize"),
+        "chunkOverlap": metadata.get("chunking", {}).get("chunkOverlap"),
+        "parserType": metadata.get("parser", {}).get("type"),
+        "parserVersion": metadata.get("parser", {}).get("version"),
+    }
+    if mode:
+        result["mode"] = mode
+    return result
+
+
+def update_metadata_after_file_reindex(request: IndexRequest, workspace: Path, rel: str, chunks: int, indexed_at: str) -> dict[str, Any]:
+    manifest = load_manifest(workspace)
+    summary = summarize_indexed_manifest_files(manifest)
+    metadata = current_metadata(request, workspace)
+    previous = load_metadata(workspace) or {}
+    if previous.get("lastBuild"):
+        metadata["previousLastBuild"] = previous.get("lastBuild")
+    metadata["lastBuild"] = create_last_build_metadata(metadata, indexed_at, summary, "ok", "single_file")
+    metadata["lastFileReindex"] = {
+        "indexedAt": indexed_at,
+        "path": rel,
+        "chunkCount": chunks,
+        "status": "ok",
+    }
+    save_metadata(workspace, metadata)
+    return metadata
+
+
+def get_persisted_chunk_counts(workspace: Path, persist_dir: Path, relative_paths: list[str]) -> dict[str, int]:
+    """Read actual per-file chunk counts from SimpleVectorStore JSON.
+
+    Manifest counts must reflect persisted vector nodes, not text-length estimates.
+    This function avoids importing llama-index so metadata reconciliation remains
+    testable in lightweight environments.
+    """
+    vector_path = persist_dir / "default__vector_store.json"
+    if not vector_path.is_file():
+        return {}
+
+    validate_persisted_index_json(persist_dir)
+    try:
+        payload = json.loads(vector_path.read_text(encoding="utf-8"))
+    except (OSError, JSONDecodeError):
+        return {}
+
+    text_ref_map = payload.get("text_id_to_ref_doc_id") or {}
+    metadata_map = payload.get("metadata_dict") or {}
+    if not isinstance(text_ref_map, dict):
+        text_ref_map = {}
+    if not isinstance(metadata_map, dict):
+        metadata_map = {}
+
+    normalized_paths = [normalize_relative_path(path) for path in relative_paths]
+    doc_to_rel = {file_doc_id(workspace, rel): rel for rel in normalized_paths}
+    counts = {rel: 0 for rel in normalized_paths}
+
+    for node_id, ref_doc_id in text_ref_map.items():
+        rel = doc_to_rel.get(str(ref_doc_id))
+        if not rel:
+            metadata = metadata_map.get(node_id) or {}
+            if isinstance(metadata, dict):
+                source = normalize_relative_path(
+                    metadata.get("source") or metadata.get("path") or metadata.get("file_path") or ""
+                )
+                rel = source if source in counts else ""
+                if not rel:
+                    rel = next((candidate for candidate in counts if source.endswith(f"/{candidate}")), "")
+        if rel:
+            counts[rel] = counts.get(rel, 0) + 1
+
+    return counts
+
+
 def mark_all_scanned_indexed(request: IndexRequest, build_result: dict[str, Any]) -> dict[str, Any]:
     workspace = Path(request.workspace.workspace_path).expanduser().resolve()
     manifest = load_manifest(workspace)
@@ -413,9 +591,14 @@ def mark_all_scanned_indexed(request: IndexRequest, build_result: dict[str, Any]
     files: dict[str, Any] = {}
     workspace_id = workspace_id_for_path(workspace)
     indexed_at = now_iso()
+    relative_paths = [str(path.relative_to(workspace)).replace("\\", "/") for path in scanned]
+    persist_dir = get_persist_dir(workspace, request.knowledge.vector_store_path)
+    persisted_chunk_counts = get_persisted_chunk_counts(workspace, persist_dir, relative_paths)
     for path in scanned:
         entry = file_entry(path, workspace, "indexed")
-        chunk_count = estimate_chunk_count(path, request.knowledge.chunk_size)
+        chunk_count = persisted_chunk_counts.get(entry["path"])
+        if chunk_count is None:
+            chunk_count = estimate_chunk_count(path, request.knowledge.chunk_size)
         entry["chunkCount"] = chunk_count
         entry["chunkIds"] = chunk_ids(workspace_id, entry["path"], entry.get("contentHash") or "", chunk_count)
         entry["lastIndexedAt"] = indexed_at
@@ -424,23 +607,21 @@ def mark_all_scanned_indexed(request: IndexRequest, build_result: dict[str, Any]
     manifest["files"] = files
     save_manifest(workspace, manifest)
 
-    total_chunks = sum(int(item.get("chunkCount") or 0) for item in files.values())
+    summary = summarize_indexed_manifest_files(manifest)
     metadata = current_metadata(request, workspace)
-    metadata["lastBuild"] = {
-        "indexedAt": indexed_at,
-        "documentCount": build_result.get("document_count", len(scanned)),
-        "fileCount": build_result.get("file_count", len(scanned)),
-        "chunkCount": total_chunks,
-        "status": build_result.get("status", "ok"),
-        "embeddingProvider": metadata.get("embedding", {}).get("provider"),
-        "embeddingModel": metadata.get("embedding", {}).get("model"),
-        "chunkSize": metadata.get("chunking", {}).get("chunkSize"),
-        "chunkOverlap": metadata.get("chunking", {}).get("chunkOverlap"),
-        "parserType": metadata.get("parser", {}).get("type"),
-        "parserVersion": metadata.get("parser", {}).get("version"),
-    }
+    metadata["lastBuild"] = create_last_build_metadata(
+        metadata,
+        indexed_at,
+        {
+            "documentCount": int(build_result.get("document_count", len(scanned)) or 0),
+            "fileCount": int(build_result.get("file_count", len(scanned)) or 0),
+            "chunkCount": summary["chunkCount"],
+        },
+        build_result.get("status", "ok"),
+        build_result.get("mode"),
+    )
     save_metadata(workspace, metadata)
-    build_result["chunk_count"] = total_chunks
+    build_result["chunk_count"] = summary["chunkCount"]
     build_result["metadata"] = metadata
     return build_result
 
@@ -464,6 +645,13 @@ def build_managed_index(request: IndexRequest, mode: Literal["incremental", "ful
     workspace = Path(request.workspace.workspace_path).expanduser().resolve()
     if not workspace.exists() or not workspace.is_dir():
         raise ValueError("工作空间不存在或不是文件夹。")
+    persist_dir = get_persist_dir(workspace, request.knowledge.vector_store_path)
+    with index_operation_lock(persist_dir):
+        return _build_managed_index_locked(request, mode)
+
+
+def _build_managed_index_locked(request: IndexRequest, mode: Literal["incremental", "full", "retry_failed"] = "incremental") -> dict[str, Any]:
+    workspace = Path(request.workspace.workspace_path).expanduser().resolve()
 
     status_before = build_status_snapshot(request)
     targets = [item for item in status_before.get("files", []) if item.get("status") in target_statuses_for_mode(mode)]
@@ -547,13 +735,17 @@ def delete_file_index(request: IndexBuildRequest) -> dict[str, Any]:
     doc_id = file_doc_id(workspace, rel)
 
     # Physically remove vectors from the vector store
-    removed = _remove_doc_vectors(workspace, persist_dir, doc_id)
+    with index_operation_lock(persist_dir):
+        try:
+            removed = _remove_doc_vectors(workspace, persist_dir, doc_id, rel)
+        except CorruptIndexError as exc:
+            return corrupt_index_response(exc, rel)
 
-    # Remove from manifest
-    manifest = load_manifest(workspace)
-    existed = rel in manifest.get("files", {})
-    manifest.get("files", {}).pop(rel, None)
-    save_manifest(workspace, manifest)
+        # Remove from manifest
+        manifest = load_manifest(workspace)
+        existed = rel in manifest.get("files", {})
+        manifest.get("files", {}).pop(rel, None)
+        save_manifest(workspace, manifest)
 
     return {
         "success": True,
@@ -604,10 +796,19 @@ def get_file_chunks(request: IndexBuildRequest) -> dict[str, Any]:
     if request.ai_config and request.ai_config.embedding:
         configure_llama_index(request.ai_config.embedding, knowledge.chunk_size, knowledge.chunk_overlap)
 
+    try:
+        validate_persisted_index_json(persist_dir)
+    except CorruptIndexError as exc:
+        return corrupt_index_response(exc, rel)
+
     from llama_index.core import StorageContext, load_index_from_storage
 
-    storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
-    index = load_index_from_storage(storage_context)
+    with index_operation_lock(persist_dir):
+        try:
+            storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
+            index = load_index_from_storage(storage_context)
+        except JSONDecodeError as exc:
+            return corrupt_index_response(CorruptIndexError(persist_dir, str(exc)), rel)
     vector_store_obj = index._vector_store if hasattr(index, "_vector_store") else getattr(index, "vector_store", None)
     docstore = getattr(storage_context, "docstore", None)
     docs = dict(getattr(docstore, "docs", {}) or {})
@@ -709,28 +910,38 @@ def reindex_file(request: IndexBuildRequest) -> dict[str, Any]:
     persist_dir = get_persist_dir(workspace, vector_store)
     doc_id = file_doc_id(workspace, rel)
 
-    # Delete old vectors for this file
-    _remove_doc_vectors(workspace, persist_dir, doc_id)
+    with index_operation_lock(persist_dir):
+        try:
+            # Delete old vectors for this file. Pass rel as a metadata fallback so
+            # indexes created before path normalization do not leave duplicate chunks.
+            _remove_doc_vectors(workspace, persist_dir, doc_id, rel)
+        except CorruptIndexError as exc:
+            return corrupt_index_response(exc, rel)
 
-    # Ensure embedding is configured
-    if not request.ai_config or not request.ai_config.embedding:
-        raise ValueError("ai_config.embedding is required for reindex")
+        # Ensure embedding is configured
+        if not request.ai_config or not request.ai_config.embedding:
+            raise ValueError("ai_config.embedding is required for reindex")
 
-    index_request = IndexRequest(workspace=request.workspace, knowledge=request.knowledge, ai_config=request.ai_config)
-    configure_llama_index(request.ai_config.embedding, knowledge.chunk_size, knowledge.chunk_overlap)
+        index_request = IndexRequest(workspace=request.workspace, knowledge=knowledge, ai_config=request.ai_config)
+        configure_llama_index(request.ai_config.embedding, knowledge.chunk_size, knowledge.chunk_overlap)
 
-    # Insert new vectors
-    chunks = _insert_doc_vectors(workspace, persist_dir, file_path, index_request)
+        try:
+            # Insert new vectors
+            chunks = _insert_doc_vectors(workspace, persist_dir, file_path, index_request)
+        except CorruptIndexError as exc:
+            return corrupt_index_response(exc, rel)
 
-    # Update manifest
-    manifest = load_manifest(workspace)
-    entry = file_entry(file_path, workspace, "indexed")
-    entry["chunkCount"] = chunks
-    entry["chunkIds"] = chunk_ids(workspace_id_for_path(workspace), rel, entry.get("contentHash") or "", chunks)
-    entry["lastIndexedAt"] = now_iso()
-    entry["error"] = None
-    manifest["files"][rel] = entry
-    save_manifest(workspace, manifest)
+        # Update manifest and metadata
+        manifest = load_manifest(workspace)
+        entry = file_entry(file_path, workspace, "indexed")
+        indexed_at = now_iso()
+        entry["chunkCount"] = chunks
+        entry["chunkIds"] = chunk_ids(workspace_id_for_path(workspace), rel, entry.get("contentHash") or "", chunks)
+        entry["lastIndexedAt"] = indexed_at
+        entry["error"] = None
+        manifest["files"][rel] = entry
+        save_manifest(workspace, manifest)
+        metadata = update_metadata_after_file_reindex(index_request, workspace, rel, chunks, indexed_at)
 
     return {
         "success": True,
@@ -738,4 +949,5 @@ def reindex_file(request: IndexBuildRequest) -> dict[str, Any]:
         "path": rel,
         "chunks": chunks,
         "document_count": 1,
+        "metadata": metadata,
     }

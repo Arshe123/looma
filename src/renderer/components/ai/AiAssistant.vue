@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Bot, Clipboard, Copy, Database, FileText, History, Loader2, MessageSquare, Paperclip, Plus, RotateCcw, Send, Settings, Sparkles, Trash2, User } from 'lucide-vue-next'
+import { Bot, Clipboard, Copy, Database, FileText, History, Loader2, MessageSquare, Paperclip, Plus, RotateCcw, Send, Settings, Sparkles } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import type { AiAssistantMessage, AiAssistantMessageAction, AiAssistantTimelineOutput, AiAssistantTimelineStep } from '@/renderer/stores/workspace'
@@ -26,7 +26,6 @@ const activeIndexRequestId = ref<string | null>(null)
 const activeIndexMessageId = ref<number | null>(null)
 const activeIndexTimeline = ref<AiAssistantTimelineStep[]>([])
 const copiedMessageId = ref<number | null>(null)
-const historyOpen = ref(false)
 const aiContextMenu = ref({
   visible: false,
   top: 0,
@@ -40,7 +39,6 @@ let unsubscribeIndexStreamEvents: (() => void) | null = null
 const hasWorkspace = computed(() => Boolean(workspaceStore.activeWorkspaceId))
 const activeConversation = computed(() => workspaceStore.activeAiAssistantConversation)
 const activeConversationId = computed(() => workspaceStore.aiAssistant.activeConversationId)
-const conversations = computed(() => workspaceStore.aiAssistantConversations)
 const messages = computed(() => activeConversation.value.messages)
 const question = computed({
   get: () => activeConversation.value.draft,
@@ -204,16 +202,6 @@ const handleDocumentClick = (event: MouseEvent) => {
   if (!aiContextMenu.value.visible) return
   if (contextMenuRef.value?.contains(event.target as Node)) return
   closeAiContextMenu()
-}
-
-const formatConversationTime = (timestamp: number) => {
-  if (!Number.isFinite(timestamp)) return ''
-  const date = new Date(timestamp)
-  const now = new Date()
-  const sameDay = date.toDateString() === now.toDateString()
-  return new Intl.DateTimeFormat('zh-CN', sameDay
-    ? { hour: '2-digit', minute: '2-digit' }
-    : { month: '2-digit', day: '2-digit' }).format(date)
 }
 
 const clearActiveStream = () => {
@@ -809,34 +797,9 @@ const createConversation = () => {
   cancelActiveStream()
   cancelActiveIndexStream()
   isAsking.value = false
-  workspaceStore.createAiAssistantConversation()
-  historyOpen.value = false
+  workspaceStore.startTemporaryAiAssistantConversation()
   scrollToBottom()
-}
-
-const selectConversation = (id: string) => {
-  if (id === activeConversationId.value) {
-    historyOpen.value = false
-    return
-  }
-  cancelActiveStream()
-  cancelActiveIndexStream()
-  isAsking.value = false
-  workspaceStore.setActiveAiAssistantConversation(id)
-  historyOpen.value = false
-  scrollToBottom()
-}
-
-const deleteConversation = (id: string) => {
-  const conversation = conversations.value.find((item) => item.id === id)
-  const ok = window.confirm(`删除对话「${conversation?.title || '新对话'}」？此操作不可恢复。`)
-  if (!ok) return
-  if (id === activeConversationId.value) {
-    cancelActiveStream()
-    isAsking.value = false
-  }
-  workspaceStore.deleteAiAssistantConversation(id)
-  scrollToBottom()
+  nextTick(() => composerRef.value?.focus())
 }
 
 onMounted(() => {
@@ -865,7 +828,6 @@ watch(() => workspaceStore.activeWorkspaceId, () => {
   cancelActiveIndexStream()
   isAsking.value = false
   isIndexing.value = false
-  historyOpen.value = false
   closeAiContextMenu()
   backfillLegacyAiNames()
   checkIndexStatus().catch(console.error)
@@ -873,7 +835,7 @@ watch(() => workspaceStore.activeWorkspaceId, () => {
 watch(activeConversationId, () => {
   closeAiContextMenu()
   backfillLegacyAiNames()
-  if (!hasIndex.value && !isCheckingIndex.value) {
+  if (!hasIndex.value && !isCheckingIndex.value && !workspaceStore.aiAssistant.isTemporaryConversation) {
     ensureBuildIndexPrompt()
   }
   scrollToBottom()
@@ -919,7 +881,7 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
             type="button"
             title="历史对话"
             :disabled="!hasWorkspace"
-            @click="historyOpen = !historyOpen"
+            @click="workspaceStore.openAiHistoryPage()"
           >
             <History :size="16" />
           </button>
@@ -937,53 +899,23 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
     </header>
 
     <div
-      v-if="historyOpen"
-      class="shrink-0 border-b border-border-soft bg-panel px-3 py-3"
-    >
-      <div class="max-h-64 overflow-y-auto pr-1">
-        <div class="flex flex-col gap-1.5">
-          <div
-            v-for="conversation in conversations"
-            :key="conversation.id"
-            class="group flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors"
-            :class="conversation.id === activeConversationId
-              ? 'bg-accent-soft text-text-main'
-              : 'text-text-muted hover:bg-panel-soft hover:text-text-main'"
-            role="button"
-            tabindex="0"
-            @click="selectConversation(conversation.id)"
-            @keydown.enter.prevent="selectConversation(conversation.id)"
-            @keydown.space.prevent="selectConversation(conversation.id)"
-          >
-            <MessageSquare :size="14" class="shrink-0" />
-            <div class="min-w-0 flex-1">
-              <div class="truncate text-xs font-medium">
-                {{ conversation.title }}
-              </div>
-              <div class="mt-0.5 text-[10px] leading-4 text-text-subtle">
-                {{ formatConversationTime(conversation.updatedAt) }}
-              </div>
-            </div>
-            <button
-              class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-subtle opacity-100 transition-colors hover:bg-panel hover:text-danger sm:opacity-0 sm:group-hover:opacity-100"
-              type="button"
-              title="删除对话"
-              @click.stop="deleteConversation(conversation.id)"
-            >
-              <Trash2 :size="13" />
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div
       ref="messagesRef"
       class="min-h-0 flex-1 overflow-y-auto bg-panel-soft px-4 py-4"
       @contextmenu="openMessagesContextMenu"
       @scroll="closeAiContextMenu"
     >
-      <div class="flex flex-col gap-4 text-sm">
+      <div v-if="messages.length === 0" class="flex min-h-full items-center justify-center px-4 py-10 text-center">
+        <div class="max-w-sm rounded-2xl border border-border-soft bg-panel p-5 shadow-sm">
+          <div class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-accent-soft text-accent">
+            <Sparkles :size="18" />
+          </div>
+          <div class="text-sm font-semibold text-text-main">新对话</div>
+          <p class="mt-2 text-xs leading-5 text-text-muted">
+            发送消息给 AI 助手，Looma 会基于当前工作空间的内容回答你的问题。
+          </p>
+        </div>
+      </div>
+      <div v-else class="flex flex-col gap-4 text-sm">
         <div
           v-for="message in messages"
           :key="message.id"

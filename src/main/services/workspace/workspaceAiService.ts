@@ -16,8 +16,17 @@ export interface AiAssistantState {
     updatedAt: number
     messages: AiAssistantMessage[]
     draft: string
+    archived?: boolean
+    archivedAt?: number
+    pinned?: boolean
+    pinnedAt?: number
+    favorite?: boolean
+    favoriteCategory?: string
+    titleEdited?: boolean
   }[]
-  activeConversationId: string
+  activeConversationId: string | null
+  temporaryDraft?: string
+  isTemporaryConversation?: boolean
 }
 
 interface AiAssistantMessage {
@@ -98,6 +107,8 @@ const createDefaultAiAssistantState = (): AiAssistantState => {
   return {
     conversations: [conversation],
     activeConversationId: conversation.id,
+    temporaryDraft: '',
+    isTemporaryConversation: false,
   }
 }
 
@@ -240,6 +251,15 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
       updatedAt,
       messages,
       draft: typeof item.draft === 'string' ? item.draft : '',
+      archived: Boolean(item.archived),
+      archivedAt: typeof item.archivedAt === 'number' ? item.archivedAt : undefined,
+      pinned: Boolean(item.pinned),
+      pinnedAt: typeof item.pinnedAt === 'number' ? item.pinnedAt : undefined,
+      favorite: Boolean(item.favorite),
+      favoriteCategory: typeof item.favoriteCategory === 'string' && item.favoriteCategory.trim()
+        ? item.favoriteCategory.trim()
+        : undefined,
+      titleEdited: Boolean(item.titleEdited),
     }
   }
 
@@ -254,6 +274,17 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
     return {
       conversations,
       activeConversationId,
+      temporaryDraft: typeof raw.temporaryDraft === 'string' ? raw.temporaryDraft : '',
+      isTemporaryConversation: false,
+    }
+  }
+
+  if (Array.isArray(raw.conversations)) {
+    return {
+      conversations: [],
+      activeConversationId: null,
+      temporaryDraft: typeof raw.temporaryDraft === 'string' ? raw.temporaryDraft : '',
+      isTemporaryConversation: Boolean(raw.isTemporaryConversation) || !raw.activeConversationId,
     }
   }
 
@@ -263,6 +294,8 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
     return {
       conversations: [conversation],
       activeConversationId: conversation.id,
+      temporaryDraft: '',
+      isTemporaryConversation: false,
     }
   }
 

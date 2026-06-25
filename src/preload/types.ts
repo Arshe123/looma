@@ -55,7 +55,9 @@ interface AiAssistantTimelineStepPayload {
 
 interface AiAssistantStatePayload {
   conversations: AiAssistantConversationPayload[];
-  activeConversationId: string;
+  activeConversationId: string | null;
+  temporaryDraft?: string;
+  isTemporaryConversation?: boolean;
 }
 
 interface AiAssistantConversationPayload {
@@ -65,6 +67,13 @@ interface AiAssistantConversationPayload {
   updatedAt: number;
   messages: AiAssistantMessagePayload[];
   draft: string;
+  archived?: boolean;
+  archivedAt?: number;
+  pinned?: boolean;
+  pinnedAt?: number;
+  favorite?: boolean;
+  favoriteCategory?: string;
+  titleEdited?: boolean;
 }
 
 interface WorkspaceTabPayloadBase {
@@ -78,7 +87,7 @@ interface FileWorkspaceTabPayload extends WorkspaceTabPayloadBase {
 
 interface SystemWorkspaceTabPayload extends WorkspaceTabPayloadBase {
   kind: 'system';
-  page: 'settings' | 'rag-index';
+  page: 'settings' | 'rag-index' | 'ai-history';
 }
 
 type WorkspaceTabPayload = FileWorkspaceTabPayload | SystemWorkspaceTabPayload;

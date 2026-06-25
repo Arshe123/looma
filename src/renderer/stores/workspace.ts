@@ -34,6 +34,7 @@ import {
   removeFileTabsByPaths,
 } from './workspace-tab-utils'
 import type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantState, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceTab } from './workspace-types'
+import { getAiAssistantConversationTitle, sortAiAssistantConversations } from './workspace-ai-utils'
 export type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, AiAssistantTimelineOutput, AiAssistantTimelineOutputType, AiAssistantTimelineStep, AiAssistantTimelineStepStatus, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceMeta, WorkspaceTab } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
@@ -41,11 +42,7 @@ let systemThemeCleanup: (() => void) | null = null
 
 const createAiConversationId = () => `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-const getAiConversationTitle = (messages: AiAssistantMessage[]) => {
-  const firstUserMessage = messages.find((message) => message.role === 'user' && message.text.trim())
-  const title = firstUserMessage?.text.trim().replace(/\s+/g, ' ') || '新对话'
-  return title.length > 24 ? `${title.slice(0, 24)}...` : title
-}
+const getAiConversationTitle = getAiAssistantConversationTitle
 
 const createAiConversation = (messages?: AiAssistantMessage[], draft = ''): AiAssistantConversation => {
   const now = Date.now()
@@ -88,6 +85,8 @@ const createDefaultAiAssistantState = (): AiAssistantState => {
   return {
     conversations: [conversation],
     activeConversationId: conversation.id,
+    temporaryDraft: '',
+    isTemporaryConversation: false,
   }
 }
 
@@ -202,6 +201,15 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
       updatedAt,
       messages,
       draft: typeof conversation.draft === 'string' ? conversation.draft : '',
+      archived: Boolean(conversation.archived),
+      archivedAt: typeof conversation.archivedAt === 'number' ? conversation.archivedAt : undefined,
+      pinned: Boolean(conversation.pinned),
+      pinnedAt: typeof conversation.pinnedAt === 'number' ? conversation.pinnedAt : undefined,
+      favorite: Boolean(conversation.favorite),
+      favoriteCategory: typeof conversation.favoriteCategory === 'string' && conversation.favoriteCategory.trim()
+        ? conversation.favoriteCategory.trim()
+        : undefined,
+      titleEdited: Boolean(conversation.titleEdited),
     }
   }
 
@@ -217,6 +225,17 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
     return {
       conversations,
       activeConversationId,
+      temporaryDraft: typeof rawState.temporaryDraft === 'string' ? rawState.temporaryDraft : '',
+      isTemporaryConversation: false,
+    }
+  }
+
+  if (Array.isArray(rawState.conversations)) {
+    return {
+      conversations: [],
+      activeConversationId: null,
+      temporaryDraft: typeof rawState.temporaryDraft === 'string' ? rawState.temporaryDraft : '',
+      isTemporaryConversation: Boolean(rawState.isTemporaryConversation) || !rawState.activeConversationId,
     }
   }
 
@@ -226,6 +245,8 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
     return {
       conversations: [conversation],
       activeConversationId: conversation.id,
+      temporaryDraft: '',
+      isTemporaryConversation: false,
     }
   }
 
@@ -331,12 +352,23 @@ export const useWorkspaceStore = defineStore('workspace', {
       return new Set(this.expandedDirs.map(normalizeDir))
     },
     activeAiAssistantConversation(state): AiAssistantConversation {
+      if (state.aiAssistant.isTemporaryConversation || !state.aiAssistant.activeConversationId) {
+        const now = Date.now()
+        return {
+          id: 'temporary',
+          title: '新对话',
+          createdAt: now,
+          updatedAt: now,
+          messages: [],
+          draft: state.aiAssistant.temporaryDraft || '',
+        }
+      }
       return state.aiAssistant.conversations.find((conversation) => conversation.id === state.aiAssistant.activeConversationId)
         ?? state.aiAssistant.conversations[0]
         ?? createBlankAiConversation()
     },
     aiAssistantConversations(state): AiAssistantConversation[] {
-      return [...state.aiAssistant.conversations].sort((a, b) => b.updatedAt - a.updatedAt)
+      return sortAiAssistantConversations(state.aiAssistant.conversations)
     },
   },
   actions: {
@@ -468,12 +500,34 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     touchAiAssistantConversation(conversation: AiAssistantConversation) {
       conversation.updatedAt = Date.now()
-      conversation.title = getAiConversationTitle(conversation.messages)
+      if (!conversation.titleEdited) {
+        conversation.title = getAiConversationTitle(conversation.messages)
+      }
+    },
+
+    startTemporaryAiAssistantConversation() {
+      this.aiAssistant.activeConversationId = null
+      this.aiAssistant.isTemporaryConversation = true
+      this.aiAssistant.temporaryDraft = ''
+    },
+
+    materializeAiAssistantConversationIfNeeded() {
+      if (!this.aiAssistant.isTemporaryConversation && this.aiAssistant.activeConversationId) {
+        return this.ensureActiveAiAssistantConversation()
+      }
+      const conversation = createBlankAiConversation()
+      conversation.draft = this.aiAssistant.temporaryDraft || ''
+      this.aiAssistant.conversations.unshift(conversation)
+      this.aiAssistant.activeConversationId = conversation.id
+      this.aiAssistant.isTemporaryConversation = false
+      this.aiAssistant.temporaryDraft = ''
+      this.saveAiAssistantState()
+      return conversation
     },
 
     appendAiAssistantMessage(role: AiAssistantMessage['role'], text: string, actions?: AiAssistantMessageAction[], meta?: { aiName?: string }) {
       const now = Date.now()
-      const conversation = this.ensureActiveAiAssistantConversation()
+      const conversation = this.materializeAiAssistantConversationIfNeeded()
       const id = now + conversation.messages.length
       conversation.messages.push({
         id,
@@ -548,6 +602,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     setAiAssistantActionDisabled(type: AiAssistantMessageAction['type'], disabled: boolean) {
+      if (this.aiAssistant.isTemporaryConversation || !this.aiAssistant.activeConversationId) return
       let changed = false
       const conversation = this.ensureActiveAiAssistantConversation()
       conversation.messages = conversation.messages.map((message) => {
@@ -565,6 +620,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     removeAiAssistantMessagesByText(texts: string[]) {
+      if (this.aiAssistant.isTemporaryConversation || !this.aiAssistant.activeConversationId) return
       const blocked = new Set(texts)
       const conversation = this.ensureActiveAiAssistantConversation()
       const nextMessages = conversation.messages.filter((message) => !blocked.has(message.text))
@@ -575,6 +631,12 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     setAiAssistantDraft(value: string) {
+      if (this.aiAssistant.isTemporaryConversation || !this.aiAssistant.activeConversationId) {
+        this.aiAssistant.isTemporaryConversation = true
+        this.aiAssistant.activeConversationId = null
+        this.aiAssistant.temporaryDraft = value
+        return
+      }
       const conversation = this.ensureActiveAiAssistantConversation()
       conversation.draft = value
       conversation.updatedAt = Date.now()
@@ -582,11 +644,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     createAiAssistantConversation() {
-      const conversation = createBlankAiConversation()
-      this.aiAssistant.conversations.unshift(conversation)
-      this.aiAssistant.activeConversationId = conversation.id
-      this.saveAiAssistantState()
-      return conversation.id
+      this.startTemporaryAiAssistantConversation()
+      return 'temporary'
     },
 
     setActiveAiAssistantConversation(id: string) {
@@ -594,6 +653,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       const conversation = this.aiAssistant.conversations.find((item) => item.id === id)
       if (!conversation) return
       this.aiAssistant.activeConversationId = id
+      this.aiAssistant.isTemporaryConversation = false
+      this.aiAssistant.temporaryDraft = ''
       this.saveAiAssistantState()
     },
 
@@ -602,17 +663,65 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (nextConversations.length === this.aiAssistant.conversations.length) return
 
       if (nextConversations.length === 0) {
-        const conversation = createBlankAiConversation()
-        this.aiAssistant.conversations = [conversation]
-        this.aiAssistant.activeConversationId = conversation.id
+        this.aiAssistant.conversations = []
+        this.aiAssistant.activeConversationId = null
+        this.aiAssistant.isTemporaryConversation = true
+        this.aiAssistant.temporaryDraft = ''
         this.saveAiAssistantState()
         return
       }
 
       this.aiAssistant.conversations = nextConversations
       if (this.aiAssistant.activeConversationId === id) {
-        this.aiAssistant.activeConversationId = [...nextConversations].sort((a, b) => b.updatedAt - a.updatedAt)[0].id
+        const nextActive = sortAiAssistantConversations(nextConversations.filter((conversation) => !conversation.archived))[0]
+          ?? sortAiAssistantConversations(nextConversations)[0]
+        this.aiAssistant.activeConversationId = nextActive?.id ?? null
+        this.aiAssistant.isTemporaryConversation = !nextActive
       }
+      this.saveAiAssistantState()
+    },
+
+    renameAiAssistantConversation(id: string, title: string) {
+      const conversation = this.aiAssistant.conversations.find((item) => item.id === id)
+      const value = title.trim()
+      if (!conversation || !value) return
+      conversation.title = value.length > 40 ? `${value.slice(0, 40)}...` : value
+      conversation.titleEdited = true
+      conversation.updatedAt = Date.now()
+      this.saveAiAssistantState()
+    },
+
+    toggleArchiveAiAssistantConversation(id: string) {
+      const conversation = this.aiAssistant.conversations.find((item) => item.id === id)
+      if (!conversation) return
+      conversation.archived = !conversation.archived
+      conversation.archivedAt = conversation.archived ? Date.now() : undefined
+      conversation.updatedAt = Date.now()
+      this.saveAiAssistantState()
+    },
+
+    togglePinAiAssistantConversation(id: string) {
+      const conversation = this.aiAssistant.conversations.find((item) => item.id === id)
+      if (!conversation) return
+      conversation.pinned = !conversation.pinned
+      conversation.pinnedAt = conversation.pinned ? Date.now() : undefined
+      this.saveAiAssistantState()
+    },
+
+    toggleFavoriteAiAssistantConversation(id: string, category = '默认收藏') {
+      const conversation = this.aiAssistant.conversations.find((item) => item.id === id)
+      if (!conversation) return
+      conversation.favorite = !conversation.favorite
+      conversation.favoriteCategory = conversation.favorite ? (category.trim() || '默认收藏') : undefined
+      this.saveAiAssistantState()
+    },
+
+    setAiAssistantConversationFavoriteCategory(id: string, category: string) {
+      const conversation = this.aiAssistant.conversations.find((item) => item.id === id)
+      const value = category.trim()
+      if (!conversation || !value) return
+      conversation.favorite = true
+      conversation.favoriteCategory = value
       this.saveAiAssistantState()
     },
 
@@ -699,6 +808,10 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     openRagIndexPage() {
       this.openSystemTab('rag-index')
+    },
+
+    openAiHistoryPage() {
+      this.openSystemTab('ai-history')
     },
 
     closeSystemPage(page: SystemPageId) {

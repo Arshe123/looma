@@ -19,6 +19,7 @@ export type EmbeddingProviderConfig = {
 
 export type ChatProviderConfigs = Record<AiProvider, ChatProviderConfig>
 export type EmbeddingProviderConfigs = Record<AiProvider, EmbeddingProviderConfig>
+export type ChunkingStrategy = 'fixed' | 'markdown' | 'semantic' | 'parent_child' | 'code_aware'
 
 export interface AppSettings {
   inlineMenu: {
@@ -37,6 +38,7 @@ export interface AppSettings {
     topK: number
     chunkSize: number
     chunkOverlap: number
+    chunkingStrategy: ChunkingStrategy
     indexingMode: 'manual' | 'incremental' | 'idle'
     enableAiTimeline: boolean
     enableSourceCitation: boolean
@@ -169,6 +171,7 @@ const createDefaultAppSettings = (): AppSettings => {
       topK: 5,
       chunkSize: 800,
       chunkOverlap: 100,
+      chunkingStrategy: 'fixed',
       indexingMode: 'manual',
       enableAiTimeline: true,
       enableSourceCitation: true,
@@ -208,6 +211,15 @@ const normalizeBoolean = (raw: unknown, fallback: boolean) =>
 
 const normalizeIndexingMode = (raw: unknown, fallback: AppSettings['ai']['indexingMode']) =>
   raw === 'manual' || raw === 'incremental' || raw === 'idle' ? raw : fallback
+
+const normalizeChunkingStrategy = (raw: unknown, fallback: ChunkingStrategy): ChunkingStrategy =>
+  raw === 'fixed'
+  || raw === 'markdown'
+  || raw === 'semantic'
+  || raw === 'parent_child'
+  || raw === 'code_aware'
+    ? raw
+    : fallback
 
 const normalizeBoundedInteger = (raw: unknown, fallback: number, min: number, max: number) => {
   const parsed = normalizeOptionalNumber(raw, fallback)
@@ -340,6 +352,7 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
       topK: normalizeBoundedInteger(rawAi.topK ?? rawAi.top_k, defaults.ai.topK, 1, 50),
       chunkSize: normalizeBoundedInteger(rawAi.chunkSize ?? rawAi.chunk_size, defaults.ai.chunkSize, 128, 8192),
       chunkOverlap: normalizeBoundedInteger(rawAi.chunkOverlap ?? rawAi.chunk_overlap, defaults.ai.chunkOverlap, 0, 2048),
+      chunkingStrategy: normalizeChunkingStrategy(rawAi.chunkingStrategy ?? rawAi.chunking_strategy, defaults.ai.chunkingStrategy),
       indexingMode: normalizeIndexingMode(rawAi.indexingMode, defaults.ai.indexingMode),
       enableAiTimeline: normalizeBoolean(rawAi.enableAiTimeline, defaults.ai.enableAiTimeline),
       enableSourceCitation: normalizeBoolean(rawAi.enableSourceCitation, defaults.ai.enableSourceCitation),

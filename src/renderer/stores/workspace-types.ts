@@ -85,15 +85,24 @@ export interface AiAssistantConversation {
   updatedAt: number
   messages: AiAssistantMessage[]
   draft: string
+  archived?: boolean
+  archivedAt?: number
+  pinned?: boolean
+  pinnedAt?: number
+  favorite?: boolean
+  favoriteCategory?: string
+  titleEdited?: boolean
 }
 
 export interface AiAssistantState {
   conversations: AiAssistantConversation[]
-  activeConversationId: string
+  activeConversationId: string | null
+  temporaryDraft?: string
+  isTemporaryConversation?: boolean
 }
 
 export type SidebarPanelId = 'files' | 'outline' | 'ai'
-export type SystemPageId = 'settings' | 'rag-index'
+export type SystemPageId = 'settings' | 'rag-index' | 'ai-history'
 export type SettingsSectionId = 'appearance' | 'editor' | 'ai'
 
 export type WorkspaceTabKind = 'file' | 'system'

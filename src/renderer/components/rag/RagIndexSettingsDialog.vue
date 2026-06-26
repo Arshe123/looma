@@ -39,10 +39,10 @@ const strategyOptions: Array<{
   {
     value: 'markdown',
     title: 'Markdown 结构',
-    badge: '即将支持',
-    description: '优先保留标题层级与章节结构，适合 README、方案、笔记。',
+    badge: '已支持',
+    description: '优先保留标题层级与章节结构，再按大小切分，适合 README、方案、笔记。',
     icon: FileText,
-    enabled: false,
+    enabled: true,
   },
   {
     value: 'semantic',
@@ -127,7 +127,7 @@ const isChanged = computed(() =>
   || draft.indexingMode !== original.indexingMode,
 )
 
-const isUnsupportedStrategy = computed(() => draft.chunkingStrategy !== 'fixed')
+const isUnsupportedStrategy = computed(() => !['fixed', 'markdown'].includes(draft.chunkingStrategy))
 const requiresFullRebuild = computed(() =>
   draft.vectorStorePath !== original.vectorStorePath
   || draft.chunkSize !== original.chunkSize
@@ -223,7 +223,7 @@ onBeforeUnmount(() => {
             <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 class="text-sm font-semibold text-text-main">索引切分选项</h3>
-                <p class="mt-1 text-xs text-text-muted">先展示策略入口；除固定长度外，其余策略暂不改变后端切分逻辑。</p>
+                <p class="mt-1 text-xs text-text-muted">Markdown 结构已支持；其它高级策略暂不改变后端切分逻辑。</p>
               </div>
               <span class="rounded-full bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-accent">策略预设</span>
             </div>
@@ -264,7 +264,7 @@ onBeforeUnmount(() => {
           <div v-if="isUnsupportedStrategy" class="mt-4 rounded-2xl border border-amber-300/60 bg-amber-50 p-3 text-sm text-amber-800">
             <div class="flex items-start gap-2">
               <AlertTriangle :size="16" class="mt-0.5 shrink-0" />
-              <p>当前选择的是预留策略。可以先保存该选择用于后续版本，但本版本重建索引仍只支持“固定长度”实际切分，因此已禁用“保存并全量重建”。</p>
+              <p>当前选择的是预留策略。可以先保存该选择用于后续版本，但本版本重建索引只支持“固定长度”和“Markdown 结构”实际切分，因此已禁用“保存并全量重建”。</p>
             </div>
           </div>
 
@@ -357,10 +357,6 @@ onBeforeUnmount(() => {
 
         <footer class="shrink-0 border-t border-border-soft bg-panel-soft/80 px-5 py-4">
           <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div class="flex items-start gap-2 text-xs text-text-muted">
-              <Clock3 :size="14" class="mt-0.5 shrink-0" />
-              <span>策略变更会写入设置；真实非固定切分逻辑将在后端策略阶段实现。</span>
-            </div>
             <div class="flex flex-wrap items-center justify-end gap-2">
               <button class="inline-flex h-10 items-center justify-center rounded-xl border border-border-soft bg-panel px-4 text-sm font-medium text-text-main hover:bg-panel-soft" @click="handleClose">
                 取消

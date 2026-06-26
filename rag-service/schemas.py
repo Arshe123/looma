@@ -40,6 +40,9 @@ class WorkspaceContext(BaseModel):
     workspace_path: str = Field(..., min_length=1)
 
 
+ChunkingStrategy = Literal["fixed", "markdown", "semantic", "parent_child", "code_aware"]
+
+
 class KnowledgeConfig(BaseModel):
     vector_store_path: str = ".looma/rag-index"
     top_k: int = Field(default=5, gt=0, le=50)
@@ -47,6 +50,7 @@ class KnowledgeConfig(BaseModel):
     rerank: bool = False
     chunk_size: int = Field(default=800, ge=128, le=8192)
     chunk_overlap: int = Field(default=100, ge=0, le=2048)
+    chunking_strategy: ChunkingStrategy = "fixed"
 
 
 class ChatMessage(BaseModel):

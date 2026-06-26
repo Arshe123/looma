@@ -296,40 +296,28 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
   const rawChat = asRecord(rawAi.chat)
   const rawEmbedding = asRecord(rawAi.embedding)
 
-  // 兼容旧版扁平配置字段。
-  const hasLegacyOllamaBaseUrl = typeof rawAi.ollamaBaseUrl === 'string' && rawAi.ollamaBaseUrl.trim()
-  const hasLegacyLlmBaseUrl = typeof rawAi.llmBaseUrl === 'string' && rawAi.llmBaseUrl.trim()
-  const hasLegacyEmbedBaseUrl = typeof rawAi.embedBaseUrl === 'string' && rawAi.embedBaseUrl.trim()
-  const legacyOllamaBaseUrl = normalizeNonEmptyString(rawAi.ollamaBaseUrl, DEFAULT_OLLAMA_BASE_URL)
-  const legacyLlmBaseUrl = hasLegacyLlmBaseUrl || hasLegacyOllamaBaseUrl
-    ? normalizeNonEmptyString(rawAi.llmBaseUrl, legacyOllamaBaseUrl)
-    : undefined
-  const legacyEmbedBaseUrl = hasLegacyEmbedBaseUrl || hasLegacyOllamaBaseUrl
-    ? normalizeNonEmptyString(rawAi.embedBaseUrl, legacyOllamaBaseUrl)
-    : undefined
-
-  const chatProvider = normalizeAppSettingsProvider(rawChat.provider ?? rawAi.llmProvider, defaults.ai.chat.provider)
-  const embeddingProvider = normalizeAppSettingsProvider(rawEmbedding.provider ?? rawAi.embedProvider, defaults.ai.embedding.provider)
+  const chatProvider = normalizeAppSettingsProvider(rawChat.provider, defaults.ai.chat.provider)
+  const embeddingProvider = normalizeAppSettingsProvider(rawEmbedding.provider, defaults.ai.embedding.provider)
 
   const chatProviderConfigs = normalizeChatProviderConfigs(rawAi.chatProviderConfigs)
   const embeddingProviderConfigs = normalizeEmbeddingProviderConfigs(rawAi.embeddingProviderConfigs)
 
   const activeChatConfig = normalizeChatProviderConfig({
     ...chatProviderConfigs[chatProvider],
-    model: rawChat.model ?? rawAi.llmModel ?? chatProviderConfigs[chatProvider].model,
-    baseUrl: rawChat.baseUrl ?? rawAi.llmBaseUrl ?? legacyLlmBaseUrl ?? chatProviderConfigs[chatProvider].baseUrl,
-    apiKey: rawChat.apiKey ?? rawAi.llmApiKey ?? chatProviderConfigs[chatProvider].apiKey,
-    temperature: rawChat.temperature ?? rawAi.temperature ?? chatProviderConfigs[chatProvider].temperature,
-    maxTokens: rawChat.maxTokens ?? rawAi.maxTokens ?? chatProviderConfigs[chatProvider].maxTokens,
+    model: rawChat.model ?? chatProviderConfigs[chatProvider].model,
+    baseUrl: rawChat.baseUrl ?? chatProviderConfigs[chatProvider].baseUrl,
+    apiKey: rawChat.apiKey ?? chatProviderConfigs[chatProvider].apiKey,
+    temperature: rawChat.temperature ?? chatProviderConfigs[chatProvider].temperature,
+    maxTokens: rawChat.maxTokens ?? chatProviderConfigs[chatProvider].maxTokens,
   }, chatProviderConfigs[chatProvider])
   chatProviderConfigs[chatProvider] = activeChatConfig
 
   const activeEmbeddingConfig = normalizeEmbeddingProviderConfig({
     ...embeddingProviderConfigs[embeddingProvider],
-    model: rawEmbedding.model ?? rawAi.embedModel ?? embeddingProviderConfigs[embeddingProvider].model,
-    baseUrl: rawEmbedding.baseUrl ?? rawAi.embedBaseUrl ?? legacyEmbedBaseUrl ?? embeddingProviderConfigs[embeddingProvider].baseUrl,
-    apiKey: rawEmbedding.apiKey ?? rawAi.embedApiKey ?? embeddingProviderConfigs[embeddingProvider].apiKey,
-    dimension: rawEmbedding.dimension ?? rawAi.embedDimensions ?? embeddingProviderConfigs[embeddingProvider].dimension,
+    model: rawEmbedding.model ?? embeddingProviderConfigs[embeddingProvider].model,
+    baseUrl: rawEmbedding.baseUrl ?? embeddingProviderConfigs[embeddingProvider].baseUrl,
+    apiKey: rawEmbedding.apiKey ?? embeddingProviderConfigs[embeddingProvider].apiKey,
+    dimension: rawEmbedding.dimension ?? embeddingProviderConfigs[embeddingProvider].dimension,
   }, embeddingProviderConfigs[embeddingProvider])
   embeddingProviderConfigs[embeddingProvider] = activeEmbeddingConfig
 

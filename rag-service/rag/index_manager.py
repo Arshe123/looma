@@ -181,9 +181,14 @@ def _insert_doc_vectors(workspace: Path, persist_dir: Path, file_path: Path, req
     index.insert(doc)
     index.storage_context.persist(persist_dir=str(persist_dir))
 
-    # Count nodes (chunks) - approximate from node parser settings
+    # Count chunks with the same transformation pipeline used by index.insert().
     from llama_index.core import Settings
-    nodes = Settings.node_parser.get_nodes_from_documents([doc]) if hasattr(Settings, "node_parser") else []
+    try:
+        from llama_index.core.ingestion import run_transformations
+        nodes = run_transformations([doc], transformations=Settings.transformations)
+    except Exception:
+        parser = getattr(Settings, "node_parser", None)
+        nodes = parser.get_nodes_from_documents([doc]) if parser else []
     return len(nodes) or 1
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -260,6 +265,7 @@ def current_metadata(request: IndexRequest, workspace: Path) -> dict[str, Any]:
             "dimension": embedding.dimension if embedding else None,
         },
         "chunking": {
+            "strategy": knowledge.chunking_strategy,
             "chunkSize": knowledge.chunk_size,
             "chunkOverlap": knowledge.chunk_overlap,
         },
@@ -297,6 +303,7 @@ def validate_metadata_compatibility(current: dict[str, Any], stored: dict[str, A
         ("embedding.provider", stored.get("embedding", {}).get("provider"), current.get("embedding", {}).get("provider")),
         ("embedding.model", stored.get("embedding", {}).get("model"), current.get("embedding", {}).get("model")),
         ("embedding.dimension", stored.get("embedding", {}).get("dimension"), current.get("embedding", {}).get("dimension")),
+        ("chunking.strategy", stored.get("chunking", {}).get("strategy", "fixed"), current.get("chunking", {}).get("strategy", "fixed")),
         ("chunking.chunkSize", stored.get("chunking", {}).get("chunkSize"), current.get("chunking", {}).get("chunkSize")),
         ("chunking.chunkOverlap", stored.get("chunking", {}).get("chunkOverlap"), current.get("chunking", {}).get("chunkOverlap")),
         ("parser.type", stored.get("parser", {}).get("type"), current.get("parser", {}).get("type")),
@@ -511,6 +518,7 @@ def create_last_build_metadata(metadata: dict[str, Any], indexed_at: str, summar
         "status": status,
         "embeddingProvider": metadata.get("embedding", {}).get("provider"),
         "embeddingModel": metadata.get("embedding", {}).get("model"),
+        "chunkingStrategy": metadata.get("chunking", {}).get("strategy", "fixed"),
         "chunkSize": metadata.get("chunking", {}).get("chunkSize"),
         "chunkOverlap": metadata.get("chunking", {}).get("chunkOverlap"),
         "parserType": metadata.get("parser", {}).get("type"),
@@ -794,7 +802,7 @@ def get_file_chunks(request: IndexBuildRequest) -> dict[str, Any]:
         }
 
     if request.ai_config and request.ai_config.embedding:
-        configure_llama_index(request.ai_config.embedding, knowledge.chunk_size, knowledge.chunk_overlap)
+        configure_llama_index(request.ai_config.embedding, knowledge)
 
     try:
         validate_persisted_index_json(persist_dir)
@@ -923,7 +931,7 @@ def reindex_file(request: IndexBuildRequest) -> dict[str, Any]:
             raise ValueError("ai_config.embedding is required for reindex")
 
         index_request = IndexRequest(workspace=request.workspace, knowledge=knowledge, ai_config=request.ai_config)
-        configure_llama_index(request.ai_config.embedding, knowledge.chunk_size, knowledge.chunk_overlap)
+        configure_llama_index(request.ai_config.embedding, knowledge)
 
         try:
             # Insert new vectors

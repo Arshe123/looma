@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator, Iterable
 from pydantic import PrivateAttr
 
 from providers.factory import create_embedding_provider
-from schemas import EmbeddingModelConfig, IndexRequest
+from schemas import EmbeddingModelConfig, IndexRequest, KnowledgeConfig
 
 SUPPORTED_EXTENSIONS = {".md", ".txt", ".pdf"}
 REQUIRED_INDEX_FILES = {
@@ -179,19 +179,44 @@ def load_documents(input_files: Iterable[Path], workspace_path: Path):
     return documents
 
 
-def configure_llama_index(embedding_config: EmbeddingModelConfig, chunk_size: int = 800, chunk_overlap: int = 100):
+def make_node_transformations(knowledge: KnowledgeConfig):
+    from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
+
+    sentence_splitter = SentenceSplitter(
+        chunk_size=knowledge.chunk_size,
+        chunk_overlap=knowledge.chunk_overlap,
+    )
+    if knowledge.chunking_strategy == "markdown":
+        return [
+            MarkdownNodeParser.from_defaults(include_metadata=True, include_prev_next_rel=True),
+            sentence_splitter,
+        ]
+    return [sentence_splitter]
+
+
+def configure_llama_index(
+    embedding_config: EmbeddingModelConfig,
+    knowledge_or_chunk_size: KnowledgeConfig | int = 800,
+    chunk_overlap: int = 100,
+):
     from llama_index.core import Settings
-    from llama_index.core.node_parser import SentenceSplitter
+
+    if isinstance(knowledge_or_chunk_size, KnowledgeConfig):
+        knowledge = knowledge_or_chunk_size
+    else:
+        knowledge = KnowledgeConfig(chunk_size=int(knowledge_or_chunk_size), chunk_overlap=chunk_overlap)
 
     Settings.embed_model = make_embedding_model(embedding_config)
-    node_parser = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    Settings.node_parser = node_parser
-    # LlamaIndex caches Settings.transformations after the first access. Updating
-    # Settings.node_parser alone does not invalidate that cache, so rebuilds in
-    # the same RAG process can keep using the old splitter until app restart.
-    Settings.transformations = [node_parser]
+    transformations = make_node_transformations(knowledge)
+    # Keep node_parser populated for older LlamaIndex code paths, but force the
+    # actual transformation pipeline too. Settings.transformations is cached after
+    # first access, so updating only Settings.node_parser can keep using stale
+    # chunking behavior until the process restarts.
+    Settings.node_parser = transformations[-1]
+    Settings.transformations = transformations
     # Avoid llama-index trying to instantiate its own default LLM during indexing.
     Settings.llm = None
+    return transformations
 
 
 def build_index(request: IndexRequest) -> dict[str, Any]:
@@ -215,7 +240,7 @@ def build_index(request: IndexRequest) -> dict[str, Any]:
             "persist_dir": str(persist_dir),
         }
 
-    configure_llama_index(request.ai_config.embedding, request.knowledge.chunk_size, request.knowledge.chunk_overlap)
+    configure_llama_index(request.ai_config.embedding, request.knowledge)
     documents = load_documents(input_files, workspace)
     if not documents:
         return {
@@ -241,6 +266,7 @@ def build_index(request: IndexRequest) -> dict[str, Any]:
         "embedding_provider": request.ai_config.embedding.provider,
         "chunk_size": request.knowledge.chunk_size,
         "chunk_overlap": request.knowledge.chunk_overlap,
+        "chunking_strategy": request.knowledge.chunking_strategy,
     }
 
 
@@ -274,7 +300,7 @@ async def build_index_events(request: IndexRequest) -> AsyncIterator[dict[str, A
         yield {"type": "done", "result": {"status": "ok", "document_count": 0, "exists": False, "persist_dir": str(persist_dir)}}
         return
 
-    configure_llama_index(request.ai_config.embedding, request.knowledge.chunk_size, request.knowledge.chunk_overlap)
+    configure_llama_index(request.ai_config.embedding, request.knowledge)
     yield {"type": "timeline", "stepId": "load-documents", "status": "active", "title": "读取文档", "detail": "正在读取文件内容。"}
     documents = []
     for index, file_path in enumerate(input_files, start=1):
@@ -323,6 +349,7 @@ async def build_index_events(request: IndexRequest) -> AsyncIterator[dict[str, A
         "embedding_provider": request.ai_config.embedding.provider,
         "chunk_size": request.knowledge.chunk_size,
         "chunk_overlap": request.knowledge.chunk_overlap,
+        "chunking_strategy": request.knowledge.chunking_strategy,
     }
     yield {"type": "timeline", "stepId": "verify-index", "status": "completed", "title": "验证索引", "detail": "索引文件验证完成。"}
     yield {"type": "done", "result": result, **result}

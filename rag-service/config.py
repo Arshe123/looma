@@ -74,6 +74,11 @@ def _provider(value: Any, fallback: str = "ollama") -> str:
     return value if value in allowed else fallback
 
 
+def _chunking_strategy(value: Any, fallback: str = "fixed") -> str:
+    allowed = {"fixed", "markdown", "semantic", "parent_child", "code_aware"}
+    return value if value in allowed else fallback
+
+
 def default_ai_config() -> AIConfig:
     return AIConfig(
         chat=ChatModelConfig(
@@ -137,6 +142,7 @@ def load_global_knowledge_config() -> KnowledgeConfig:
         rerank=bool(ai.get("rerank")) if isinstance(ai.get("rerank"), bool) else defaults.rerank,
         chunk_size=int(_number(ai.get("chunkSize") or ai.get("chunk_size"), defaults.chunk_size)),
         chunk_overlap=int(_number(ai.get("chunkOverlap") or ai.get("chunk_overlap"), defaults.chunk_overlap)),
+        chunking_strategy=_chunking_strategy(ai.get("chunkingStrategy") or ai.get("chunking_strategy"), defaults.chunking_strategy),
     )
 
 

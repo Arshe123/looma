@@ -45,6 +45,7 @@ type IndexMetadata = {
     dimension?: number | null
   }
   chunking?: {
+    strategy?: string
     chunkSize?: number
     chunkOverlap?: number
   }
@@ -60,6 +61,7 @@ type IndexMetadata = {
     status?: string
     embeddingProvider?: string
     embeddingModel?: string
+    chunkingStrategy?: string
     chunkSize?: number
     chunkOverlap?: number
     parserType?: string
@@ -131,12 +133,21 @@ const metadataEmbeddingLabel = computed(() => {
   const model = embedding?.model || lastBuild.value?.embeddingModel || '—'
   return `${provider} · ${model}`
 })
+const chunkingStrategyLabels: Record<string, string> = {
+  fixed: '固定长度',
+  markdown: 'Markdown 结构',
+  semantic: '段落语义',
+  parent_child: '父子块',
+  code_aware: '代码友好',
+}
+
 const metadataChunkingLabel = computed(() => {
   const chunking = indexMetadata.value?.chunking
   const size = chunking?.chunkSize ?? lastBuild.value?.chunkSize
   const overlap = chunking?.chunkOverlap ?? lastBuild.value?.chunkOverlap
-  if (size === undefined && overlap === undefined) return '—'
-  return `${size ?? '—'} / ${overlap ?? '—'}`
+  const strategy = chunkingStrategyLabels[chunking?.strategy || lastBuild.value?.chunkingStrategy || 'fixed'] || '固定长度'
+  if (size === undefined && overlap === undefined) return strategy
+  return `${strategy} · ${size ?? '—'} / ${overlap ?? '—'}`
 })
 const healthLabel = computed(() => {
   if (!status.value) return '未检查'

@@ -52,14 +52,6 @@ def resolve_request_config(request: ChatRequest | RagQueryRequest | IndexRequest
     return request
 
 
-def require_embedding_config(request: RagQueryRequest | IndexRequest):
-    request = resolve_request_config(request)
-    embedding = request.ai_config.embedding
-    if embedding is None:
-        raise HTTPException(status_code=422, detail="ai_config.embedding is required for RAG operations")
-    return embedding
-
-
 def build_chat_messages(request: ChatRequest) -> list[ChatMessage]:
     request = resolve_request_config(request)
     return [
@@ -126,7 +118,6 @@ async def rag_query_events(request: RagQueryRequest) -> AsyncIterator[str]:
         )
 
         chat_provider = create_chat_provider(request.ai_config.chat)
-        require_embedding_config(request)
 
         yield ndjson_event(
             "timeline",

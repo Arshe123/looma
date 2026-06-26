@@ -109,24 +109,24 @@ def load_global_ai_config() -> AIConfig:
     chat = _record(ai.get("chat"))
     embedding = _record(ai.get("embedding"))
 
-    chat_provider = _provider(chat.get("provider") or ai.get("llmProvider"), defaults.chat.provider)
-    embedding_provider = _provider(embedding.get("provider") or ai.get("embedProvider"), defaults.embedding.provider if defaults.embedding else "ollama")
+    chat_provider = _provider(chat.get("provider"), defaults.chat.provider)
+    embedding_provider = _provider(embedding.get("provider"), defaults.embedding.provider if defaults.embedding else "ollama")
 
     return AIConfig(
         chat=ChatModelConfig(
             provider=chat_provider,
-            model=_string(chat.get("model") or ai.get("llmModel"), defaults.chat.model),
-            base_url=_optional_string(chat.get("baseUrl") or chat.get("base_url") or ai.get("llmBaseUrl"), defaults.chat.base_url),
-            api_key=_optional_string(chat.get("apiKey") or chat.get("api_key") or ai.get("llmApiKey"), defaults.chat.api_key),
-            temperature=_number(chat.get("temperature") or ai.get("temperature"), defaults.chat.temperature),
-            max_tokens=_number(chat.get("maxTokens") or chat.get("max_tokens") or ai.get("maxTokens"), defaults.chat.max_tokens),
+            model=_string(chat.get("model"), defaults.chat.model),
+            base_url=_optional_string(chat.get("baseUrl") or chat.get("base_url"), defaults.chat.base_url),
+            api_key=_optional_string(chat.get("apiKey") or chat.get("api_key"), defaults.chat.api_key),
+            temperature=_number(chat.get("temperature"), defaults.chat.temperature),
+            max_tokens=_number(chat.get("maxTokens") or chat.get("max_tokens"), defaults.chat.max_tokens),
         ),
         embedding=EmbeddingModelConfig(
             provider=embedding_provider,
-            model=_string(embedding.get("model") or ai.get("embedModel"), defaults.embedding.model if defaults.embedding else "bge-m3:latest"),
-            base_url=_optional_string(embedding.get("baseUrl") or embedding.get("base_url") or ai.get("embedBaseUrl"), defaults.embedding.base_url if defaults.embedding else DEFAULT_OLLAMA_BASE_URL),
-            api_key=_optional_string(embedding.get("apiKey") or embedding.get("api_key") or ai.get("embedApiKey"), defaults.embedding.api_key if defaults.embedding else ""),
-            dimension=_number(embedding.get("dimension") or ai.get("embedDimensions"), defaults.embedding.dimension if defaults.embedding else None),
+            model=_string(embedding.get("model"), defaults.embedding.model if defaults.embedding else "bge-m3:latest"),
+            base_url=_optional_string(embedding.get("baseUrl") or embedding.get("base_url"), defaults.embedding.base_url if defaults.embedding else DEFAULT_OLLAMA_BASE_URL),
+            api_key=_optional_string(embedding.get("apiKey") or embedding.get("api_key"), defaults.embedding.api_key if defaults.embedding else ""),
+            dimension=_number(embedding.get("dimension"), defaults.embedding.dimension if defaults.embedding else None),
         ),
     )
 

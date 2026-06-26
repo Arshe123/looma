@@ -56,6 +56,4 @@ def retrieve_context_sources_sync(request: RagQueryRequest) -> list[dict[str, An
 
 
 async def retrieve_context_sources(request: RagQueryRequest) -> list[dict[str, Any]]:
-    # Loading the persisted index and running vector retrieval can do disk IO and
-    # sync embedding calls, so keep it off the FastAPI event loop.
     return await asyncio.to_thread(retrieve_context_sources_sync, request)

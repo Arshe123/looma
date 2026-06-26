@@ -32,7 +32,6 @@ class EmbeddingModelConfig(BaseModel):
 
 class AIConfig(BaseModel):
     chat: ChatModelConfig
-    # 普通聊天不一定需要 embedding，但 RAG 查询和索引接口会强制检查它存在。
     embedding: Optional[EmbeddingModelConfig] = None
 
 

@@ -130,13 +130,13 @@ onUnmounted(() => {
           <Bot :size="20" />
         </button>
 
-        <button class="p-2 rounded-md text-text-subtle cursor-not-allowed" title="Git History (Coming Soon)" disabled>
+        <!-- <button class="p-2 rounded-md text-text-subtle cursor-not-allowed" title="Git History (Coming Soon)" disabled>
           <GitBranch :size="20" />
-        </button>
+        </button> -->
       </div>
 
       <div class="flex flex-col items-center gap-2">
-        <div class="relative" data-user-entry>
+        <!-- <div class="relative" data-user-entry>
           <button
             class="p-2 rounded-md text-text-subtle cursor-not-allowed"
             :class="{ 'bg-accent-soft text-text-main': authModalOpen || userMenuOpen }"
@@ -156,7 +156,7 @@ onUnmounted(() => {
             @logout="handleLogout"
             @close="closeUserMenu"
           />
-        </div>
+        </div> -->
 
         <button
           @click="workspaceStore.toggleTheme"

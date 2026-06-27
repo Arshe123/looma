@@ -11,13 +11,13 @@ const workspaceStore = useWorkspaceStore()
 const activeSection = ref<SettingsSectionId>(workspaceStore.activeSettingsSection)
 
 const settingSections = [
-  {
-    id: 'appearance',
-    title: '主题',
-    description: '管理界面主题与窗口显示偏好。',
-    icon: Monitor,
-    items: ['跟随系统主题', '紧凑侧边栏', '减少界面动效'],
-  },
+  // {
+  //   id: 'appearance',
+  //   title: '主题',
+  //   description: '管理界面主题与窗口显示偏好。',
+  //   icon: Monitor,
+  //   items: ['跟随系统主题', '紧凑侧边栏', '减少界面动效'],
+  // },
   {
     id: 'editor',
     title: '编辑器',
@@ -38,9 +38,9 @@ const currentSection = computed(() => {
 
 const isEditorSection = computed(() => currentSection.value.id === 'editor')
 const isAiSection = computed(() => currentSection.value.id === 'ai')
-const appearanceItems = computed(() =>
-  currentSection.value.id === 'appearance' ? currentSection.value.items : [],
-)
+// const appearanceItems = computed(() =>
+//   currentSection.value.id === 'appearance' ? currentSection.value.items : [],
+// )
 
 watch(() => workspaceStore.activeSettingsSection, (section) => {
   activeSection.value = section
@@ -75,7 +75,7 @@ watch(activeSection, (section) => {
           >
             <EditorSettings v-if="isEditorSection" />
             <AiSettings v-else-if="isAiSection" />
-            <AppearanceSettings v-else :items="appearanceItems" />
+            <!-- <AppearanceSettings v-else :items="appearanceItems" /> -->
           </div>
         </section>
       </div>

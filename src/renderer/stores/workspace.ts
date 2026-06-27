@@ -284,7 +284,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     tabs: [] as WorkspaceTab[],
     activeTabId: '' as string,
     activeSystemPage: null as SystemPageId | null,
-    activeSettingsSection: 'appearance' as SettingsSectionId,
+    activeSettingsSection: 'editor' as SettingsSectionId,
     activeSidebarPanel: DEFAULT_ACTIVE_SIDEBAR_PANEL as SidebarPanelId | null,
     aiAssistant: createDefaultAiAssistantState() as AiAssistantState,
     fileSessions: {} as Record<string, EditorSession>,
@@ -840,7 +840,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.saveWorkspaceMeta().catch(() => {})
     },
 
-    openSettingsPage(section: SettingsSectionId = 'appearance') {
+    openSettingsPage(section: SettingsSectionId = 'editor') {
       this.openSystemTab('settings', { section })
     },
 

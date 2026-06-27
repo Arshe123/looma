@@ -18,6 +18,9 @@ type RagRequestStatsPayload = {
   history_token_estimate: number;
   question_token_estimate: number;
   total_token_estimate: number;
+  recent_turns?: number;
+  distant_summary_enabled?: boolean;
+  distant_summary_messages?: number;
 };
 type OllamaDownloadProgressPayload = {
   status: 'downloading' | 'completed' | 'error' | 'cancelled';
@@ -95,6 +98,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     status: (workspaceId: string) => ipcRenderer.invoke('rag:status', workspaceId),
     chat: (workspaceId: string, question: string, history?: RagChatMessagePayload[], requestStats?: RagRequestStatsPayload) =>
       ipcRenderer.invoke('rag:chat', workspaceId, question, history, requestStats),
+    summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) =>
+      ipcRenderer.invoke('rag:summarizeConversation', messages, maxChars),
     askStream: {
       start: (requestId: string, workspaceId: string, question: string, history?: RagChatMessagePayload[], requestStats?: RagRequestStatsPayload) =>
         ipcRenderer.invoke('rag:askStream:start', requestId, workspaceId, question, history, requestStats),

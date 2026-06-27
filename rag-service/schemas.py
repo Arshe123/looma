@@ -63,6 +63,9 @@ class RequestStats(BaseModel):
     history_token_estimate: int = Field(default=0, ge=0)
     question_token_estimate: int = Field(default=0, ge=0)
     total_token_estimate: int = Field(default=0, ge=0)
+    recent_turns: int = Field(default=0, ge=0)
+    distant_summary_enabled: bool = False
+    distant_summary_messages: int = Field(default=0, ge=0)
 
 
 class ChatRequest(BaseModel):

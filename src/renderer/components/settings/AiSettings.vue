@@ -191,6 +191,15 @@ const updateTopLevelSetting = async <K extends keyof AiSettings>(key: K, value: 
   await settingsStore.setAiSettings({ [key]: value } as Partial<AiSettings>)
 }
 
+const updateConversationContextSetting = async <K extends keyof AiSettings['conversationContext']>(key: K, value: AiSettings['conversationContext'][K]) => {
+  await settingsStore.setAiSettings({
+    conversationContext: {
+      ...aiSettings.value.conversationContext,
+      [key]: value,
+    },
+  })
+}
+
 const updateChatSetting = async <K extends keyof AiSettings['chat']>(key: K, value: AiSettings['chat'][K]) => {
   const provider = aiSettings.value.chat.provider
   const nextChat = {
@@ -495,6 +504,50 @@ watch(
         <div class="grid min-w-0 gap-4">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
+              <h2 class="text-base font-bold text-text-main">对话上下文策略</h2>
+              <p class="mt-1 text-xs leading-5 text-text-muted">选择对话历史的组织方式：只带固定最近轮数，或超过固定轮数后自动总结早期对话。</p>
+            </div>
+            <span class="rounded-full border border-accent/20 bg-accent-soft px-3 py-1 text-[11px] font-medium text-accent">
+              Context Policy
+            </span>
+          </div>
+
+          <div class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] gap-4">
+            <label class="grid gap-2 text-sm text-text-main">
+              <span class="text-xs font-semibold text-text-main">上下文策略</span>
+              <select
+                class="h-11 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none focus:border-accent"
+                :value="aiSettings.conversationContext.strategy"
+                @change="updateConversationContextSetting('strategy', ($event.target as HTMLSelectElement).value as AiSettings['conversationContext']['strategy'])"
+              >
+                <option value="sliding_window">滑动窗口</option>
+                <option value="summary">摘要总结</option>
+              </select>
+              <p class="text-xs leading-5 text-text-muted">滑动窗口只携带最近固定轮数；摘要总结会在超过固定轮数后调用 LLM 压缩更早对话。</p>
+            </label>
+
+            <label class="grid gap-2 text-sm text-text-main">
+              <span class="text-xs font-semibold text-text-main">对话轮数</span>
+              <input
+                class="h-11 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none placeholder:text-text-subtle focus:border-accent"
+                :value="aiSettings.conversationContext.recentTurns"
+                type="number"
+                min="0"
+                max="50"
+                step="1"
+                @change="updateConversationContextSetting('recentTurns', Number(($event.target as HTMLInputElement).value))"
+              />
+              <p class="text-xs leading-5 text-text-muted">设置最近多少轮用户提问及对应回答原样加入对话历史；摘要总结模式超过该轮数后压缩更早对话。</p>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid grid-cols-[2.4rem_minmax(0,1fr)] gap-3 border-b border-border-soft py-5">
+        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">02</div>
+        <div class="grid min-w-0 gap-4">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
               <h2 class="text-base font-bold text-text-main">对话模型设置</h2>
               <p class="mt-1 text-xs leading-5 text-text-muted">生成回答使用的模型，独立配置 Provider、API Key 和参数。</p>
             </div>
@@ -597,11 +650,11 @@ watch(
       </section>
 
       <section class="grid grid-cols-[2.4rem_minmax(0,1fr)] gap-3 py-5 pb-0">
-        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">02</div>
-        <div class="grid min-w-0 gap-4">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 class="text-base font-bold text-text-main">向量模型设置</h2>
+        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">03</div>
+                <div class="grid min-w-0 gap-4">
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h2 class="text-base font-bold text-text-main">向量模型设置</h2>
               <p class="mt-1 text-xs leading-5 text-text-muted">检索和索引用的 embedding 模型，接入方式与对话模型分开设置。</p>
             </div>
             <span

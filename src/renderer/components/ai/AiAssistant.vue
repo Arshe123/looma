@@ -348,7 +348,7 @@ const createSourceOutputs = (sources: Array<{ score: number | null; text: string
   })
 
 type RagChatMessagePayload = {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'system'
   content: string
 }
 
@@ -357,6 +357,9 @@ type RagRequestStatsPayload = {
   history_token_estimate: number
   question_token_estimate: number
   total_token_estimate: number
+  recent_turns: number
+  distant_summary_enabled: boolean
+  distant_summary_messages: number
 }
 
 const estimateTokenCount = (text: string) => {
@@ -371,15 +374,57 @@ const estimateTokenCount = (text: string) => {
 const estimateMessageTokens = (message: RagChatMessagePayload) =>
   estimateTokenCount(message.content) + 4
 
-const buildConversationHistoryForRequest = (
-  currentQuestion: string,
-  options?: {
-    sourceMessages?: AiAssistantMessage[]
-    excludeMessageIds?: Set<number>
-  },
-) => {
-  const excluded = options?.excludeMessageIds ?? new Set<number>()
-  const history = (options?.sourceMessages ?? messages.value)
+const CONVERSATION_SUMMARY_PREFIX = '系统：已压缩早期对话'
+const CONVERSATION_SUMMARY_PENDING_TEXT = '系统：正在压缩早期对话，请稍候...'
+
+const isConversationSummaryMessage = (message: AiAssistantMessage) =>
+  message.role === 'system' && message.text.trim().startsWith(CONVERSATION_SUMMARY_PREFIX)
+
+const getConversationSummaryContent = (text: string) => {
+  const value = text.trim()
+  const divider = value.indexOf('\n\n')
+  return divider >= 0 ? value.slice(divider + 2).trim() : value.replace(CONVERSATION_SUMMARY_PREFIX, '').trim()
+}
+
+const getConversationSummaryTurnIndex = (text: string) => {
+  const match = text.match(/已总结至第\s*(\d+)\s*次用户对话/)
+  return match ? Number(match[1]) : 0
+}
+
+const findLatestConversationSummaryIndex = (sourceMessages: AiAssistantMessage[]) => {
+  for (let index = sourceMessages.length - 1; index >= 0; index -= 1) {
+    if (isConversationSummaryMessage(sourceMessages[index])) return index
+  }
+  return -1
+}
+
+const countUserTurns = (history: RagChatMessagePayload[]) =>
+  history.filter((message) => message.role === 'user').length
+
+const selectRecentConversationMessages = (allMessages: RagChatMessagePayload[], recentTurns: number) => {
+  if (recentTurns <= 0) return []
+  let userTurns = 0
+  let startIndex = allMessages.length
+  for (let index = allMessages.length - 1; index >= 0; index -= 1) {
+    startIndex = index
+    if (allMessages[index].role === 'user') {
+      userTurns += 1
+      if (userTurns >= recentTurns) break
+    }
+  }
+  return allMessages.slice(startIndex)
+}
+
+const splitMessagesKeepingRecentTurns = (allMessages: RagChatMessagePayload[], keepRecentTurns: number) => {
+  const retainedMessages = selectRecentConversationMessages(allMessages, keepRecentTurns)
+  return {
+    messagesToSummarize: allMessages.slice(0, allMessages.length - retainedMessages.length),
+    retainedMessages,
+  }
+}
+
+const normalizeConversationMessagesForContext = (sourceMessages: AiAssistantMessage[], excluded: Set<number>) =>
+  sourceMessages
     .filter((message) => (
       (message.role === 'user' || message.role === 'assistant')
       && !excluded.has(message.id)
@@ -392,14 +437,135 @@ const buildConversationHistoryForRequest = (
       content: message.text.trim(),
     }))
 
+const summarizeConversationMessagesWithLlm = async (
+  newMessages: RagChatMessagePayload[],
+  options: {
+    existingSummary?: string
+    maxChars: number
+  },
+) => {
+  const summaryInput: RagChatMessagePayload[] = []
+  if (options.existingSummary?.trim()) {
+    summaryInput.push({
+      role: 'system',
+      content: `上一版对话摘要：\n${options.existingSummary.trim()}`,
+    })
+  }
+  summaryInput.push(...newMessages)
+  if (!summaryInput.length) return ''
+
+  const result = await window.electronAPI.rag.summarizeConversation(summaryInput, options.maxChars)
+  if (!result.success) {
+    throw new Error(result.error || '对话摘要生成失败。')
+  }
+  return (result.data?.answer || '').trim()
+}
+
+const buildConversationStats = (
+  currentQuestion: string,
+  history: RagChatMessagePayload[],
+  recentTurns: number,
+  distantSummaryMessages: number,
+  distantSummaryEnabled: boolean,
+): RagRequestStatsPayload => {
   const historyTokenEstimate = history.reduce((total, message) => total + estimateMessageTokens(message), 0)
   const questionTokenEstimate = estimateTokenCount(currentQuestion) + 4
-  const stats: RagRequestStatsPayload = {
+  return {
     history_messages: history.length,
     history_token_estimate: historyTokenEstimate,
     question_token_estimate: questionTokenEstimate,
     total_token_estimate: historyTokenEstimate + questionTokenEstimate,
+    recent_turns: recentTurns,
+    distant_summary_enabled: distantSummaryEnabled,
+    distant_summary_messages: distantSummaryMessages,
   }
+}
+
+const buildConversationHistoryForRequest = async (
+  currentQuestion: string,
+  options?: {
+    sourceMessages?: AiAssistantMessage[]
+    excludeMessageIds?: Set<number>
+    displaySummaryMessage?: boolean
+  },
+) => {
+  const sourceMessages = options?.sourceMessages ?? messages.value
+  const excluded = options?.excludeMessageIds ?? new Set<number>()
+  const contextSettings = settingsStore.aiSettings.conversationContext
+  const normalizedAllMessages = normalizeConversationMessagesForContext(sourceMessages, excluded)
+  const totalUserTurns = countUserTurns(normalizedAllMessages)
+  const currentUserTurnIndex = totalUserTurns + 1
+
+  if (contextSettings.strategy === 'sliding_window') {
+    const history = selectRecentConversationMessages(normalizedAllMessages, contextSettings.recentTurns)
+    const stats = buildConversationStats(currentQuestion, history, contextSettings.recentTurns, 0, false)
+    return { history, stats }
+  }
+
+  const summaryIndex = findLatestConversationSummaryIndex(sourceMessages)
+  const existingSummaryMessage = summaryIndex >= 0 ? sourceMessages[summaryIndex] : null
+  const existingSummary = existingSummaryMessage ? getConversationSummaryContent(existingSummaryMessage.text) : ''
+  const summarizedTurnIndex = existingSummaryMessage ? getConversationSummaryTurnIndex(existingSummaryMessage.text) : 0
+  const messagesAfterSummary = summaryIndex >= 0 ? sourceMessages.slice(summaryIndex + 1) : sourceMessages
+  const normalizedMessagesAfterSummary = normalizeConversationMessagesForContext(messagesAfterSummary, excluded)
+  const unsummarizedUserTurns = Math.max(0, currentUserTurnIndex - summarizedTurnIndex)
+  const retainedTurnCount = Math.max(1, Math.ceil(contextSettings.recentTurns / 4))
+  const { messagesToSummarize, retainedMessages } = splitMessagesKeepingRecentTurns(normalizedMessagesAfterSummary, retainedTurnCount)
+  const shouldSummarize = unsummarizedUserTurns > contextSettings.recentTurns
+    && messagesToSummarize.length > 0
+
+  let summaryContent = existingSummary
+  let summaryTurnIndex = summarizedTurnIndex
+  let contextTailMessages = normalizedMessagesAfterSummary
+  let pendingSummaryMessageId: number | null = null
+
+  if (shouldSummarize) {
+    if (options?.displaySummaryMessage !== false) {
+      pendingSummaryMessageId = appendMessage('system', CONVERSATION_SUMMARY_PENDING_TEXT)
+    }
+
+    try {
+      const nextSummary = await summarizeConversationMessagesWithLlm(messagesToSummarize, {
+        existingSummary,
+        maxChars: contextSettings.summaryMaxChars,
+      })
+      if (nextSummary) {
+        summaryContent = nextSummary
+        summaryTurnIndex = Math.max(summarizedTurnIndex, totalUserTurns - countUserTurns(retainedMessages))
+        contextTailMessages = retainedMessages
+        if (pendingSummaryMessageId) {
+          workspaceStore.updateAiAssistantMessageText(
+            pendingSummaryMessageId,
+            `${CONVERSATION_SUMMARY_PREFIX}（已总结至第 ${summaryTurnIndex} 次用户对话，保留最近 ${countUserTurns(retainedMessages)} 轮对话）\n\n${nextSummary}`,
+          )
+        }
+      } else if (pendingSummaryMessageId) {
+        workspaceStore.updateAiAssistantMessageText(pendingSummaryMessageId, '系统：对话压缩完成，但模型没有返回可展示的摘要。')
+      }
+    } catch (error: any) {
+      if (pendingSummaryMessageId) {
+        workspaceStore.updateAiAssistantMessageText(
+          pendingSummaryMessageId,
+          `系统：对话压缩失败，已改为携带上一版摘要和最近 ${contextSettings.recentTurns} 轮对话。\n\n${error?.message ?? String(error)}`,
+        )
+      }
+      summaryContent = existingSummary
+      summaryTurnIndex = summarizedTurnIndex
+      contextTailMessages = normalizedMessagesAfterSummary
+    }
+    scrollToBottom()
+  }
+
+  const history: RagChatMessagePayload[] = summaryContent
+    ? [{ role: 'system', content: `对话摘要（已总结至第 ${summaryTurnIndex} 次用户对话）：\n${summaryContent}` }, ...contextTailMessages]
+    : contextTailMessages
+  const stats = buildConversationStats(
+    currentQuestion,
+    history,
+    contextSettings.recentTurns,
+    shouldSummarize ? messagesToSummarize.length : 0,
+    Boolean(summaryContent),
+  )
 
   return { history, stats }
 }
@@ -407,8 +573,8 @@ const buildConversationHistoryForRequest = (
 const createConversationContextTimeline = (stats: RagRequestStatsPayload, startedAt = Date.now()): AiAssistantTimelineStep[] => [{
   id: 'conversation-context',
   title: '整理对话上下文',
-  description: '把当前会话历史转换为后端 history，并估算本次请求上下文 token。',
-  detail: `已加入 ${stats.history_messages} 条历史消息，整轮上下文约 ${stats.total_token_estimate} tokens。`,
+  description: '按 AI 设置中的上下文策略整理最近对话和远对话摘要，并估算本次请求上下文 token。',
+  detail: `最近 ${stats.recent_turns} 轮内加入 ${stats.history_messages} 条历史消息${stats.distant_summary_enabled ? `，并压缩 ${stats.distant_summary_messages} 条更早消息为摘要` : ''}，整轮上下文约 ${stats.total_token_estimate} tokens。`,
   status: 'completed',
   startedAt,
   endedAt: startedAt,
@@ -419,6 +585,13 @@ const createConversationContextTimeline = (stats: RagRequestStatsPayload, starte
       title: '历史消息',
       value: stats.history_messages,
       unit: '条',
+    },
+    {
+      id: 'recent-turns',
+      type: 'metric',
+      title: '保留最近轮数',
+      value: stats.recent_turns,
+      unit: '轮',
     },
     {
       id: 'history-token-estimate',
@@ -708,9 +881,9 @@ const askQuestion = async () => {
   }
 
   const assistantName = aiDisplayName.value
-  const { history, stats } = buildConversationHistoryForRequest(text)
-  workspaceStore.setAiAssistantDraft('')
   isAsking.value = true
+  const { history, stats } = await buildConversationHistoryForRequest(text)
+  workspaceStore.setAiAssistantDraft('')
   appendMessage('user', text)
   const assistantMessageId = appendMessage('assistant', '', undefined, { aiName: assistantName })
   await startAssistantRequest(workspaceId, text, assistantMessageId, history, stats)
@@ -761,8 +934,9 @@ const regenerateAssistantMessage = async (message: AiAssistantMessage) => {
   const userMessage = conversationMessages[userIndex]
   const text = userMessage.text.trim()
   const assistantName = aiDisplayName.value
-  const { history, stats } = buildConversationHistoryForRequest(text, {
+  const { history, stats } = await buildConversationHistoryForRequest(text, {
     sourceMessages: conversationMessages.slice(0, userIndex),
+    displaySummaryMessage: false,
   })
 
   isAsking.value = true
@@ -937,7 +1111,7 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
               v-if="message.role === 'system'"
               class="mb-2 flex items-center gap-2 px-1 text-center text-[10px] leading-4 text-text-subtle before:h-px before:flex-1 before:bg-border-soft after:h-px after:flex-1 after:bg-border-soft"
             >
-              <span class="shrink-0">系统事件 · 本地 RAG</span>
+              <span class="shrink-0">系统事件</span>
             </div>
 
             <div

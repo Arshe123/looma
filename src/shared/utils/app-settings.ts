@@ -20,6 +20,7 @@ export type EmbeddingProviderConfig = {
 export type ChatProviderConfigs = Record<AiProvider, ChatProviderConfig>
 export type EmbeddingProviderConfigs = Record<AiProvider, EmbeddingProviderConfig>
 export type ChunkingStrategy = 'fixed' | 'markdown' | 'semantic' | 'parent_child' | 'code_aware'
+export type ConversationContextStrategy = 'sliding_window' | 'summary'
 
 export interface AppSettings {
   inlineMenu: {
@@ -43,6 +44,12 @@ export interface AppSettings {
     enableAiTimeline: boolean
     enableSourceCitation: boolean
     localFirstMode: boolean
+    conversationContext: {
+      strategy: ConversationContextStrategy
+      recentTurns: number
+      summaryMaxMessages: number
+      summaryMaxChars: number
+    }
   }
 }
 
@@ -176,6 +183,12 @@ const createDefaultAppSettings = (): AppSettings => {
       enableAiTimeline: true,
       enableSourceCitation: true,
       localFirstMode: true,
+      conversationContext: {
+        strategy: 'summary',
+        recentTurns: 20,
+        summaryMaxMessages: 24,
+        summaryMaxChars: 1200,
+      },
     },
   }
 }
@@ -225,6 +238,21 @@ const normalizeBoundedInteger = (raw: unknown, fallback: number, min: number, ma
   const parsed = normalizeOptionalNumber(raw, fallback)
   const numberValue = Number.isFinite(parsed) ? Math.round(parsed as number) : fallback
   return Math.min(max, Math.max(min, numberValue))
+}
+
+const normalizeConversationContextStrategy = (raw: unknown, fallback: ConversationContextStrategy): ConversationContextStrategy =>
+  raw === 'sliding_window' || raw === 'summary' ? raw : fallback
+
+const normalizeConversationContextSettings = (value: unknown, fallback: AppSettings['ai']['conversationContext']): AppSettings['ai']['conversationContext'] => {
+  const raw = asRecord(value)
+  const legacySummaryEnabled = raw.enableDistantSummary ?? raw.enable_distant_summary
+  const fallbackStrategy = normalizeBoolean(legacySummaryEnabled, fallback.strategy === 'summary') ? 'summary' : 'sliding_window'
+  return {
+    strategy: normalizeConversationContextStrategy(raw.strategy ?? raw.contextStrategy ?? raw.context_strategy, fallbackStrategy),
+    recentTurns: normalizeBoundedInteger(raw.recentTurns ?? raw.recent_turns, fallback.recentTurns, 0, 50),
+    summaryMaxMessages: normalizeBoundedInteger(raw.summaryMaxMessages ?? raw.summary_max_messages, fallback.summaryMaxMessages, 0, 200),
+    summaryMaxChars: normalizeBoundedInteger(raw.summaryMaxChars ?? raw.summary_max_chars, fallback.summaryMaxChars, 200, 8000),
+  }
 }
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -345,6 +373,7 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
       enableAiTimeline: normalizeBoolean(rawAi.enableAiTimeline, defaults.ai.enableAiTimeline),
       enableSourceCitation: normalizeBoolean(rawAi.enableSourceCitation, defaults.ai.enableSourceCitation),
       localFirstMode: normalizeBoolean(rawAi.localFirstMode, defaults.ai.localFirstMode),
+      conversationContext: normalizeConversationContextSettings(rawAi.conversationContext ?? rawAi.conversation_context, defaults.ai.conversationContext),
     },
   }
 }

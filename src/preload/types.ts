@@ -116,6 +116,9 @@ interface RagRequestStatsPayload {
   history_token_estimate: number;
   question_token_estimate: number;
   total_token_estimate: number;
+  recent_turns?: number;
+  distant_summary_enabled?: boolean;
+  distant_summary_messages?: number;
 }
 
 interface RagSourcePayload {
@@ -275,6 +278,7 @@ interface ElectronAPI {
     health: () => Promise<Result<{ status: string; service: string }>>;
     status: (workspaceId: string) => Promise<Result<RagIndexStatusPayload>>;
     chat: (workspaceId: string, question: string, history?: RagChatMessagePayload[], requestStats?: RagRequestStatsPayload) => Promise<Result<RagAnswerPayload>>;
+    summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) => Promise<Result<{ answer: string }>>;
     askStream: {
       start: (requestId: string, workspaceId: string, question: string, history?: RagChatMessagePayload[], requestStats?: RagRequestStatsPayload) => Promise<Result<void>>;
       cancel: (requestId: string) => Promise<Result<void>>;

@@ -447,6 +447,9 @@ const normalizeRagRequestStats = (stats: unknown): RagRequestStats => {
     history_token_estimate: toNonNegativeInt(raw.history_token_estimate),
     question_token_estimate: toNonNegativeInt(raw.question_token_estimate),
     total_token_estimate: toNonNegativeInt(raw.total_token_estimate),
+    recent_turns: toNonNegativeInt(raw.recent_turns),
+    distant_summary_enabled: raw.distant_summary_enabled === true,
+    distant_summary_messages: toNonNegativeInt(raw.distant_summary_messages),
   };
 };
 
@@ -541,6 +544,18 @@ ipcMain.handle('rag:chat', async (_, workspaceId: string, question: string, hist
     await getRagAiSettings(),
     normalizeRagHistory(history),
     normalizeRagRequestStats(requestStats),
+  );
+});
+
+ipcMain.handle('rag:summarizeConversation', async (_, messages?: unknown, maxChars?: unknown) => {
+  const normalizedMessages = normalizeRagHistory(messages);
+  if (!normalizedMessages.length) return { success: false, error: 'Messages are required' };
+  const parsedMaxChars = typeof maxChars === 'number' ? maxChars : Number(maxChars);
+  const boundedMaxChars = Number.isFinite(parsedMaxChars) ? Math.min(8000, Math.max(200, Math.round(parsedMaxChars))) : 1200;
+  return await aiService.summarizeConversation(
+    normalizedMessages,
+    boundedMaxChars,
+    await getRagAiSettings(),
   );
 });
 

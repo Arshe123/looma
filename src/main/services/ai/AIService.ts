@@ -15,6 +15,10 @@ export interface RagAnswer {
   sources: RagSource[]
 }
 
+export interface ChatAnswer {
+  answer: string
+}
+
 export interface RagIndexResult {
   status: string
   document_count?: number
@@ -130,6 +134,9 @@ export interface RagRequestStats {
   history_token_estimate: number
   question_token_estimate: number
   total_token_estimate: number
+  recent_turns?: number
+  distant_summary_enabled?: boolean
+  distant_summary_messages?: number
 }
 
 export interface AISettings {
@@ -186,6 +193,8 @@ interface AIService {
 
   chat(workspacePath: string, question: string, aiSettings: RagRequestSettings, history?: RagChatMessage[], requestStats?: RagRequestStats): Promise<Result<RagAnswer>>
 
+  summarizeConversation(messages: RagChatMessage[], maxChars: number, aiSettings: RagRequestSettings): Promise<Result<ChatAnswer>>
+
   streamAssistant(
     workspacePath: string,
     question: string,
@@ -215,6 +224,19 @@ const toRagQueryBody = (
   },
   history,
   request_stats: requestStats,
+})
+
+const toChatRequestBody = (
+  question: string,
+  aiSettings: RagRequestSettings,
+  history: RagChatMessage[] = [],
+) => omitUndefined({
+  question,
+  ai_config: {
+    chat: aiSettings.chat,
+    embedding: aiSettings.embedding,
+  },
+  history,
 })
 
 const toIndexBody = (workspacePath: string, _aiSettings?: RagRequestSettings) => ({
@@ -387,6 +409,22 @@ export const aiService: AIService = {
     requestStats?: RagRequestStats,
   ): Promise<Result<RagAnswer>> {
     return postJson<RagAnswer>('/rag/query', toRagQueryBody(workspacePath, question, aiSettings, history, requestStats))
+  },
+
+  async summarizeConversation(
+    messages: RagChatMessage[],
+    maxChars: number,
+    aiSettings: RagRequestSettings,
+  ): Promise<Result<ChatAnswer>> {
+    const history: RagChatMessage[] = [
+      {
+        role: 'system',
+        content: '你是 Looma 的对话上下文压缩器。请把用户提供的早期多轮对话重新总结为结构化长期上下文摘要，保留用户目标、关键事实、已确认结论、未完成事项、重要约束和专有名词。不要逐条照抄原文，不要添加不存在的信息。',
+      },
+      ...messages,
+    ]
+    const question = `请将以上早期对话压缩为不超过 ${maxChars} 个中文字符的摘要。输出 Markdown，包含：关键信息、已达成结论、待继续事项。`
+    return postJson<ChatAnswer>('/chat', toChatRequestBody(question, aiSettings, history))
   },
 
   async streamAssistant(

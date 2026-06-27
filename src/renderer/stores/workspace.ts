@@ -525,9 +525,24 @@ export const useWorkspaceStore = defineStore('workspace', {
       return conversation
     },
 
-    appendAiAssistantMessage(role: AiAssistantMessage['role'], text: string, actions?: AiAssistantMessageAction[], meta?: { aiName?: string }) {
+    ensureAiAssistantConversationForRequest() {
+      return this.materializeAiAssistantConversationIfNeeded().id
+    },
+
+    getAiAssistantConversationById(conversationId: string) {
+      return this.aiAssistant.conversations.find((item) => item.id === conversationId) || null
+    },
+
+    appendAiAssistantMessageToConversation(
+      conversationId: string,
+      role: AiAssistantMessage['role'],
+      text: string,
+      actions?: AiAssistantMessageAction[],
+      meta?: { aiName?: string },
+    ) {
+      const conversation = this.getAiAssistantConversationById(conversationId)
+      if (!conversation) return null
       const now = Date.now()
-      const conversation = this.materializeAiAssistantConversationIfNeeded()
       const id = now + conversation.messages.length
       conversation.messages.push({
         id,
@@ -542,8 +557,14 @@ export const useWorkspaceStore = defineStore('workspace', {
       return id
     },
 
-    updateAiAssistantMessageText(id: number, text: string, options?: { persist?: boolean }) {
-      const conversation = this.ensureActiveAiAssistantConversation()
+    appendAiAssistantMessage(role: AiAssistantMessage['role'], text: string, actions?: AiAssistantMessageAction[], meta?: { aiName?: string }) {
+      const conversation = this.materializeAiAssistantConversationIfNeeded()
+      return this.appendAiAssistantMessageToConversation(conversation.id, role, text, actions, meta)
+    },
+
+    updateAiAssistantMessageTextInConversation(conversationId: string, id: number, text: string, options?: { persist?: boolean }) {
+      const conversation = this.getAiAssistantConversationById(conversationId)
+      if (!conversation) return
       const message = conversation.messages.find((item) => item.id === id)
       if (!message) return
       message.text = text
@@ -552,8 +573,14 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.saveAiAssistantState()
     },
 
-    updateAiAssistantMessageTimeline(id: number, timeline: AiAssistantMessage['timeline'], options?: { persist?: boolean }) {
+    updateAiAssistantMessageText(id: number, text: string, options?: { persist?: boolean }) {
       const conversation = this.ensureActiveAiAssistantConversation()
+      this.updateAiAssistantMessageTextInConversation(conversation.id, id, text, options)
+    },
+
+    updateAiAssistantMessageTimelineInConversation(conversationId: string, id: number, timeline: AiAssistantMessage['timeline'], options?: { persist?: boolean }) {
+      const conversation = this.getAiAssistantConversationById(conversationId)
+      if (!conversation) return
       const message = conversation.messages.find((item) => item.id === id)
       if (!message) return
       message.timeline = timeline
@@ -562,8 +589,14 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.saveAiAssistantState()
     },
 
-    updateAiAssistantMessageMeta(id: number, meta: { aiName?: string }, options?: { persist?: boolean }) {
+    updateAiAssistantMessageTimeline(id: number, timeline: AiAssistantMessage['timeline'], options?: { persist?: boolean }) {
       const conversation = this.ensureActiveAiAssistantConversation()
+      this.updateAiAssistantMessageTimelineInConversation(conversation.id, id, timeline, options)
+    },
+
+    updateAiAssistantMessageMetaInConversation(conversationId: string, id: number, meta: { aiName?: string }, options?: { persist?: boolean }) {
+      const conversation = this.getAiAssistantConversationById(conversationId)
+      if (!conversation) return
       const message = conversation.messages.find((item) => item.id === id)
       if (!message) return
       if (message.role === 'assistant') {
@@ -572,6 +605,11 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.touchAiAssistantConversation(conversation)
       if (options?.persist === false) return
       this.saveAiAssistantState()
+    },
+
+    updateAiAssistantMessageMeta(id: number, meta: { aiName?: string }, options?: { persist?: boolean }) {
+      const conversation = this.ensureActiveAiAssistantConversation()
+      this.updateAiAssistantMessageMetaInConversation(conversation.id, id, meta, options)
     },
 
     backfillAiAssistantMessageNames(aiName: string) {

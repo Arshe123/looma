@@ -4,7 +4,7 @@ import path from 'path'
 import { randomUUID } from 'crypto'
 import type { Result } from '../../../shared/types/Result'
 
-interface Workspace {
+export interface Workspace {
   id: string
   name: string
   path: string

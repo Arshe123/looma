@@ -573,6 +573,14 @@ watch(
             <p class="text-xs leading-5 text-text-muted">
               {{ ( isLlmOllama ) ? `已安装 Ollama 模型：${ollamaModels.length ? ollamaModels.join('、') : (isLoadingModels ? '正在读取...' : '暂无可用列表')}` : '当前选择云端/兼容提供商：将校验 Base URL、API Key 和模型名称。' }}
             </p>
+            <a
+              v-if="isLlmOllama"
+              href="https://ollama.com/search"
+              target="_blank"
+              class="text-xs text-accent hover:underline"
+            >
+              查看 Ollama 全部支持模型
+            </a>
           </label>
 
           <label class="grid gap-2 text-sm text-text-main" v-if="aiSettings.chat.provider !== 'ollama'">
@@ -679,6 +687,14 @@ watch(
             <p class="text-xs leading-5 text-text-muted">
               {{ ( isEmbedOllama ) ? `已安装 Ollama 模型：${ollamaModels.length ? ollamaModels.join('、') : (isLoadingModels ? '正在读取...' : '暂无可用列表')}` : '当前选择云端/兼容提供商：将校验 Base URL、API Key 和模型名称。' }}
             </p>
+            <a
+              v-if="isLlmOllama"
+              href="https://ollama.com/search"
+              target="_blank"
+              class="text-xs text-accent hover:underline"
+            >
+              查看 Ollama 全部支持模型
+            </a>
           </label>
 
           <label class="grid gap-2 text-sm text-text-main" v-if="aiSettings.embedding.provider !== 'ollama'">

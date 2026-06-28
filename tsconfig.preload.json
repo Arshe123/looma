@@ -10,6 +10,6 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/preload.ts"]
+  "include": ["src/preload/index.ts"]
 }
 

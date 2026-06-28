@@ -8,7 +8,7 @@ export default {
   packagerConfig: {
     name: 'looma',
     asar: true,
-    icon: './public/looma',
+    icon: './resources/icon',
   },
   rebuildConfig: {},
   makers: [
@@ -16,7 +16,7 @@ export default {
       name: '@electron-forge/maker-squirrel',
       config: {
         name: 'looma',
-        setupIcon: './public/looma.ico'
+        setupIcon: './resources/icon.ico'
       }
     },
     {
@@ -27,7 +27,7 @@ export default {
       name: '@electron-forge/maker-deb',
       config: {
         options: {
-          icon: './public/looma.ico',
+          icon: './resources/icon.ico',
         },
       },
     },

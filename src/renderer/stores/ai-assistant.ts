@@ -403,7 +403,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
 
       const summaryIndex = findLatestConversationSummaryIndex(sourceMessages)
       const existingSummary = summaryIndex >= 0 ? getConversationSummaryContent(sourceMessages[summaryIndex].text) : ''
-      const summarizedTurnIndex = summaryIndex ? getConversationSummaryTurnIndex(sourceMessages[summaryIndex].text) : 0
+      const summarizedTurnIndex = summaryIndex >= 0 ? getConversationSummaryTurnIndex(sourceMessages[summaryIndex].text) : 0
       const messagesAfterSummary = summaryIndex >= 0 ? sourceMessages.slice(summaryIndex + 1) : sourceMessages
       const normalizedMessagesAfterSummary = normalizeConversationMessagesForContext(messagesAfterSummary, excluded)
       const unsummarizedUserTurns = Math.max(0, currentUserTurnIndex - summarizedTurnIndex)

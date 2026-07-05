@@ -152,10 +152,9 @@ function createWindow(initialWorkspaceId?: string) {
     win.loadFile(path.join(__dirname, '../dist/index.html'), { query });
   }
   
-  // Initialize telemetry and check for updates
-  // TODO: Check user preference for consent before initializing telemetry.
-  telemetryService.init(false); // Default to no consent for now.
-  telemetryService.checkForUpdates();
+  // Initialize anonymous AI preference telemetry.
+  // Version update checking is handled by the dedicated app version flow, not here.
+  telemetryService.init();
 }
 
 const gotLock = app.requestSingleInstanceLock();

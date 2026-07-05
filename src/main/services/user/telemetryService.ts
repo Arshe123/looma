@@ -1,33 +1,116 @@
+type TelemetryInitOptions = {
+  hasConsent?: boolean
+}
+
+export type LlmUsageTelemetryPayload = {
+  llmModel: string
+  inputTokens?: number
+  outputTokens?: number
+}
+
+export type VectorRetrievalTelemetryPayload = {
+  embeddingModel: string
+}
+
+export type VectorBuildConfigTelemetryPayload = {
+  embeddingModel: string
+  buildType: string
+  chunkSize: number
+  overlapSize: number
+}
+
+type GenericTelemetryPayload = Record<string, unknown>
+
+type LoomaApiResponse<T = unknown> = {
+  code?: number
+  message?: string
+  data?: T
+}
+
+const DEFAULT_API_HOST = 'http://localhost:8080'
+const GLOBAL_API_PREFIX = '/globalApi'
+
+let telemetryEnabled = true
+
+const getApiHost = () => (
+  process.env.VITE_API_BASE_URL
+  || process.env.LOOMA_API_BASE_URL
+  || process.env.API_BASE_URL
+  || DEFAULT_API_HOST
+).replace(/\/+$/, '')
+
+const buildTelemetryUrl = (path: string) => `${getApiHost()}${GLOBAL_API_PREFIX}/telemetry${path}`
+
+const postSilently = async (path: string, payload: GenericTelemetryPayload) => {
+  if (!telemetryEnabled) return
+  try {
+    const response = await fetch(buildTelemetryUrl(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    // 尽量消费响应，避免未读取 body；无论成功失败都不影响用户体验。
+    await response.json().catch(() => null) as LoomaApiResponse | null
+  } catch {
+    // 遥测失败直接丢弃，不能弹窗、不能抛错、不能打断 AI/RAG 流程。
+  }
+}
+
+const normalizeCount = (value: unknown) => {
+  const numberValue = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(numberValue) && numberValue > 0 ? Math.round(numberValue) : 0
+}
+
 export const telemetryService = {
   /**
-   * Initialize telemetry with user consent.
-   * @param hasConsent Whether the user has authorized data collection.
+   * Initialize telemetry. 当前 AI 偏好统计不绑定用户，也不要求登录。
+   * 保留 hasConsent 参数用于兼容旧调用；显式传 false 时禁用本进程遥测。
    */
-  async init(hasConsent: boolean) {
-    if (!hasConsent) return;
-    // TODO: 配置定期将数据发送到 HTTPS 端点。
-    console.log("遥测初始化，用户已授权数据收集。");
+  async init(optionsOrConsent: TelemetryInitOptions | boolean = true) {
+    telemetryEnabled = typeof optionsOrConsent === 'boolean'
+      ? optionsOrConsent
+      : optionsOrConsent.hasConsent !== false
   },
 
   /**
-   * Track a user event.
-   * @param eventName Name of the event (e.g., 'page_view', 'feature_use').
-   * @param properties Additional event data.
+   * 通用事件入口保留给旧代码兼容；当前偏好统计只实现下方 AI 专用聚合接口。
    */
-  trackEvent(eventName: string, properties: any = {}) {
-    // TODO: 实现事件跟踪逻辑。
-    // 未来规格：
-    // - 队列事件并批量发送以减少网络流量。
-    console.log(`跟踪事件: ${eventName}`, properties);
+  trackEvent(_eventName: string, _properties: GenericTelemetryPayload = {}) {
+    return undefined
+  },
+
+  async trackLlmUsage(payload: LlmUsageTelemetryPayload) {
+    const llmModel = payload.llmModel?.trim()
+    if (!llmModel) return
+    await postSilently('/llm-usage', {
+      llmModel,
+      inputTokens: normalizeCount(payload.inputTokens),
+      outputTokens: normalizeCount(payload.outputTokens),
+    })
+  },
+
+  async trackVectorRetrieval(payload: VectorRetrievalTelemetryPayload) {
+    const embeddingModel = payload.embeddingModel?.trim()
+    if (!embeddingModel) return
+    await postSilently('/vector-retrieval', { embeddingModel })
+  },
+
+  async trackVectorBuildConfig(payload: VectorBuildConfigTelemetryPayload) {
+    const embeddingModel = payload.embeddingModel?.trim()
+    const buildType = payload.buildType?.trim()
+    if (!embeddingModel || !buildType) return
+    await postSilently('/vector-build-config', {
+      embeddingModel,
+      buildType,
+      chunkSize: normalizeCount(payload.chunkSize),
+      overlapSize: normalizeCount(payload.overlapSize),
+    })
   },
 
   /**
-   * Check for updates from the server.
+   * 检查更新已由独立版本服务实现；这里不重复实现，避免旧遥测服务承担更新职责。
    */
   async checkForUpdates() {
-    // TODO: 1) 通过HTTPS调用服务器API获取最新版本。
-    //       2) 与本地应用版本进行比较。
-    //       3) 如果有更新，触发UI通知。
-    console.log("检查更新...");
-  }
-};
+    return undefined
+  },
+}

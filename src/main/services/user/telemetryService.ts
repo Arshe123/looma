@@ -63,7 +63,7 @@ const normalizeCount = (value: unknown) => {
 
 export const telemetryService = {
   /**
-   * Initialize telemetry. 当前 AI 偏好统计不绑定用户，也不要求登录。
+   * Initialize telemetry. 当前 AI/RAG 模型使用统计不绑定用户，也不要求登录。
    * 保留 hasConsent 参数用于兼容旧调用；显式传 false 时禁用本进程遥测。
    */
   async init(optionsOrConsent: TelemetryInitOptions | boolean = true) {
@@ -73,7 +73,7 @@ export const telemetryService = {
   },
 
   /**
-   * 通用事件入口保留给旧代码兼容；当前偏好统计只实现下方 AI 专用聚合接口。
+   * 通用事件入口保留给旧代码兼容；当前只实现下方 AI/RAG 模型使用聚合接口。
    */
   trackEvent(_eventName: string, _properties: GenericTelemetryPayload = {}) {
     return undefined

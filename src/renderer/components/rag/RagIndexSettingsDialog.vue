@@ -44,30 +44,30 @@ const strategyOptions: Array<{
     icon: FileText,
     enabled: true,
   },
-  {
-    value: 'semantic',
-    title: '段落语义',
-    badge: '即将支持',
-    description: '尽量在段落和句子边界切分，减少语义被截断。',
-    icon: Sparkles,
-    enabled: false,
-  },
-  {
-    value: 'parent_child',
-    title: '父子块',
-    badge: '即将支持',
-    description: '小块用于召回，大块用于回答上下文，适合提升回答完整性。',
-    icon: GitBranch,
-    enabled: false,
-  },
-  {
-    value: 'code_aware',
-    title: '代码友好',
-    badge: '预留',
-    description: '后续保留代码块、函数和配置片段，避免技术内容被切碎。',
-    icon: FileCode2,
-    enabled: false,
-  },
+  // {
+  //   value: 'semantic',
+  //   title: '段落语义',
+  //   badge: '即将支持',
+  //   description: '尽量在段落和句子边界切分，减少语义被截断。',
+  //   icon: Sparkles,
+  //   enabled: false,
+  // },
+  // {
+  //   value: 'parent_child',
+  //   title: '父子块',
+  //   badge: '即将支持',
+  //   description: '小块用于召回，大块用于回答上下文，适合提升回答完整性。',
+  //   icon: GitBranch,
+  //   enabled: false,
+  // },
+  // {
+  //   value: 'code_aware',
+  //   title: '代码友好',
+  //   badge: '预留',
+  //   description: '后续保留代码块、函数和配置片段，避免技术内容被切碎。',
+  //   icon: FileCode2,
+  //   enabled: false,
+  // },
 ]
 
 const indexingModeOptions: Array<{ value: IndexingMode; label: string; description: string }> = [
@@ -339,7 +339,7 @@ onBeforeUnmount(() => {
               </label>
             </div>
 
-            <label class="grid gap-2 text-sm text-text-main">
+            <!-- <label class="grid gap-2 text-sm text-text-main">
               <span class="text-xs font-semibold text-text-main">索引更新策略</span>
               <select
                 v-model="draft.indexingMode"
@@ -351,7 +351,7 @@ onBeforeUnmount(() => {
                 </option>
               </select>
               <span class="text-xs leading-5 text-text-muted">手动更稳，自动策略后续可接入文件监听或空闲任务。</span>
-            </label>
+            </label> -->
           </section>
         </div>
 

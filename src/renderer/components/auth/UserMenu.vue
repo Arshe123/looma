@@ -12,17 +12,25 @@ const emit = defineEmits<{
   (e: 'login'): void
   (e: 'register'): void
   (e: 'logout'): void
+  (e: 'report'): void
 }>()
 
-const userMenuItems = [
+type MenuAction = 'report' | undefined
+
+const userMenuItems: { label: string; icon: typeof Bug; action?: MenuAction }[] = [
   { label: '检查更新', icon: RefreshCw },
   { label: '帮助文档', icon: BookOpen },
   { label: '联系我们', icon: MessageCircle },
-  { label: '报告问题', icon: Bug },
+  { label: '报告问题', icon: Bug, action: 'report' },
 ]
 
 const close = () => {
   emit('close')
+}
+
+const handleItem = (action?: MenuAction) => {
+  if (action === 'report') emit('report')
+  close()
 }
 
 const login = () => {
@@ -78,7 +86,7 @@ const logout = () => {
       v-for="item in userMenuItems"
       :key="item.label"
       class="w-full px-3 py-2.5 text-left text-sm text-text-main hover:bg-accent-soft flex items-center gap-2"
-      @click="close"
+      @click="handleItem(item.action)"
     >
       <component :is="item.icon" :size="16" class="text-text-muted shrink-0" />
       <span>{{ item.label }}</span>

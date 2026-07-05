@@ -1,3 +1,5 @@
+import { buildGlobalApiUrl } from './apiConfig'
+
 export type AuthScene = 'login' | 'register'
 
 export type MailCodePayload = {
@@ -36,7 +38,7 @@ export type LoomaApiResponse<T> = {
   data?: T
 }
 
-const getAuthBaseUrl = () => 'http://localhost:8080/globalApi/auth'
+const getAuthBaseUrl = () => buildGlobalApiUrl('/auth')
 
 const parseResponse = async <T>(response: Response, fallbackMessage: string) => {
   let result: Partial<LoomaApiResponse<T>> | null = null

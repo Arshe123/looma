@@ -8,6 +8,7 @@ import type { LoginUser } from '@/renderer/services/authApi'
 import AiAssistant from './ai/AiAssistant.vue'
 import AuthModal from './auth/AuthModal.vue'
 import UserMenu from './auth/UserMenu.vue'
+import FeedbackModal from './feedback/FeedbackModal.vue'
 import FileTree from './FileTree.vue'
 import OutlinePanel from './OutlinePanel.vue'
 
@@ -20,10 +21,12 @@ const authUser = ref<LoginUser | null>(JSON.parse(localStorage.getItem('looma:us
 const authEmail = ref(localStorage.getItem('looma:userEmail') || '')
 const isMockLoggedIn = computed(() => Boolean(authUser.value?.token))
 const mockUsername = computed(() => authEmail.value || authUser.value?.username || '未登录')
+const authUserId = computed(() => authUser.value?.id)
 const authModalOpen = ref(false)
 const authModalMode = ref<'login' | 'register'>('register')
 
 const userMenuOpen = ref(false)
+const feedbackModalOpen = ref(false)
 const toolbarWidth = 56
 const panelWidth = computed(() => Math.max(0, props.width - toolbarWidth))
 const isOpen = computed(() => workspaceStore.activeSidebarPanel !== null)
@@ -52,6 +55,20 @@ const openAuthModal = (mode: 'login' | 'register') => {
 const toggleUserEntry = () => {
   authModalOpen.value = false
   userMenuOpen.value = !userMenuOpen.value
+}
+
+const openFeedbackModal = () => {
+  closeUserMenu()
+  feedbackModalOpen.value = true
+}
+
+const closeFeedbackModal = () => {
+  feedbackModalOpen.value = false
+}
+
+const handleFeedbackRequireLogin = () => {
+  closeFeedbackModal()
+  openAuthModal('login')
 }
 
 const handleLogout = () => {
@@ -84,6 +101,7 @@ onMounted(() => {
     if (event.key !== 'Escape') return
     closeUserMenu()
     closeAuthModal()
+    closeFeedbackModal()
   }
 
   window.addEventListener('pointerdown', onPointerDown)
@@ -169,6 +187,7 @@ onUnmounted(() => {
             @login="openAuthModal('login')"
             @register="openAuthModal('register')"
             @logout="handleLogout"
+            @report="openFeedbackModal"
             @close="closeUserMenu"
           />
         </div>
@@ -209,6 +228,14 @@ onUnmounted(() => {
       :initialMode="authModalMode"
       @close="closeAuthModal"
       @authenticated="handleAuthenticated"
+    />
+
+    <FeedbackModal
+      :open="feedbackModalOpen"
+      :isLoggedIn="isMockLoggedIn"
+      :userId="authUserId"
+      @close="closeFeedbackModal"
+      @requireLogin="handleFeedbackRequireLogin"
     />
   </aside>
 </template>

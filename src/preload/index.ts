@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('app:command', handler);
     },
     showMessageBox: (options: any) => ipcRenderer.invoke('app:showMessageBox', options),
+    getVersion: () => ipcRenderer.invoke('app:getVersion'),
+    openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
   },
   workspace: {
     selectDir: () => ipcRenderer.invoke('workspace:selectDir'),

@@ -234,6 +234,8 @@ interface ElectronAPI {
   app: {
     onCommand: (listener: (payload: { id: string }) => void) => () => void;
     showMessageBox: (options: any) => Promise<{ response: number; checkboxChecked: boolean }>;
+    getVersion: () => Promise<string>;
+    openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   };
   workspace: {
     selectDir: () => Promise<string | null>;

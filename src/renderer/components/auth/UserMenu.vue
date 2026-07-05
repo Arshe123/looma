@@ -13,12 +13,13 @@ const emit = defineEmits<{
   (e: 'register'): void
   (e: 'logout'): void
   (e: 'report'): void
+  (e: 'checkUpdate'): void
 }>()
 
-type MenuAction = 'report' | undefined
+type MenuAction = 'report' | 'checkUpdate' | undefined
 
 const userMenuItems: { label: string; icon: typeof Bug; action?: MenuAction }[] = [
-  { label: '检查更新', icon: RefreshCw },
+  { label: '检查更新', icon: RefreshCw, action: 'checkUpdate' },
   { label: '帮助文档', icon: BookOpen },
   { label: '联系我们', icon: MessageCircle },
   { label: '报告问题', icon: Bug, action: 'report' },
@@ -30,6 +31,7 @@ const close = () => {
 
 const handleItem = (action?: MenuAction) => {
   if (action === 'report') emit('report')
+  if (action === 'checkUpdate') emit('checkUpdate')
   close()
 }
 

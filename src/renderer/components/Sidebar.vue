@@ -9,6 +9,7 @@ import AiAssistant from './ai/AiAssistant.vue'
 import AuthModal from './auth/AuthModal.vue'
 import UserMenu from './auth/UserMenu.vue'
 import FeedbackModal from './feedback/FeedbackModal.vue'
+import UpdateModal from './update/UpdateModal.vue'
 import FileTree from './FileTree.vue'
 import OutlinePanel from './OutlinePanel.vue'
 
@@ -27,6 +28,8 @@ const authModalMode = ref<'login' | 'register'>('register')
 
 const userMenuOpen = ref(false)
 const feedbackModalOpen = ref(false)
+const updateModalOpen = ref(false)
+const appVersion = ref('0.0.0')
 const toolbarWidth = 56
 const panelWidth = computed(() => Math.max(0, props.width - toolbarWidth))
 const isOpen = computed(() => workspaceStore.activeSidebarPanel !== null)
@@ -71,6 +74,15 @@ const handleFeedbackRequireLogin = () => {
   openAuthModal('login')
 }
 
+const openUpdateModal = () => {
+  closeUserMenu()
+  updateModalOpen.value = true
+}
+
+const closeUpdateModal = () => {
+  updateModalOpen.value = false
+}
+
 const handleLogout = () => {
   authUser.value = null
   authEmail.value = ''
@@ -102,6 +114,7 @@ onMounted(() => {
     closeUserMenu()
     closeAuthModal()
     closeFeedbackModal()
+    closeUpdateModal()
   }
 
   window.addEventListener('pointerdown', onPointerDown)
@@ -111,6 +124,11 @@ onMounted(() => {
     window.removeEventListener('pointerdown', onPointerDown)
     window.removeEventListener('keydown', onKeyDown)
   }
+
+  // 获取当前应用版本号
+  window.electronAPI.app.getVersion().then((v) => {
+    if (v) appVersion.value = v
+  }).catch(() => { /* 降级为 0.0.0 */ })
 })
 
 onUnmounted(() => {
@@ -188,6 +206,7 @@ onUnmounted(() => {
             @register="openAuthModal('register')"
             @logout="handleLogout"
             @report="openFeedbackModal"
+            @checkUpdate="openUpdateModal"
             @close="closeUserMenu"
           />
         </div>
@@ -236,6 +255,12 @@ onUnmounted(() => {
       :userId="authUserId"
       @close="closeFeedbackModal"
       @requireLogin="handleFeedbackRequireLogin"
+    />
+
+    <UpdateModal
+      :open="updateModalOpen"
+      :currentVersion="appVersion"
+      @close="closeUpdateModal"
     />
   </aside>
 </template>

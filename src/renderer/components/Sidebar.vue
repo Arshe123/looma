@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Bot, Folders, GitBranch, Monitor, Moon, Sun, TableOfContents, UserRound, Settings } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import type { SidebarPanelId } from '@/renderer/stores/workspace'
+import type { LoginUser } from '@/renderer/services/authApi'
+
 import AiAssistant from './ai/AiAssistant.vue'
 import AuthModal from './auth/AuthModal.vue'
 import UserMenu from './auth/UserMenu.vue'
@@ -14,10 +16,13 @@ const props = defineProps<{
 }>()
 
 const workspaceStore = useWorkspaceStore()
-const isMockLoggedIn = ref(true)
-const mockUsername = ref('looma 用户')
+const authUser = ref<LoginUser | null>(JSON.parse(localStorage.getItem('looma:user') || 'null') as LoginUser | null)
+const authEmail = ref(localStorage.getItem('looma:userEmail') || '')
+const isMockLoggedIn = computed(() => Boolean(authUser.value?.token))
+const mockUsername = computed(() => authEmail.value || authUser.value?.username || '未登录')
 const authModalOpen = ref(false)
-const authModalMode = ref<'login' | 'register'>('login')
+const authModalMode = ref<'login' | 'register'>('register')
+
 const userMenuOpen = ref(false)
 const toolbarWidth = 56
 const panelWidth = computed(() => Math.max(0, props.width - toolbarWidth))
@@ -50,8 +55,19 @@ const toggleUserEntry = () => {
 }
 
 const handleLogout = () => {
-  isMockLoggedIn.value = false
+  authUser.value = null
+  authEmail.value = ''
+  localStorage.removeItem('looma:user')
+  localStorage.removeItem('looma:userEmail')
   closeUserMenu()
+}
+
+const handleAuthenticated = ({ email, user }: { email: string; user: LoginUser }) => {
+  authUser.value = user
+  authEmail.value = email
+  localStorage.setItem('looma:user', JSON.stringify(user))
+  localStorage.setItem('looma:userEmail', email)
+  closeAuthModal()
 }
 
 let cleanupUserEntry: (() => void) | null = null
@@ -136,13 +152,12 @@ onUnmounted(() => {
       </div>
 
       <div class="flex flex-col items-center gap-2">
-        <!-- <div class="relative" data-user-entry>
+        <div class="relative" data-user-entry>
           <button
-            class="p-2 rounded-md text-text-subtle cursor-not-allowed"
+            class="p-2 rounded-md text-text-muted hover:bg-accent-soft hover:text-text-main cursor-pointer"
             :class="{ 'bg-accent-soft text-text-main': authModalOpen || userMenuOpen }"
-            title="用户（功能开发中，敬请期待）"
+            :title="isMockLoggedIn ? '用户' : '注册账号'"
             @click="toggleUserEntry"
-            disabled
           >
             <UserRound :size="20" />
           </button>
@@ -156,7 +171,7 @@ onUnmounted(() => {
             @logout="handleLogout"
             @close="closeUserMenu"
           />
-        </div> -->
+        </div>
 
         <button
           @click="workspaceStore.toggleTheme"
@@ -189,6 +204,11 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <AuthModal :open="authModalOpen" :initialMode="authModalMode" @close="closeAuthModal" />
+    <AuthModal
+      :open="authModalOpen"
+      :initialMode="authModalMode"
+      @close="closeAuthModal"
+      @authenticated="handleAuthenticated"
+    />
   </aside>
 </template>

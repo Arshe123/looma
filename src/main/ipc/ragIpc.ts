@@ -1,9 +1,8 @@
-import { ipcMain, app } from 'electron';
+import { ipcMain } from 'electron';
 import { aiService, type AISettings, type RagChatMessage, type RagRequestStats } from '../services/ai/AIService';
 import { normalizeOllamaBaseUrl } from '../services/ollama/ollamaService';
 import { getWorkspacePathById }  from './workspaceIpc';
 import { appSettingsService } from './appSettingsIpc';
-import { telemetryService } from '../services/user/telemetryService';
 
 const activeRagIndexStreams = new Map<string, AbortController>();
 
@@ -88,30 +87,6 @@ const normalizeRagRequestStats = (stats: unknown): RagRequestStats => {
   };
 };
 
-const trackVectorBuildConfigChoice = (settings: RagRuntimeSettings) => {
-  void telemetryService.trackVectorBuildConfig({
-    embeddingModel: settings.embedding.model,
-    buildType: settings.chunkingStrategy,
-    chunkSize: settings.chunkSize,
-    overlapSize: settings.chunkOverlap,
-  });
-};
-
-const trackVectorRetrievalChoice = (settings: RagRuntimeSettings) => {
-  void telemetryService.trackVectorRetrieval({
-    embeddingModel: settings.embedding.model,
-  });
-};
-
-const trackLlmChoice = (settings: RagRuntimeSettings, inputTokens: number, outputText = '') => {
-  void telemetryService.trackLlmUsage({
-    llmModel: settings.chat.model,
-    inputTokens,
-    outputTokens: estimateTokenCount(outputText),
-  });
-};
-
-
 ipcMain.handle('rag:health', async () => {
   return await aiService.health();
 });
@@ -130,8 +105,6 @@ ipcMain.handle('rag:indexStream:start', async (event, requestId: string, workspa
   const controller = new AbortController();
   activeRagIndexStreams.set(requestId, controller);
   const sender = event.sender;
-  const ragSettings = await getRagAiSettings();
-  trackVectorBuildConfigChoice(ragSettings);
 
   aiService
     .streamBuildManagedIndex(
@@ -179,8 +152,6 @@ ipcMain.handle('rag:indexFile:reindex', async (_, workspaceId: string, relativeP
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
   if (!relativePath?.trim()) return { success: false, error: 'Path is required' };
-  const ragSettings = await getRagAiSettings();
-  trackVectorBuildConfigChoice(ragSettings);
   return await aiService.reindexFile(workspacePath, relativePath);
 });
 
@@ -203,7 +174,6 @@ ipcMain.handle('rag:chat', async (_, workspaceId: string, question: string, hist
   if (!question.trim()) return { success: false, error: 'Question is required' };
   const ragSettings = await getRagAiSettings();
   const normalizedStats = normalizeRagRequestStats(requestStats);
-  trackVectorRetrievalChoice(ragSettings);
   const result = await aiService.chat(
     workspacePath,
     question,
@@ -211,7 +181,6 @@ ipcMain.handle('rag:chat', async (_, workspaceId: string, question: string, hist
     normalizeRagHistory(history),
     normalizedStats,
   );
-  trackLlmChoice(ragSettings, normalizedStats.total_token_estimate, result.success ? result.data?.answer || '' : '');
   return result;
 });
 
@@ -221,13 +190,11 @@ ipcMain.handle('rag:summarizeConversation', async (_, messages?: unknown, maxCha
   const parsedMaxChars = typeof maxChars === 'number' ? maxChars : Number(maxChars);
   const boundedMaxChars = Number.isFinite(parsedMaxChars) ? Math.min(8000, Math.max(200, Math.round(parsedMaxChars))) : 1200;
   const ragSettings = await getRagAiSettings();
-  const inputTokens = normalizedMessages.reduce((total, message) => total + estimateTokenCount(message.content) + 4, 0);
   const result = await aiService.summarizeConversation(
     normalizedMessages,
     boundedMaxChars,
     ragSettings,
   );
-  trackLlmChoice(ragSettings, inputTokens, result.success ? result.data?.answer || '' : '');
   return result;
 });
 
@@ -244,13 +211,6 @@ ipcMain.handle('rag:askStream:start', async (event, requestId: string, workspace
   const normalizedStats = normalizeRagRequestStats(requestStats);
   const normalizedHistory = normalizeRagHistory(history);
   let assistantOutput = '';
-  let llmTracked = false;
-  const trackLlmOnce = () => {
-    if (llmTracked) return;
-    llmTracked = true;
-    trackLlmChoice(ragSettings, normalizedStats.total_token_estimate, assistantOutput);
-  };
-  trackVectorRetrievalChoice(ragSettings);
 
   aiService
     .streamAssistant(
@@ -263,18 +223,12 @@ ipcMain.handle('rag:askStream:start', async (event, requestId: string, workspace
         if (payload.type === 'delta') {
           assistantOutput += payload.text || payload.content || '';
         }
-        if (payload.type === 'done' || payload.type === 'error') {
-          trackLlmOnce();
-        }
         if (sender.isDestroyed()) return;
         sender.send('rag:askStream:event', { requestId, ...payload });
       },
       controller.signal,
     )
     .then((result) => {
-      if (!result.success) {
-        trackLlmOnce();
-      }
       if (!result.success && !sender.isDestroyed()) {
         sender.send('rag:askStream:event', {
           requestId,

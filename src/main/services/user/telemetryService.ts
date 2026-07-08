@@ -106,11 +106,4 @@ export const telemetryService = {
       overlapSize: normalizeCount(payload.overlapSize),
     })
   },
-
-  /**
-   * 检查更新已由独立版本服务实现；这里不重复实现，避免旧遥测服务承担更新职责。
-   */
-  async checkForUpdates() {
-    return undefined
-  },
 }

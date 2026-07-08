@@ -188,7 +188,7 @@ onUnmounted(() => {
       </div>
 
       <div class="flex flex-col items-center gap-2">
-        <div class="relative" data-user-entry>
+        <!-- <div class="relative" data-user-entry>
           <button
             class="p-2 rounded-md text-text-muted hover:bg-accent-soft hover:text-text-main cursor-pointer"
             :class="{ 'bg-accent-soft text-text-main': authModalOpen || userMenuOpen }"
@@ -209,7 +209,7 @@ onUnmounted(() => {
             @checkUpdate="openUpdateModal"
             @close="closeUserMenu"
           />
-        </div>
+        </div> -->
 
         <button
           @click="workspaceStore.toggleTheme"

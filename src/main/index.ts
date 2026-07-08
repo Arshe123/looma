@@ -1,7 +1,6 @@
 import { app, BrowserWindow, Menu, screen } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { telemetryService } from './services/user/telemetryService';
 import { workspaceService } from './services/workspace/workspaceService';
 import { fileSystemService } from './services/file/fileSystemService';
 import { activeRagStreams } from './ipc/ragIpc';
@@ -151,10 +150,6 @@ function createWindow(initialWorkspaceId?: string) {
     if (initialWorkspaceId) query.workspaceId = initialWorkspaceId;
     win.loadFile(path.join(__dirname, '../dist/index.html'), { query });
   }
-  
-  // Initialize anonymous AI preference telemetry.
-  // Version update checking is handled by the dedicated app version flow, not here.
-  telemetryService.init();
 }
 
 const gotLock = app.requestSingleInstanceLock();

@@ -45,7 +45,7 @@ const emit = defineEmits<{
   (event: 'update:open', value: boolean): void
   (event: 'select', model: string): void
   (event: 'pull', model: string, selectAfterPull?: boolean): void
-  (event: 'delete', model: string): void
+  (event: 'delete'): void
 }>()
 
 const searchQuery = ref('')
@@ -115,9 +115,8 @@ const isOptionDeleting = (model: string) => {
   return props.isModelDeleting?.(model) ?? false
 }
 
-const deleteModel = (model: string) => {
-  if (!props.localManaged) return
-  emit('delete', model)
+const deleteModel = () => {
+  emit('delete')
 }
 
 watch(
@@ -225,7 +224,7 @@ watch(
               type="button"
               class="inline-flex h-7 items-center justify-center gap-1 rounded-lg border border-danger/20 bg-danger/10 px-2 text-[10px] font-medium text-danger transition-colors hover:border-danger/40 hover:bg-danger/15 disabled:cursor-not-allowed disabled:border-border-soft disabled:bg-panel-soft disabled:text-text-subtle"
               :disabled="isOptionDeleting(option.name) || isOptionPulling(option.name)"
-              @click.stop="deleteModel(option.name)"
+              @click.stop="deleteModel"
             >
               <Loader2 v-if="isOptionDeleting(option.name)" :size="12" class="animate-spin" />
               <Trash2 v-else :size="12" />

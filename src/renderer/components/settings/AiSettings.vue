@@ -85,12 +85,6 @@ const providerOptions: Array<{ value: ProviderValue; label: string }> = [
   { value: 'custom', label: '自定义 HTTP API' },
 ]
 
-const indexingModeOptions: Array<{ value: AiSettings['indexingMode']; label: string }> = [
-  { value: 'manual', label: '手动' },
-  { value: 'incremental', label: '自动增量' },
-  { value: 'idle', label: '应用空闲时自动' },
-]
-
 const settingsStore = useSettingsStore()
 const ollamaStore = useOllamaStore()
 const ollamaModels = ref<string[]>([])
@@ -424,7 +418,7 @@ const pullModel = async (kind: ModelKind, targetModel?: string, selectAfterPull 
   await ollamaStore.pullModel(kind === 'llm' ? llmBaseUrl.value : embedBaseUrl.value, model, title)
 }
 
-const deleteModel = async (model: string) => {
+const deleteModel = async (baseUrl: string, model: string) => {
   const name = model.trim()
   if (!name) return
   const confirmation = await window.electronAPI.app.showMessageBox({
@@ -439,7 +433,7 @@ const deleteModel = async (model: string) => {
   if (confirmation.response !== 1) return
 
   ollamaError.value = ''
-  const result = await ollamaStore.deleteModel(llmBaseUrl.value || embedBaseUrl.value, name)
+  const result = await ollamaStore.deleteModel(baseUrl, name)
   if (!result.success) {
     ollamaError.value = result.error || `删除模型 ${name} 失败。`
   }
@@ -652,7 +646,7 @@ watch(
             @update:open="(open) => openModelPicker = open ? 'llm' : null"
             @select="selectModel('llm', $event)"
             @pull="(model, selectAfterPull) => pullModel('llm', model, selectAfterPull)"
-            @delete="deleteModel"
+            @delete="deleteModel(aiSettings.chat.baseUrl, aiSettings.chat.model)"
           />
         </div>
       </section>
@@ -738,7 +732,7 @@ watch(
             @update:open="(open) => openModelPicker = open ? 'embed' : null"
             @select="selectModel('embed', $event)"
             @pull="(model, selectAfterPull) => pullModel('embed', model, selectAfterPull)"
-            @delete="deleteModel"
+            @delete="deleteModel(aiSettings.embedding.baseUrl, aiSettings.embedding.model)"
           />
 
           <!-- <label class="grid gap-2 text-sm text-text-main">
@@ -761,7 +755,7 @@ watch(
           >
             <div class="mb-1 flex items-center gap-2 font-medium">
               <AlertCircle :size="15" />
-              无法读取模型列表
+              错误
             </div>
             <p class="text-xs leading-5">{{ ollamaError }}</p>
           </div>

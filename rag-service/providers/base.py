@@ -30,7 +30,7 @@ class BaseChatProvider(ABC):
         prompted_messages, allowed_tools = prepare_agent_decision_messages(
             messages, tool_schemas
         )
-        first_response = await self.chat(prompted_messages)
+        first_response = await self.chat_structured(prompted_messages)
         try:
             return parse_agent_decision_text(first_response, allowed_tools=allowed_tools)
         except AgentDecisionParseError:
@@ -50,8 +50,13 @@ class BaseChatProvider(ABC):
                     ),
                 ),
             ]
-            second_response = await self.chat(repair_messages)
+            second_response = await self.chat_structured(repair_messages)
             return parse_agent_decision_text(second_response, allowed_tools=allowed_tools)
+
+    async def chat_structured(self, messages: List[ChatMessage]) -> str:
+        """Use provider-native structured output when available."""
+
+        return await self.chat(messages)
 
 
 class BaseEmbeddingProvider(ABC):

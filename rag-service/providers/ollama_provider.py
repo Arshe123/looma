@@ -14,6 +14,12 @@ class OllamaChatProvider(BaseChatProvider):
         self.temperature = config.temperature
 
     async def chat(self, messages: List[ChatMessage]) -> str:
+        return await self._chat(messages, structured=False)
+
+    async def chat_structured(self, messages: List[ChatMessage]) -> str:
+        return await self._chat(messages, structured=True)
+
+    async def _chat(self, messages: List[ChatMessage], *, structured: bool) -> str:
         url = f"{self.base_url}/api/chat"
 
         payload = {
@@ -24,6 +30,8 @@ class OllamaChatProvider(BaseChatProvider):
                 "temperature": self.temperature
             }
         }
+        if structured:
+            payload["format"] = "json"
 
         async with httpx.AsyncClient(timeout=None) as client:
             response = await client.post(url, json=payload)

@@ -1,0 +1,69 @@
+from typing import Annotated, Any, Literal, Optional, Union
+
+from pydantic import BaseModel, Field, root_validator
+
+from schemas import ToolName
+
+
+class StrictAgentModel(BaseModel):
+    """Reject protocol drift instead of silently discarding unknown fields."""
+
+    class Config:
+        extra = "forbid"
+
+
+class AgentToolCall(StrictAgentModel):
+    type: Literal["tool_call"]
+    thought_summary: str = Field(..., min_length=1)
+    tool: ToolName
+    arguments: dict[str, Any]
+
+
+class AgentFinalAnswer(StrictAgentModel):
+    type: Literal["final"]
+    answer: str = Field(..., min_length=1)
+
+
+AgentDecision = Annotated[
+    Union[AgentToolCall, AgentFinalAnswer],
+    Field(discriminator="type"),
+]
+
+
+class AgentError(StrictAgentModel):
+    code: str = Field(..., min_length=1)
+    message: str = Field(..., min_length=1)
+    technical_detail: Optional[str] = None
+    retryable: bool = False
+
+
+class ToolResult(StrictAgentModel):
+    tool: ToolName
+    success: bool
+    summary: str = Field(..., min_length=1)
+    data: Any = None
+    error: Optional[AgentError] = None
+    truncated: bool = False
+
+    @root_validator(skip_on_failure=True)
+    def validate_error_matches_success(cls, values: dict[str, Any]) -> dict[str, Any]:
+        success = values.get("success")
+        error = values.get("error")
+        if success is False and error is None:
+            raise ValueError("error is required when success is false")
+        if success is True and error is not None:
+            raise ValueError("error must be absent when success is true")
+        return values
+
+
+def parse_agent_decision(value: Any) -> AgentDecision:
+    """Validate an untrusted model response as one canonical decision."""
+
+    try:
+        from pydantic import TypeAdapter
+    except ImportError:  # Pydantic v1
+        from pydantic import parse_obj_as
+
+        return parse_obj_as(AgentDecision, value)
+
+    return TypeAdapter(AgentDecision).validate_python(value)

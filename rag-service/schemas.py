@@ -95,8 +95,6 @@ class IndexStatusRequest(BaseModel):
     vector_store_path: Optional[str] = None
 
 
-AgentMode = Literal["chat", "rag", "agent"]
-
 IndexBuildMode = Literal["incremental", "full", "retry_failed"]
 
 
@@ -109,25 +107,40 @@ class IndexBuildRequest(BaseModel):
 
 ToolName = Literal[
     "rag_search",
-    "file_read",
-    "file_write",
+    "workspace_list",
     "workspace_search",
+    "file_read",
+    # Reserved for future registry/policy support; never enabled by default.
+    "file_write",
     "web_search",
     "terminal",
 ]
 
+DEFAULT_AGENT_TOOLS: tuple[ToolName, ...] = (
+    "rag_search",
+    "workspace_list",
+    "workspace_search",
+    "file_read",
+)
 
-class ToolConfig(BaseModel):
+
+class StrictAgentModel(BaseModel):
+    """Agent contract models reject unknown fields in Pydantic v1 and v2."""
+
+    class Config:
+        extra = "forbid"
+
+
+class ToolConfig(StrictAgentModel):
     name: ToolName
     enabled: bool = True
     config: dict[str, Any] = Field(default_factory=dict)
 
 
-class AgentConfig(BaseModel):
-    mode: AgentMode = "agent"
-    tools: list[ToolConfig] = Field(default_factory=list)
+class AgentConfig(StrictAgentModel):
+    enabled_tools: list[ToolName] = Field(default_factory=lambda: list(DEFAULT_AGENT_TOOLS))
     max_steps: int = Field(default=8, gt=0, le=50)
-    stream_steps: bool = True
+    tool_timeout_seconds: int = Field(default=30, gt=0, le=300)
     allow_write: bool = False
 
 

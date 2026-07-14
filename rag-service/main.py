@@ -1,11 +1,23 @@
 import asyncio
 import json
+import uuid
 from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from agent.events import error_event, event, utc_iso_z
+from agent.models import AgentError
+from agent.runtime import AgentRuntime
+from agent.tools import (
+    AgentToolContext,
+    FileReadTool,
+    RagSearchTool,
+    ToolRegistry,
+    WorkspaceListTool,
+    WorkspaceSearchTool,
+)
 from config import with_global_ai_config, with_global_knowledge_config
 from providers.factory import create_chat_provider
 from prompt.main import BASE_SYSTEM_PROMPT, build_rag_context_prompt
@@ -21,6 +33,7 @@ from rag.index_manager import (
 )
 from rag.query_service import retrieve_context_sources
 from schemas import (
+    AIConfig,
     AgentRunRequest,
     ChatMessage,
     ChatRequest,
@@ -28,6 +41,7 @@ from schemas import (
     IndexBuildRequest,
     IndexStatusRequest,
     RagQueryRequest,
+    DEFAULT_AGENT_TOOLS,
 )
 
 app = FastAPI(title="Looma RAG Service")
@@ -279,23 +293,73 @@ async def rag_index_stream(request: IndexRequest):
     )
 
 
+def _agent_ndjson(value: dict) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n"
+
+
+async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
+    """Build and stream one bounded Agent run without leaking setup exceptions."""
+
+    run_id = f"run_{uuid.uuid4().hex}"
+    read_tools = set(DEFAULT_AGENT_TOOLS)
+    run_started_sent = False
+
+    try:
+        request = resolve_request_config(request)
+        if read_tools.intersection(request.agent.enabled_tools) and request.workspace is None:
+            yield _agent_ndjson(event("run_started", run_id, startedAt=utc_iso_z()))
+            run_started_sent = True
+            yield _agent_ndjson(error_event(run_id, AgentError(
+                code="workspace_required",
+                message="使用工作空间工具时必须选择一个工作空间。",
+                technical_detail="workspace is required for enabled read tools",
+                retryable=False,
+            )))
+            return
+
+        provider = create_chat_provider(request.ai_config.chat)
+        registry = ToolRegistry()
+        registry.register(RagSearchTool())
+        registry.register(WorkspaceListTool())
+        registry.register(WorkspaceSearchTool())
+        registry.register(FileReadTool())
+        runtime = AgentRuntime(
+            provider=provider,
+            registry=registry,
+            context=AgentToolContext(
+                workspace_path=(
+                    request.workspace.workspace_path if request.workspace is not None else "."
+                ),
+                ai_config=request.ai_config,
+                knowledge=request.knowledge,
+            ),
+        )
+        async for runtime_event in runtime.run(
+            input=request.input,
+            history=request.history,
+            config=request.agent,
+            run_id=run_id,
+        ):
+            line = _agent_ndjson(runtime_event)
+            if runtime_event.get("type") == "run_started":
+                run_started_sent = True
+            yield line
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        if not run_started_sent:
+            yield _agent_ndjson(event("run_started", run_id, startedAt=utc_iso_z()))
+        yield _agent_ndjson(error_event(run_id, AgentError(
+            code="agent_setup_failed",
+            message="Agent 初始化失败，请检查模型和工作空间配置后重试。",
+            technical_detail=type(exc).__name__,
+            retryable=True,
+        )))
+
+
 @app.post("/agent/run/stream")
 async def agent_run_stream(request: AgentRunRequest):
-    request = resolve_request_config(request)
-    async def generate() -> AsyncIterator[str]:
-        yield ndjson_event(
-            "timeline",
-            stepId="agent-start",
-            status="active",
-            title="启动 Agent",
-            detail=f"Agent 模式：{request.agent.mode}，最大步数：{request.agent.max_steps}。",
-        )
-        yield ndjson_event(
-            "delta",
-            text="Agent 执行入口已预留，后续可在这里接入规划、工具调用和多步执行。",
-            content="Agent 执行入口已预留，后续可在这里接入规划、工具调用和多步执行。",
-        )
-        yield ndjson_event("timeline", stepId="agent-start", status="completed", title="启动 Agent", detail="Agent 入口响应完成。")
-        yield ndjson_event("done")
-
-    return StreamingResponse(generate(), media_type="application/x-ndjson; charset=utf-8")
+    return StreamingResponse(
+        agent_run_events(request),
+        media_type="application/x-ndjson; charset=utf-8",
+    )

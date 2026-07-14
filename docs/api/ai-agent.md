@@ -1,6 +1,6 @@
 # AI Agent API（Canonical Contract）
 
-本文定义 Looma Renderer、Electron 主进程与 `rag-service` 之间的首版 Agent 契约。本文只描述契约；Tool Registry、运行时和 UI 不在本阶段范围内。
+本文定义 Looma Renderer、Electron 主进程与 `rag-service` 之间的首版 Agent 契约，并记录当前已实现的只读 Tool Registry 与有限步运行时；Electron 转发层和正式 UI 将在后续阶段接入。
 
 ## 1. 安全默认值与领域约束
 
@@ -11,12 +11,14 @@
   "enabled_tools": ["rag_search", "workspace_list", "workspace_search", "file_read"],
   "max_steps": 8,
   "tool_timeout_seconds": 30,
+  "run_timeout_seconds": 300,
   "allow_write": false
 }
 ```
 
 - `max_steps`：`1..50`。
 - `tool_timeout_seconds`：`1..300` 秒。
+- `run_timeout_seconds`：整个 Agent 运行的累计内部等待预算，`1..1800` 秒，默认 `300` 秒。
 - 首版默认开放且仅开放只读工具：`rag_search`、`workspace_list`、`workspace_search`、`file_read`。
 - `file_write`、`web_search`、`terminal` 是为未来策略/注册表保留的工具类型，**不得默认开放**。
 - `allow_write` 默认为 `false`；它是写操作的额外策略门槛，而不是自动启用写工具的开关。
@@ -56,6 +58,7 @@ Renderer 传入：
     "enabled_tools": ["rag_search", "workspace_list", "workspace_search", "file_read"],
     "max_steps": 8,
     "tool_timeout_seconds": 30,
+    "run_timeout_seconds": 300,
     "allow_write": false
   },
   "history": []

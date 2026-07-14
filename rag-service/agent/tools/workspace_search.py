@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import os
 import re
@@ -53,6 +54,9 @@ class WorkspaceSearchTool(AgentTool):
     args_model = WorkspaceSearchArgs
 
     async def execute(self, context: AgentToolContext, args: StrictToolArgs) -> dict[str, Any]:
+        return await asyncio.to_thread(self._execute_sync, context, args)
+
+    def _execute_sync(self, context: AgentToolContext, args: StrictToolArgs) -> dict[str, Any]:
         if not isinstance(args, WorkspaceSearchArgs):
             raise TypeError("args must be WorkspaceSearchArgs")
 

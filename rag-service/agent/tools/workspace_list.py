@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,9 @@ class WorkspaceListTool(AgentTool):
     args_model = WorkspaceListArgs
 
     async def execute(self, context: AgentToolContext, args: StrictToolArgs) -> dict[str, Any]:
+        return await asyncio.to_thread(self._execute_sync, context, args)
+
+    def _execute_sync(self, context: AgentToolContext, args: StrictToolArgs) -> dict[str, Any]:
         if not isinstance(args, WorkspaceListArgs):
             raise TypeError("args must be WorkspaceListArgs")
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import codecs
 import os
 import stat
@@ -42,6 +43,9 @@ class FileReadTool(AgentTool):
     args_model = FileReadArgs
 
     async def execute(self, context: AgentToolContext, args: StrictToolArgs) -> dict[str, Any]:
+        return await asyncio.to_thread(self._execute_sync, context, args)
+
+    def _execute_sync(self, context: AgentToolContext, args: StrictToolArgs) -> dict[str, Any]:
         if not isinstance(args, FileReadArgs):
             raise TypeError("args must be FileReadArgs")
 

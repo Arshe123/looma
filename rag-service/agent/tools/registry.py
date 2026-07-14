@@ -1,4 +1,6 @@
+import asyncio
 import json
+import math
 from collections.abc import Iterable
 from typing import Any
 
@@ -15,7 +17,87 @@ from schemas import DEFAULT_AGENT_TOOLS, ToolName
 
 
 DEFAULT_MAX_OUTPUT_CHARS = 20_000
+MAX_OUTPUT_NODES = 10_000
+MAX_OUTPUT_DEPTH = 64
+MAX_OUTPUT_STRING_CHARS = 100_000
 VALID_TOOL_RISK_LEVELS = frozenset({"read", "write", "network", "terminal"})
+
+
+def _validate_json_output(value: Any) -> None:
+    """Validate an untrusted tool result with bounded, non-recursive traversal."""
+
+    stack: list[tuple[Any, int, bool]] = [(value, 0, False)]
+    ancestor_containers: set[int] = set()
+    nodes = 0
+    while stack:
+        current, depth, exiting = stack.pop()
+        if exiting:
+            ancestor_containers.discard(id(current))
+            continue
+
+        nodes += 1
+        if nodes > MAX_OUTPUT_NODES:
+            raise ValueError("tool output exceeds node budget")
+        if depth > MAX_OUTPUT_DEPTH:
+            raise ValueError("tool output exceeds depth budget")
+
+        if isinstance(current, dict):
+            identity = id(current)
+            if identity in ancestor_containers:
+                raise ValueError("tool output contains a cycle")
+            ancestor_containers.add(identity)
+            stack.append((current, depth, True))
+            if len(current) > MAX_OUTPUT_NODES - nodes:
+                raise ValueError("tool output exceeds node budget")
+            for key, item in current.items():
+                if not isinstance(key, str) or len(key) > MAX_OUTPUT_STRING_CHARS:
+                    raise ValueError("tool output contains an invalid key")
+                stack.append((item, depth + 1, False))
+        elif isinstance(current, list):
+            identity = id(current)
+            if identity in ancestor_containers:
+                raise ValueError("tool output contains a cycle")
+            ancestor_containers.add(identity)
+            stack.append((current, depth, True))
+            if len(current) > MAX_OUTPUT_NODES - nodes:
+                raise ValueError("tool output exceeds node budget")
+            stack.extend((item, depth + 1, False) for item in current)
+        elif isinstance(current, str):
+            if len(current) > MAX_OUTPUT_STRING_CHARS:
+                raise ValueError("tool output string exceeds budget")
+        elif current is None or isinstance(current, bool):
+            continue
+        elif isinstance(current, int):
+            if current.bit_length() > 4096:
+                raise ValueError("tool output integer exceeds budget")
+        elif isinstance(current, float):
+            if not math.isfinite(current):
+                raise ValueError("tool output contains a non-finite number")
+        else:
+            raise TypeError("tool output contains a non-JSON value")
+
+        if len(stack) > MAX_OUTPUT_NODES + MAX_OUTPUT_DEPTH:
+            raise ValueError("tool output exceeds traversal budget")
+
+
+def _serialize_json_output(value: Any, max_chars: int) -> tuple[str, bool]:
+    _validate_json_output(value)
+    encoder = json.JSONEncoder(
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    parts: list[str] = []
+    size = 0
+    for chunk in encoder.iterencode(value):
+        remaining = max_chars - size
+        if len(chunk) > remaining:
+            if remaining > 0:
+                parts.append(chunk[:remaining])
+            return "".join(parts), True
+        parts.append(chunk)
+        size += len(chunk)
+    return "".join(parts), False
 
 
 class ToolRegistry:
@@ -67,6 +149,24 @@ class ToolRegistry:
             and (tool.risk_level != "write" or allow_write)
         ]
 
+    def tool_schemas(
+        self,
+        *,
+        enabled_tools: Iterable[ToolName],
+        allow_write: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return provider-neutral schemas for tools allowed in this run."""
+        schemas = []
+        for tool in self.list_tools(enabled_tools=enabled_tools, allow_write=allow_write):
+            model_json_schema = getattr(tool.args_model, "model_json_schema", None)
+            parameters = model_json_schema() if model_json_schema else tool.args_model.schema()
+            schemas.append({
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": parameters,
+            })
+        return schemas
+
     async def execute(
         self,
         tool_name: str,
@@ -75,6 +175,7 @@ class ToolRegistry:
         *,
         enabled_tools: Iterable[ToolName],
         allow_write: bool = False,
+        tool_timeout_seconds: int | float | None = None,
     ) -> ToolResult:
         tool = self._tools.get(tool_name)
         if tool is None:
@@ -114,31 +215,45 @@ class ToolRegistry:
                 "tool_invalid_arguments",
                 "The tool arguments are invalid.",
                 "Tool execution failed because its arguments are invalid.",
-                technical_detail=str(exc),
+                technical_detail=type(exc).__name__,
             )
 
         try:
-            data = await tool.execute(context, validated_args)
+            operation = tool.execute(context, validated_args)
+            data = (
+                await operation
+                if tool_timeout_seconds is None
+                else await asyncio.wait_for(operation, timeout=tool_timeout_seconds)
+            )
+        except asyncio.TimeoutError:
+            return self._failure(
+                tool_name,
+                "tool_timeout",
+                "工具执行超时，请稍后重试或缩小请求范围。",
+                "Tool execution timed out.",
+                technical_detail=f"timeout after {tool_timeout_seconds} seconds",
+                retryable=True,
+            )
         except Exception as exc:
             return self._failure(
                 tool_name,
                 "tool_execution_failed",
                 "The tool failed during execution.",
                 "Tool execution failed.",
-                technical_detail=f"{type(exc).__name__}: {exc}",
+                technical_detail=type(exc).__name__,
             )
 
         try:
-            serialized = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+            serialized, truncated = _serialize_json_output(data, self._max_output_chars)
         except Exception as exc:
             return self._failure(
                 tool_name,
                 "tool_execution_failed",
                 "The tool returned an invalid result that could not be processed.",
                 "Tool execution failed because its result could not be processed.",
-                technical_detail=f"{type(exc).__name__}: {exc}",
+                technical_detail=type(exc).__name__,
             )
-        if len(serialized) > self._max_output_chars:
+        if truncated:
             return ToolResult(
                 tool=tool_name,
                 success=True,
@@ -146,7 +261,7 @@ class ToolRegistry:
                     "Tool execution completed; output was truncated to "
                     f"{self._max_output_chars} characters."
                 ),
-                data=serialized[: self._max_output_chars],
+                data=serialized,
                 truncated=True,
             )
         return ToolResult(
@@ -169,6 +284,7 @@ class ToolRegistry:
         summary: str,
         *,
         technical_detail: str | None = None,
+        retryable: bool = False,
     ) -> ToolResult:
         return ToolResult(
             tool=tool_name or "<unknown>",
@@ -178,5 +294,6 @@ class ToolRegistry:
                 code=code,
                 message=message,
                 technical_detail=technical_detail,
+                retryable=retryable,
             ),
         )

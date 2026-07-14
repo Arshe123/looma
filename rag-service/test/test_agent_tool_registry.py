@@ -1,10 +1,14 @@
+import asyncio
+import time
 import unittest
 from typing import Literal
+from unittest.mock import patch
 
 from pydantic import BaseModel, Field
 
 from agent.tools.base import AgentTool, AgentToolContext, StrictToolArgs, ToolRiskLevel
 from agent.tools.registry import ToolRegistry
+from agent.tools.workspace_search import WorkspaceSearchTool
 
 
 class FakeArgs(StrictToolArgs):
@@ -39,6 +43,12 @@ class CircularOutputTool(FakeTool):
         return output
 
 
+class SharedContainerOutputTool(FakeTool):
+    async def execute(self, context: AgentToolContext, args: FakeArgs):
+        shared = {"value": 1}
+        return {"left": shared, "right": shared}
+
+
 class CustomOutput:
     pass
 
@@ -46,6 +56,11 @@ class CustomOutput:
 class CustomObjectOutputTool(FakeTool):
     async def execute(self, context: AgentToolContext, args: FakeArgs):
         return CustomOutput()
+
+
+class NonFiniteOutputTool(FakeTool):
+    async def execute(self, context: AgentToolContext, args: FakeArgs):
+        return {"score": float("nan")}
 
 
 class NonStrictArgs(BaseModel):
@@ -265,7 +280,8 @@ class ToolRegistryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result.success)
         self.assertEqual(result.error.code, "tool_execution_failed")
-        self.assertIn("backend exploded", result.error.technical_detail)
+        self.assertEqual(result.error.technical_detail, "RuntimeError")
+        self.assertNotIn("backend exploded", result.error.technical_detail)
         self.assertNotIn("top-secret-token", result.summary)
 
     async def test_large_output_is_truncated(self):
@@ -295,6 +311,18 @@ class ToolRegistryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("invalid result", result.error.message.lower())
         self.assertIn("ValueError", result.error.technical_detail)
 
+    async def test_shared_container_output_remains_valid_json(self):
+        registry = ToolRegistry()
+        registry.register(SharedContainerOutputTool())
+
+        result = await registry.execute(
+            "rag_search", self.context, {"query": "x"}, enabled_tools={"rag_search"}
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.data, {"left": {"value": 1}, "right": {"value": 1}})
+        self.assertFalse(result.truncated)
+
     async def test_custom_object_output_returns_structured_failure(self):
         registry = ToolRegistry()
         registry.register(CustomObjectOutputTool())
@@ -307,6 +335,41 @@ class ToolRegistryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.error.code, "tool_execution_failed")
         self.assertIsNone(result.data)
         self.assertIn("TypeError", result.error.technical_detail)
+
+    async def test_non_finite_output_is_rejected_as_non_standard_json(self):
+        registry = ToolRegistry()
+        registry.register(NonFiniteOutputTool())
+
+        result = await registry.execute(
+            "rag_search", self.context, {"query": "x"}, enabled_tools={"rag_search"}
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.error.code, "tool_execution_failed")
+        self.assertEqual(result.error.technical_detail, "ValueError")
+
+    async def test_builtin_workspace_io_does_not_block_timeout_or_event_loop(self):
+        registry = ToolRegistry()
+        tool = WorkspaceSearchTool()
+        registry.register(tool)
+
+        def slow_sync(*_args):
+            time.sleep(0.2)
+            return {"status": "ok", "matches": [], "count": 0, "truncated": False}
+
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        with patch.object(tool, "_execute_sync", side_effect=slow_sync):
+            result = await registry.execute(
+                "workspace_search",
+                self.context,
+                {"query": "x"},
+                enabled_tools={"workspace_search"},
+                tool_timeout_seconds=0.02,
+            )
+
+        self.assertLess(loop.time() - started, 0.15)
+        self.assertEqual(result.error.code, "tool_timeout")
 
 
 if __name__ == "__main__":

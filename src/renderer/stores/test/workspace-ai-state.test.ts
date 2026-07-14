@@ -7,6 +7,7 @@ const installElectronApiStub = () => {
   ;(globalThis as any).window = globalThis.window || globalThis
   ;(globalThis as any).window.electronAPI = {
     workspaceAi: {
+      get: vi.fn(),
       set: vi.fn().mockResolvedValue({ success: true }),
     },
     rag: {
@@ -21,6 +22,13 @@ const installElectronApiStub = () => {
         onEvent: vi.fn(() => vi.fn()),
       },
       summarizeConversation: vi.fn().mockResolvedValue({ success: true, data: { answer: '摘要' } }),
+    },
+    agent: {
+      runStream: {
+        start: vi.fn().mockResolvedValue({ success: true }),
+        cancel: vi.fn().mockResolvedValue({ success: true }),
+        onEvent: vi.fn(() => vi.fn()),
+      },
     },
   }
 }
@@ -157,6 +165,75 @@ describe('workspace ai assistant temporary conversation state', () => {
     expect(aMessage?.text).toBe('索引已建立，共处理 3 个文档。现在可以开始提问。')
     expect(bConversation.messages.some((item) => item.text.includes('索引已建立'))).toBe(false)
     expect(aiAssistStore.getWorkspaceIndexResult('workspace-1')?.exists).toBe(true)
+  })
+
+  it('normalizes and saves persisted agent message identity and compact summary without backfilling legacy messages', async () => {
+    const store = useWorkspaceStore()
+    const persistedState = {
+      conversations: [{
+        id: 'agent-chat',
+        title: 'Agent 对话',
+        createdAt: 10,
+        updatedAt: 20,
+        draft: '',
+        messages: [
+          { id: 1, role: 'assistant', text: '旧回答', createdAt: 1 },
+          {
+            id: 2,
+            role: 'assistant',
+            text: 'Agent 回答',
+            createdAt: 20,
+            runId: 'run-persisted',
+            mode: 'agent',
+            modelIdentity: { provider: 'openai', model: 'gpt-4o-mini', displayName: 'GPT 4o Mini' },
+            agentSummary: { status: 'completed', toolCallCount: 2, sourceCount: 1 },
+            timeline: [{
+              id: 'sources', title: '来源', status: 'completed', startedAt: 20,
+              outputs: [
+                { id: 'safe', type: 'source', path: 'docs/guide.md', metadata: { source: 'docs/guide.md', score: 0.9, secret: 'drop-me' } },
+                { id: 'absolute', type: 'source', path: 'C:\\Users\\admin\\secret.md', metadata: { source: 'C:\\Users\\admin\\secret.md', score: 0.1 } },
+                { id: 'traversal', type: 'source', path: '../secret.md', metadata: { file_path: '../secret.md', path: '../secret.md' } },
+              ],
+            }],
+          },
+        ],
+      }],
+      activeConversationId: 'agent-chat',
+    }
+    ;(window.electronAPI.workspaceAi.get as any).mockResolvedValue({ success: true, data: persistedState })
+
+    await store.loadAiAssistantState('workspace-1')
+    const [legacyMessage, agentMessage] = store.aiAssistant.conversations[0].messages
+
+    expect(legacyMessage).not.toHaveProperty('modelIdentity')
+    expect(agentMessage).toMatchObject({
+      runId: 'run-persisted',
+      mode: 'agent',
+      modelIdentity: { provider: 'openai', model: 'gpt-4o-mini', displayName: 'GPT 4o Mini' },
+      agentSummary: { status: 'completed', toolCallCount: 2, sourceCount: 1 },
+    })
+    expect(agentMessage.timeline?.[0].outputs.map(output => output.path)).toEqual(['docs/guide.md', undefined, undefined])
+    expect(agentMessage.timeline?.[0].outputs.map(output => output.metadata)).toEqual([
+      { source: 'docs/guide.md', score: 0.9 },
+      { score: 0.1 },
+      undefined,
+    ])
+
+    store.activeWorkspaceId = 'workspace-1'
+    store.saveAiAssistantState()
+    expect(window.electronAPI.workspaceAi.set).toHaveBeenLastCalledWith(
+      'workspace-1',
+      expect.objectContaining({
+        conversations: [expect.objectContaining({
+          messages: expect.arrayContaining([expect.objectContaining({
+            runId: 'run-persisted',
+            mode: 'agent',
+            modelIdentity: { provider: 'openai', model: 'gpt-4o-mini', displayName: 'GPT 4o Mini' },
+            agentSummary: { status: 'completed', toolCallCount: 2, sourceCount: 1 },
+          })]),
+        })],
+      }),
+    )
   })
 
 })

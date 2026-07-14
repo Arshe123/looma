@@ -43,6 +43,15 @@ interface AiAssistantMessage {
     disabled?: boolean
   }[]
   timeline?: AiAssistantTimelineStep[]
+  runId?: string
+  mode?: 'rag' | 'agent'
+  modelIdentity?: { provider: string; model: string; displayName: string }
+  agentSummary?: {
+    status: 'running' | 'completed' | 'cancelled' | 'error'
+    toolCallCount?: number
+    sourceCount?: number
+    error?: { message: string; technicalDetail?: string }
+  }
 }
 
 type AiAssistantTimelineStepStatus = 'pending' | 'active' | 'completed' | 'error'
@@ -167,6 +176,27 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
     return normalized.length > 0 ? normalized : undefined
   }
 
+  const normalizeTimelinePath = (value: unknown) => {
+    if (typeof value !== 'string') return undefined
+    const path = value.trim().replace(/\\+/g, '/')
+    if (!path || path.startsWith('/') || /^[a-zA-Z]:\//.test(path) || path.startsWith('//')) return undefined
+    const segments = path.split('/').filter(Boolean)
+    if (!segments.length || segments.some(segment => segment === '.' || segment === '..' || segment.includes(':'))) return undefined
+    return segments.join('/')
+  }
+
+  const normalizeTimelineMetadata = (value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const raw = value as Record<string, unknown>
+    const normalized: Record<string, unknown> = {}
+    if (typeof raw.score === 'number' && Number.isFinite(raw.score)) normalized.score = raw.score
+    for (const key of ['source', 'file_path', 'path'] as const) {
+      const safePath = normalizeTimelinePath(raw[key])
+      if (safePath) normalized[key] = safePath
+    }
+    return Object.keys(normalized).length ? normalized : undefined
+  }
+
   const normalizeTimelineOutputs = (outputs: unknown): AiAssistantTimelineOutput[] => (
     Array.isArray(outputs)
       ? outputs
@@ -182,10 +212,8 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
           content: typeof item.content === 'string' ? item.content : undefined,
           value: typeof item.value === 'string' || typeof item.value === 'number' ? item.value : undefined,
           unit: typeof item.unit === 'string' ? item.unit : undefined,
-          path: typeof item.path === 'string' ? item.path : undefined,
-          metadata: item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata)
-            ? item.metadata as Record<string, unknown>
-            : undefined,
+          path: normalizeTimelinePath(item.path),
+          metadata: normalizeTimelineMetadata(item.metadata),
         }))
       : []
   )
@@ -213,6 +241,31 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
     return normalized.length > 0 ? normalized : undefined
   }
 
+  const normalizeModelIdentity = (value: unknown) => {
+    if (!value || typeof value !== 'object') return undefined
+    const raw = value as Record<string, unknown>
+    if (typeof raw.provider !== 'string' || typeof raw.model !== 'string' || typeof raw.displayName !== 'string') return undefined
+    if (!raw.provider.trim() || !raw.model.trim() || !raw.displayName.trim()) return undefined
+    return { provider: raw.provider.trim(), model: raw.model.trim(), displayName: raw.displayName.trim() }
+  }
+
+  const normalizeAgentSummary = (value: unknown) => {
+    if (!value || typeof value !== 'object') return undefined
+    const raw = value as Record<string, any>
+    if (!['running', 'completed', 'cancelled', 'error'].includes(raw.status)) return undefined
+    return {
+      status: raw.status,
+      toolCallCount: typeof raw.toolCallCount === 'number' && Number.isFinite(raw.toolCallCount) ? Math.max(0, Math.round(raw.toolCallCount)) : undefined,
+      sourceCount: typeof raw.sourceCount === 'number' && Number.isFinite(raw.sourceCount) ? Math.max(0, Math.round(raw.sourceCount)) : undefined,
+      error: raw.error && typeof raw.error === 'object' && typeof raw.error.message === 'string'
+        ? {
+            message: raw.error.message.slice(0, 1000),
+            technicalDetail: typeof raw.error.technicalDetail === 'string' ? raw.error.technicalDetail.slice(0, 2000) : undefined,
+          }
+        : undefined,
+    }
+  }
+
   const normalizeMessages = (messages: unknown): AiAssistantMessage[] => (
     Array.isArray(messages)
       ? messages
@@ -230,6 +283,10 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
           aiName: typeof item.aiName === 'string' && item.aiName.trim() ? item.aiName.trim() : undefined,
           actions: normalizeActions(item.actions),
           timeline: normalizeTimeline(item.timeline),
+          ...(typeof item.runId === 'string' && item.runId.trim() ? { runId: item.runId.trim() } : {}),
+          ...(item.mode === 'rag' || item.mode === 'agent' ? { mode: item.mode } : {}),
+          ...(normalizeModelIdentity(item.modelIdentity) ? { modelIdentity: normalizeModelIdentity(item.modelIdentity) } : {}),
+          ...(normalizeAgentSummary(item.agentSummary) ? { agentSummary: normalizeAgentSummary(item.agentSummary) } : {}),
         }))
       : []
   )

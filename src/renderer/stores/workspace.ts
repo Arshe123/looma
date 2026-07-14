@@ -117,6 +117,27 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
     return normalized.length > 0 ? normalized : undefined
   }
 
+  const normalizeTimelinePath = (value: unknown) => {
+    if (typeof value !== 'string') return undefined
+    const path = value.trim().replace(/\\+/g, '/')
+    if (!path || path.startsWith('/') || /^[a-zA-Z]:\//.test(path) || path.startsWith('//')) return undefined
+    const segments = path.split('/').filter(Boolean)
+    if (!segments.length || segments.some(segment => segment === '.' || segment === '..' || segment.includes(':'))) return undefined
+    return segments.join('/')
+  }
+
+  const normalizeTimelineMetadata = (value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const raw = value as Record<string, unknown>
+    const normalized: Record<string, unknown> = {}
+    if (typeof raw.score === 'number' && Number.isFinite(raw.score)) normalized.score = raw.score
+    for (const key of ['source', 'file_path', 'path'] as const) {
+      const safePath = normalizeTimelinePath(raw[key])
+      if (safePath) normalized[key] = safePath
+    }
+    return Object.keys(normalized).length ? normalized : undefined
+  }
+
   const normalizeTimeline = (timeline: unknown): AiAssistantMessage['timeline'] | undefined => {
     if (!Array.isArray(timeline)) return undefined
     const allowedStatuses = new Set(['pending', 'active', 'completed', 'error'])
@@ -153,12 +174,37 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
               content: typeof output.content === 'string' ? output.content : undefined,
               value: typeof output.value === 'string' || typeof output.value === 'number' ? output.value : undefined,
               unit: typeof output.unit === 'string' ? output.unit : undefined,
-              path: typeof output.path === 'string' ? output.path : undefined,
-              metadata: output.metadata && typeof output.metadata === 'object' ? output.metadata : undefined,
+              path: normalizeTimelinePath(output.path),
+              metadata: normalizeTimelineMetadata(output.metadata),
             }))
           : [],
       }))
     return normalized.length > 0 ? normalized : undefined
+  }
+
+  const normalizeModelIdentity = (value: unknown): AiAssistantMessage['modelIdentity'] => {
+    if (!value || typeof value !== 'object') return undefined
+    const raw = value as Record<string, unknown>
+    if (typeof raw.provider !== 'string' || typeof raw.model !== 'string' || typeof raw.displayName !== 'string') return undefined
+    if (!raw.provider.trim() || !raw.model.trim() || !raw.displayName.trim()) return undefined
+    return { provider: raw.provider.trim(), model: raw.model.trim(), displayName: raw.displayName.trim() }
+  }
+
+  const normalizeAgentSummary = (value: unknown): AiAssistantMessage['agentSummary'] => {
+    if (!value || typeof value !== 'object') return undefined
+    const raw = value as Record<string, any>
+    if (!['running', 'completed', 'cancelled', 'error'].includes(raw.status)) return undefined
+    return {
+      status: raw.status,
+      toolCallCount: typeof raw.toolCallCount === 'number' && Number.isFinite(raw.toolCallCount) ? Math.max(0, Math.round(raw.toolCallCount)) : undefined,
+      sourceCount: typeof raw.sourceCount === 'number' && Number.isFinite(raw.sourceCount) ? Math.max(0, Math.round(raw.sourceCount)) : undefined,
+      error: raw.error && typeof raw.error === 'object' && typeof raw.error.message === 'string'
+        ? {
+            message: raw.error.message.slice(0, 1000),
+            technicalDetail: typeof raw.error.technicalDetail === 'string' ? raw.error.technicalDetail.slice(0, 2000) : undefined,
+          }
+        : undefined,
+    }
   }
 
   const normalizeMessages = (messages: unknown): AiAssistantMessage[] => (
@@ -180,6 +226,10 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
           : undefined,
         actions: normalizeActions(message.actions),
         timeline: normalizeTimeline(message.timeline),
+        ...(typeof (message as any).runId === 'string' && (message as any).runId.trim() ? { runId: (message as any).runId.trim() } : {}),
+        ...((message as any).mode === 'rag' || (message as any).mode === 'agent' ? { mode: (message as any).mode } : {}),
+        ...(normalizeModelIdentity((message as any).modelIdentity) ? { modelIdentity: normalizeModelIdentity((message as any).modelIdentity) } : {}),
+        ...(normalizeAgentSummary((message as any).agentSummary) ? { agentSummary: normalizeAgentSummary((message as any).agentSummary) } : {}),
       }))
       : []
   )
@@ -538,7 +588,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       role: AiAssistantMessage['role'],
       text: string,
       actions?: AiAssistantMessageAction[],
-      meta?: { aiName?: string },
+      meta?: Pick<AiAssistantMessage, 'aiName' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>,
     ) {
       const conversation = this.getAiAssistantConversationById(conversationId)
       if (!conversation) return null
@@ -551,13 +601,17 @@ export const useWorkspaceStore = defineStore('workspace', {
         createdAt: now,
         aiName: role === 'assistant' && meta?.aiName?.trim() ? meta.aiName.trim() : undefined,
         actions,
+        runId: role === 'assistant' ? meta?.runId : undefined,
+        mode: role === 'assistant' ? meta?.mode : undefined,
+        modelIdentity: role === 'assistant' ? meta?.modelIdentity : undefined,
+        agentSummary: role === 'assistant' ? meta?.agentSummary : undefined,
       })
       this.touchAiAssistantConversation(conversation)
       this.saveAiAssistantState()
       return id
     },
 
-    appendAiAssistantMessage(role: AiAssistantMessage['role'], text: string, actions?: AiAssistantMessageAction[], meta?: { aiName?: string }) {
+    appendAiAssistantMessage(role: AiAssistantMessage['role'], text: string, actions?: AiAssistantMessageAction[], meta?: Pick<AiAssistantMessage, 'aiName' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>) {
       const conversation = this.materializeAiAssistantConversationIfNeeded()
       return this.appendAiAssistantMessageToConversation(conversation.id, role, text, actions, meta)
     },
@@ -594,20 +648,24 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.updateAiAssistantMessageTimelineInConversation(conversation.id, id, timeline, options)
     },
 
-    updateAiAssistantMessageMetaInConversation(conversationId: string, id: number, meta: { aiName?: string }, options?: { persist?: boolean }) {
+    updateAiAssistantMessageMetaInConversation(conversationId: string, id: number, meta: Partial<Pick<AiAssistantMessage, 'aiName' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>>, options?: { persist?: boolean }) {
       const conversation = this.getAiAssistantConversationById(conversationId)
       if (!conversation) return
       const message = conversation.messages.find((item) => item.id === id)
       if (!message) return
       if (message.role === 'assistant') {
-        message.aiName = meta.aiName?.trim() || undefined
+        if ('aiName' in meta) message.aiName = meta.aiName?.trim() || undefined
+        if ('runId' in meta) message.runId = meta.runId?.trim() || undefined
+        if ('mode' in meta) message.mode = meta.mode
+        if ('modelIdentity' in meta) message.modelIdentity = meta.modelIdentity
+        if ('agentSummary' in meta) message.agentSummary = meta.agentSummary
       }
       this.touchAiAssistantConversation(conversation)
       if (options?.persist === false) return
       this.saveAiAssistantState()
     },
 
-    updateAiAssistantMessageMeta(id: number, meta: { aiName?: string }, options?: { persist?: boolean }) {
+    updateAiAssistantMessageMeta(id: number, meta: Partial<Pick<AiAssistantMessage, 'aiName' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>>, options?: { persist?: boolean }) {
       const conversation = this.ensureActiveAiAssistantConversation()
       this.updateAiAssistantMessageMetaInConversation(conversation.id, id, meta, options)
     },

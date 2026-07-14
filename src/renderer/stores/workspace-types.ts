@@ -68,6 +68,22 @@ export interface AiAssistantTimelineStep {
   outputs: AiAssistantTimelineOutput[]
 }
 
+export interface AiAssistantModelIdentity {
+  provider: string
+  model: string
+  displayName: string
+}
+
+export interface AiAssistantAgentSummary {
+  status: 'running' | 'completed' | 'cancelled' | 'error'
+  toolCallCount?: number
+  sourceCount?: number
+  error?: {
+    message: string
+    technicalDetail?: string
+  }
+}
+
 export interface AiAssistantMessage {
   id: number
   role: AiAssistantMessageRole
@@ -76,6 +92,10 @@ export interface AiAssistantMessage {
   aiName?: string
   actions?: AiAssistantMessageAction[]
   timeline?: AiAssistantTimelineStep[]
+  runId?: string
+  mode?: 'rag' | 'agent'
+  modelIdentity?: AiAssistantModelIdentity
+  agentSummary?: AiAssistantAgentSummary
 }
 
 export interface AiAssistantConversation {

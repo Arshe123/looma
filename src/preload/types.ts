@@ -18,6 +18,15 @@ interface AiAssistantMessagePayload {
   aiName?: string;
   actions?: AiAssistantMessageActionPayload[];
   timeline?: AiAssistantTimelineStepPayload[];
+  runId?: string;
+  mode?: 'rag' | 'agent';
+  modelIdentity?: { provider: string; model: string; displayName: string };
+  agentSummary?: {
+    status: 'running' | 'completed' | 'cancelled' | 'error';
+    toolCallCount?: number;
+    sourceCount?: number;
+    error?: { message: string; technicalDetail?: string };
+  };
 }
 
 interface AiAssistantMessageActionPayload {

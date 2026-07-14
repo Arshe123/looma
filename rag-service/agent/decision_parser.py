@@ -224,6 +224,7 @@ def _build_messages_from_serialized_tools(
         '{"type":"tool_call","thought_summary":"一条不超过500字符、可展示的简短摘要",'
         '"tool":"可用工具名","arguments":{}}\n'
         '或 {"type":"final","answer":"给用户的最终答案"}\n'
+        "调用工具时 type 必须严格为 tool_call，type 绝不能填写工具名；工具名只放在 tool 字段。"
         "thought_summary 不是隐藏推理，不得输出详细思维过程。tool 必须来自下方运行时可用工具，"
         "arguments 必须符合对应 schema。运行时可用工具 JSON：\n"
         + serialized_tools

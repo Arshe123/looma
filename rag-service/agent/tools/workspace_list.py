@@ -21,7 +21,10 @@ from agent.tools.workspace_common import (
 
 
 class WorkspaceListArgs(StrictToolArgs):
-    path: str = "."
+    path: str = Field(
+        default=".",
+        description="A workspace-relative directory path. Use '.' for the workspace root. Absolute paths and '..' are rejected.",
+    )
     depth: int = Field(default=1, ge=0, le=5)
     limit: int = Field(default=200, ge=1, le=1000)
 

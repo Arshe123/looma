@@ -79,6 +79,17 @@ class WorkspaceToolsTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(model=model.__name__, arguments=arguments), self.assertRaises(ValidationError):
                 validate_tool_args(model, arguments)
 
+    def test_path_schemas_tell_models_to_use_workspace_relative_paths(self):
+        for model in (WorkspaceListArgs, FileReadArgs):
+            schema_builder = getattr(model, "model_json_schema", None)
+            schema = schema_builder() if schema_builder is not None else model.schema()
+            description = schema["properties"]["path"].get("description", "")
+            self.assertIn("workspace-relative", description)
+            self.assertIn("Absolute paths", description)
+        list_schema_builder = getattr(WorkspaceListArgs, "model_json_schema", None)
+        list_schema = list_schema_builder() if list_schema_builder is not None else WorkspaceListArgs.schema()
+        self.assertIn("'.'", list_schema["properties"]["path"]["description"])
+
     async def test_all_tools_register_and_execute_through_registry(self):
         registry = ToolRegistry()
         cases = (

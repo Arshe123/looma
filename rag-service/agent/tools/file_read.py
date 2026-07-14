@@ -22,7 +22,11 @@ READ_CHUNK_BYTES = 64 * 1024
 
 
 class FileReadArgs(StrictToolArgs):
-    path: str = Field(..., min_length=1)
+    path: str = Field(
+        ...,
+        min_length=1,
+        description="A workspace-relative file path such as 'README.md' or 'docs/guide.md'. Absolute paths and '..' are rejected.",
+    )
     start_line: int = Field(default=1, ge=1, le=100000)
     end_line: int | None = Field(default=None, ge=1, le=100000)
     max_chars: int = Field(default=20000, ge=1, le=50000)

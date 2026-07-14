@@ -168,6 +168,7 @@ class PromptBuilderTests(unittest.TestCase):
         self.assertEqual(system.role, "system")
         self.assertIn('"type":"tool_call"', system.content)
         self.assertIn('"type":"final"', system.content)
+        self.assertIn("type 绝不能填写工具名", system.content)
         self.assertIn("thought_summary", system.content)
         self.assertIn("500", system.content)
         self.assertIn("仅输出", system.content)

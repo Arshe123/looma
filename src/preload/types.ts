@@ -211,6 +211,31 @@ type RagStreamEventPayload =
   | { requestId: string; type: 'done'; result?: RagIndexPayload; status?: string; document_count?: number; file_count?: number; exists?: boolean; persist_dir?: string }
   | { requestId: string; type: 'error'; error: string; stepId?: string };
 
+type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read';
+interface AgentRunOptionsPayload {
+  input: string;
+  history?: RagChatMessagePayload[];
+  enabledTools?: AgentToolNamePayload[];
+  maxSteps?: number;
+  toolTimeoutSeconds?: number;
+  runTimeoutSeconds?: number;
+}
+interface AgentErrorPayload {
+  code: string;
+  message: string;
+  technical_detail?: string | null;
+  retryable: boolean;
+}
+type AgentStreamEventPayload =
+  | { requestId: string; type: 'run_started'; runId: string; startedAt: string }
+  | { requestId: string; type: 'timeline'; runId: string; step: number; stepId: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; summary: string }
+  | { requestId: string; type: 'tool_call'; runId: string; step: number; stepId: string; callId: string; tool: AgentToolNamePayload; arguments: Record<string, unknown>; thought_summary: string }
+  | { requestId: string; type: 'tool_result'; runId: string; step: number; stepId: string; callId: string; result: Record<string, unknown> }
+  | { requestId: string; type: 'sources'; runId: string; sources: Array<Record<string, unknown>> }
+  | { requestId: string; type: 'delta'; runId: string; text: string; content: string }
+  | { requestId: string; type: 'done'; runId: string; status: 'completed' | 'cancelled'; answer?: string }
+  | { requestId: string; type: 'error'; runId: string; error: AgentErrorPayload };
+
 interface OllamaDownloadProgressPayload {
   status: 'downloading' | 'completed' | 'error' | 'cancelled';
   receivedBytes: number;
@@ -297,6 +322,13 @@ interface ElectronAPI {
       delete: (workspaceId: string, relativePath: string) => Promise<Result<RagIndexPayload>>;
     };
     deleteIndex: (workspaceId: string) => Promise<Result<void>>;
+  };
+  agent: {
+    runStream: {
+      start: (requestId: string, workspaceId: string, options: AgentRunOptionsPayload) => Promise<Result<void>>;
+      cancel: (requestId: string) => Promise<Result<void>>;
+      onEvent: (listener: (payload: AgentStreamEventPayload) => void) => () => void;
+    };
   };
   fs: {
     listDir: (workspaceId: string, dirRelativePath: string) => Promise<Result<Array<{ name: string; relativePath: string; isDirectory: boolean; size: number; mtimeMs: number }>>>;

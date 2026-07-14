@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { workspaceService } from './services/workspace/workspaceService';
 import { fileSystemService } from './services/file/fileSystemService';
 import { activeRagStreams } from './ipc/ragIpc';
+import { abortAllAgentRuns } from './ipc/agentIpc';
 import { setWindowTitleForWorkspace } from './ipc/workspaceIpc';
 import './ipc/appIpc';
 import './ipc/fileIpc';
@@ -188,6 +189,7 @@ app.on('before-quit', async (e) => {
     controller.abort();
   }
   activeRagStreams.clear();
+  abortAllAgentRuns();
   
   try {
     const state = await workspaceService.getState();

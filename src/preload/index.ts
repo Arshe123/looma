@@ -22,6 +22,17 @@ type RagRequestStatsPayload = {
   distant_summary_enabled?: boolean;
   distant_summary_messages?: number;
 };
+type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read';
+type AgentRunOptionsPayload = {
+  input: string;
+  history?: RagChatMessagePayload[];
+  enabledTools?: AgentToolNamePayload[];
+  maxSteps?: number;
+  toolTimeoutSeconds?: number;
+  runTimeoutSeconds?: number;
+};
+type AgentStreamEventPayload = { requestId: string; type: string; runId: string } & Record<string, unknown>;
+
 type OllamaDownloadProgressPayload = {
   status: 'downloading' | 'completed' | 'error' | 'cancelled';
   receivedBytes: number;
@@ -128,6 +139,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
       delete: (workspaceId: string, relativePath: string) => ipcRenderer.invoke('rag:indexFile:delete', workspaceId, relativePath),
     },
     deleteIndex: (workspaceId: string) => ipcRenderer.invoke('rag:index:delete', workspaceId),
+  },
+  agent: {
+    runStream: {
+      start: (requestId: string, workspaceId: string, options: AgentRunOptionsPayload) =>
+        ipcRenderer.invoke('agent:runStream:start', requestId, workspaceId, options),
+      cancel: (requestId: string) => ipcRenderer.invoke('agent:runStream:cancel', requestId),
+      onEvent: (listener: (payload: AgentStreamEventPayload) => void) => {
+        const handler = (_: unknown, payload: AgentStreamEventPayload) => listener(payload);
+        ipcRenderer.on('agent:runStream:event', handler);
+        return () => ipcRenderer.removeListener('agent:runStream:event', handler);
+      },
+    },
   },
   fs: {
     listDir: (workspaceId: string, dirRelativePath: string) => ipcRenderer.invoke('fs:listDir', workspaceId, dirRelativePath),

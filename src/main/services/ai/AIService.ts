@@ -129,6 +129,43 @@ export interface RagChatMessage {
   name?: string
 }
 
+export type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read'
+
+export interface AgentRunOptions {
+  input: string
+  history?: RagChatMessage[]
+  enabledTools?: AgentToolName[]
+  maxSteps?: number
+  toolTimeoutSeconds?: number
+  runTimeoutSeconds?: number
+}
+
+export interface AgentErrorPayload {
+  code: string
+  message: string
+  technical_detail?: string | null
+  retryable: boolean
+}
+
+export interface AgentToolResultPayload {
+  tool: string
+  success: boolean
+  summary: string
+  data: unknown
+  error: AgentErrorPayload | null
+  truncated: boolean
+}
+
+export type AgentStreamEvent =
+  | { type: 'run_started'; runId: string; startedAt: string }
+  | { type: 'timeline'; runId: string; step: number; stepId: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; summary: string }
+  | { type: 'tool_call'; runId: string; step: number; stepId: string; callId: string; tool: AgentToolName; arguments: Record<string, unknown>; thought_summary: string }
+  | { type: 'tool_result'; runId: string; step: number; stepId: string; callId: string; result: AgentToolResultPayload }
+  | { type: 'sources'; runId: string; sources: Array<Record<string, unknown>> }
+  | { type: 'delta'; runId: string; text: string; content: string }
+  | { type: 'done'; runId: string; status: 'completed' | 'cancelled'; answer?: string }
+  | { type: 'error'; runId: string; error: AgentErrorPayload }
+
 export interface RagRequestStats {
   history_messages: number
   history_token_estimate: number
@@ -204,6 +241,111 @@ interface AIService {
     onEvent: (event: RagStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<Result<void>>
+
+  streamAgent(
+    workspacePath: string,
+    options: AgentRunOptions,
+    onEvent: (event: AgentStreamEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<Result<void>>
+}
+
+const AGENT_TOOLS: readonly AgentToolName[] = ['rag_search', 'workspace_list', 'workspace_search', 'file_read']
+const AGENT_TOOL_SET = new Set<string>(AGENT_TOOLS)
+const MAX_AGENT_INPUT_CHARS = 32_000
+const MAX_AGENT_HISTORY_MESSAGES = 50
+const MAX_AGENT_HISTORY_CHARS = 100_000
+const MAX_NDJSON_LINE_CHARS = 1_000_000
+
+const clampInteger = (value: unknown, fallback: number, min: number, max: number) => {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(min, Math.round(parsed)))
+}
+
+export const normalizeAgentRunOptions = (options: AgentRunOptions): Required<Omit<AgentRunOptions, 'history' | 'enabledTools'>> & {
+  history: RagChatMessage[]
+  enabledTools: AgentToolName[]
+} => {
+  const input = typeof options?.input === 'string' ? options.input.trim() : ''
+  if (!input) throw new Error('Agent input is required')
+  if (input.length > MAX_AGENT_INPUT_CHARS) throw new Error('Agent input is too large')
+  const rawTools = options.enabledTools ?? [...AGENT_TOOLS]
+  if (!Array.isArray(rawTools) || rawTools.some(tool => !AGENT_TOOL_SET.has(tool))) {
+    throw new Error('Unsupported Agent tool')
+  }
+  const enabledTools = [...new Set(rawTools)] as AgentToolName[]
+  const rawHistory = Array.isArray(options.history) ? options.history : []
+  if (rawHistory.length > MAX_AGENT_HISTORY_MESSAGES) throw new Error('Agent history has too many messages')
+  const history = rawHistory
+      .filter(item => item && ['user', 'assistant', 'system', 'tool'].includes(item.role) && typeof item.content === 'string' && item.content.trim())
+      .map(item => ({
+        role: item.role,
+        content: item.content.trim(),
+        name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : undefined,
+      }))
+  if (history.reduce((total, item) => total + item.content.length, 0) > MAX_AGENT_HISTORY_CHARS) {
+    throw new Error('Agent history is too large')
+  }
+  return {
+    input,
+    history,
+    enabledTools,
+    maxSteps: clampInteger(options.maxSteps, 8, 1, 50),
+    toolTimeoutSeconds: clampInteger(options.toolTimeoutSeconds, 30, 1, 300),
+    runTimeoutSeconds: clampInteger(options.runTimeoutSeconds, 300, 1, 1800),
+  }
+}
+
+const isRecord = (value: unknown): value is Record<string, any> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+const isString = (value: unknown): value is string => typeof value === 'string'
+const isNonEmptyString = (value: unknown): value is string => isString(value) && value.trim().length > 0
+const AGENT_ERROR_FIELDS = new Set(['code', 'message', 'technical_detail', 'retryable'])
+const isErrorPayload = (value: unknown): value is AgentErrorPayload => isRecord(value)
+  && Object.keys(value).every(key => AGENT_ERROR_FIELDS.has(key))
+  && isNonEmptyString(value.code) && isNonEmptyString(value.message) && typeof value.retryable === 'boolean'
+  && (value.technical_detail === undefined || value.technical_detail === null || isString(value.technical_detail))
+
+export const isAgentStreamEvent = (value: unknown): value is AgentStreamEvent => {
+  if (!isRecord(value) || !isNonEmptyString(value.type) || !isNonEmptyString(value.runId)) return false
+  switch (value.type) {
+    case 'run_started': return isNonEmptyString(value.startedAt)
+    case 'timeline': return Number.isInteger(value.step) && isNonEmptyString(value.stepId)
+      && ['pending', 'running', 'completed', 'failed', 'cancelled'].includes(value.status)
+      && isString(value.summary)
+    case 'tool_call': return Number.isInteger(value.step) && isNonEmptyString(value.stepId)
+      && isNonEmptyString(value.callId) && AGENT_TOOL_SET.has(value.tool) && isRecord(value.arguments)
+      && isString(value.thought_summary)
+    case 'tool_result': return Number.isInteger(value.step) && isNonEmptyString(value.stepId)
+      && isNonEmptyString(value.callId) && isRecord(value.result)
+      && AGENT_TOOL_SET.has(value.result.tool) && typeof value.result.success === 'boolean'
+      && isString(value.result.summary) && typeof value.result.truncated === 'boolean'
+      && (value.result.error === null || isErrorPayload(value.result.error))
+      && Object.prototype.hasOwnProperty.call(value.result, 'data')
+      && (value.result.success ? value.result.error === null : isErrorPayload(value.result.error))
+    case 'sources': return Array.isArray(value.sources) && value.sources.every(isRecord)
+    case 'delta': return isString(value.text) && isString(value.content) && value.text === value.content
+    case 'done': return ['completed', 'cancelled'].includes(value.status)
+      && (value.answer === undefined || isString(value.answer))
+    case 'error': return isErrorPayload(value.error)
+    default: return false
+  }
+}
+
+const toAgentRequestBody = (workspacePath: string, rawOptions: AgentRunOptions) => {
+  const options = normalizeAgentRunOptions(rawOptions)
+  return {
+    input: options.input,
+    workspace: { workspace_path: workspacePath },
+    history: options.history,
+    agent: {
+      enabled_tools: options.enabledTools,
+      max_steps: options.maxSteps,
+      tool_timeout_seconds: options.toolTimeoutSeconds,
+      run_timeout_seconds: options.runTimeoutSeconds,
+      allow_write: false,
+    },
+  }
 }
 
 const omitUndefined = <T extends Record<string, unknown>>(value: T): T => {
@@ -280,6 +422,8 @@ const streamNdjson = async <T>(
   onEvent: (event: T) => void,
   signal?: AbortSignal,
 ): Promise<Result<void>> => {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+  let reachedEof = false
   try {
     const response = await fetch(`${RAG_BASE_URL}${path}`, {
       method: 'POST',
@@ -297,7 +441,7 @@ const streamNdjson = async <T>(
       return { success: false, error: 'RAG 服务未返回可读取的流。' }
     }
 
-    const reader = response.body.getReader()
+    reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
     const parseLine = (line: string): Result<T> => {
@@ -313,22 +457,34 @@ const streamNdjson = async <T>(
 
     while (true) {
       const { done, value } = await reader.read()
-      if (done) break
+      if (done) {
+        reachedEof = true
+        break
+      }
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
 
       for (const rawLine of lines) {
+        if (rawLine.length > MAX_NDJSON_LINE_CHARS) {
+          return { success: false, error: 'RAG 流事件超过大小限制。' }
+        }
         const line = rawLine.trim()
         if (!line) continue
         const parsed = parseLine(line)
         if (!parsed.success) return { success: false, error: parsed.error }
         onEvent(parsed.data)
       }
+      if (buffer.length > MAX_NDJSON_LINE_CHARS) {
+        return { success: false, error: 'RAG 流事件超过大小限制。' }
+      }
     }
 
     buffer += decoder.decode()
     const finalLine = buffer.trim()
+    if (finalLine.length > MAX_NDJSON_LINE_CHARS) {
+      return { success: false, error: 'RAG 流事件超过大小限制。' }
+    }
     if (finalLine) {
       const parsed = parseLine(finalLine)
       if (!parsed.success) return { success: false, error: parsed.error }
@@ -339,6 +495,13 @@ const streamNdjson = async <T>(
   } catch (error: any) {
     if (error?.name === 'AbortError') return { success: true }
     return { success: false, error: `无法连接 RAG 服务: ${error?.message ?? String(error)}` }
+  } finally {
+    if (reader) {
+      if (!reachedEof) {
+        await reader.cancel().catch(() => {})
+      }
+      reader.releaseLock()
+    }
   }
 }
 
@@ -437,5 +600,25 @@ export const aiService: AIService = {
     signal?: AbortSignal,
   ): Promise<Result<void>> {
     return streamNdjson<RagStreamEvent>('/rag/query/stream', toRagQueryBody(workspacePath, question, aiSettings, history, requestStats), onEvent, signal)
+  },
+
+  async streamAgent(
+    workspacePath: string,
+    options: AgentRunOptions,
+    onEvent: (event: AgentStreamEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<Result<void>> {
+    return streamNdjson<unknown>(
+      '/agent/run/stream',
+      toAgentRequestBody(workspacePath, options),
+      (event) => {
+        if (isAgentStreamEvent(event)) {
+          onEvent(event)
+          return
+        }
+        console.warn('Ignored invalid Agent stream event')
+      },
+      signal,
+    )
   },
 }

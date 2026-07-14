@@ -1,6 +1,6 @@
 # AI Agent API（Canonical Contract）
 
-本文定义 Looma Renderer、Electron 主进程与 `rag-service` 之间的首版 Agent 契约，并记录当前已实现的只读 Tool Registry 与有限步运行时；Electron 转发层和正式 UI 将在后续阶段接入。
+本文定义 Looma Renderer、Electron 主进程与 `rag-service` 之间的首版 Agent 契约，并记录当前已实现的只读 Tool Registry、有限步运行时和 Electron 转发层；正式 UI 将在后续阶段接入。
 
 ## 1. 安全默认值与领域约束
 
@@ -26,21 +26,21 @@
 
 ## 2. Electron IPC
 
-Renderer 计划使用以下通道；主进程负责把 HTTP NDJSON 流转发为事件：
+Renderer 使用以下通道；主进程负责把 HTTP NDJSON 流转发为事件：
 
 ### `agent:runStream:start`
 
-Renderer 调用并传入 canonical request。主进程返回本次运行的 `runId`（或包含 `runId` 的启动结果），随后通过 `agent:runStream:event` 推送事件。
+Renderer 传入本地 `requestId`、`workspaceId` 和 `AgentRunOptions`。主进程返回 `Result<void>` 表示是否已启动，并通过 `agent:runStream:event` 推送同时包含原 `requestId` 与后端 `runId` 的事件。
 
 ### `agent:runStream:cancel`
 
-Renderer 传入：
+Renderer 传入本地请求 ID：
 
 ```json
-{ "runId": "run_01..." }
+{ "requestId": "request_01..." }
 ```
 
-取消必须按 `runId` 精确作用于一个运行，并可安全重复调用。
+取消按当前窗口与 `requestId` 精确作用于一个运行，并可安全重复调用。Renderer 不使用尚未返回或不可用的后端 `runId` 发起取消。
 
 ### `agent:runStream:event`
 
@@ -155,19 +155,19 @@ Renderer 传入：
 表示计划/步骤状态变化；`status` 建议为 `pending`、`running`、`completed`、`failed` 或 `cancelled`。
 
 ```json
-{"type":"timeline","runId":"run_01...","step":1,"status":"running","summary":"检索发布文档"}
+{"type":"timeline","runId":"run_01...","step":1,"stepId":"step_01...","status":"running","summary":"检索发布文档"}
 ```
 
 ### `tool_call`
 
 ```json
-{"type":"tool_call","runId":"run_01...","step":1,"callId":"call_01...","tool":"rag_search","arguments":{"query":"发布流程"},"thought_summary":"先检索发布文档"}
+{"type":"tool_call","runId":"run_01...","step":1,"stepId":"step_01...","callId":"call_01...","tool":"rag_search","arguments":{"query":"发布流程"},"thought_summary":"先检索发布文档"}
 ```
 
 ### `tool_result`
 
 ```json
-{"type":"tool_result","runId":"run_01...","step":1,"callId":"call_01...","result":{"tool":"rag_search","success":true,"summary":"找到 3 条结果","data":[],"error":null,"truncated":false}}
+{"type":"tool_result","runId":"run_01...","step":1,"stepId":"step_01...","callId":"call_01...","result":{"tool":"rag_search","success":true,"summary":"找到 3 条结果","data":[],"error":null,"truncated":false}}
 ```
 
 ### `sources`
@@ -211,3 +211,32 @@ Renderer 传入：
 ```
 
 流在 `done` 或 `error` 后结束。取消运行应通过 `timeline`/`done` 表达 `cancelled` 状态；事件生产者仍须保留原 `runId`。
+
+## Electron IPC 边界
+
+Renderer 不直接请求 FastAPI，也不传递 workspace 绝对路径或 AI 密钥。首版只通过 preload 暴露以下接口：
+
+```ts
+electronAPI.agent.runStream.start(requestId, workspaceId, {
+  input,
+  history,
+  enabledTools,
+  maxSteps,
+  toolTimeoutSeconds,
+  runTimeoutSeconds,
+})
+electronAPI.agent.runStream.cancel(requestId)
+electronAPI.agent.runStream.onEvent(listener)
+```
+
+对应 IPC channel 为：
+
+- `agent:runStream:start`
+- `agent:runStream:cancel`
+- `agent:runStream:event`
+
+main process 根据 `workspaceId` 从已登记 workspace 中解析真实路径，并固定 `allow_write=false`。`enabledTools` 仅接受 `rag_search`、`workspace_list`、`workspace_search`、`file_read`。
+
+活动运行按 `WebContents + requestId` 隔离；重复启动同一运行会取消旧请求，renderer 主动取消、窗口销毁和应用退出都会触发 `AbortController`。每个转发事件附带 renderer 的 `requestId` 和后端 `runId`。每个窗口最多同时运行 4 个 Agent，全局最多 32 个；输入最多 32,000 字符、历史最多 50 条且合计最多 100,000 字符，单条 NDJSON 事件最多 1,000,000 字符。
+
+Electron main 会对事件执行最小运行时校验。未知类型、缺少 `runId` 或关键字段不合法的事件不会进入 renderer，只记录不包含事件正文的技术日志。preload 的 `onEvent` 返回只移除自身 listener 的取消订阅函数。

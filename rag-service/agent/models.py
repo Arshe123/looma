@@ -38,7 +38,7 @@ class AgentError(StrictAgentModel):
 
 
 class ToolResult(StrictAgentModel):
-    tool: ToolName
+    tool: str = Field(..., min_length=1)
     success: bool
     summary: str = Field(..., min_length=1)
     data: Any = None

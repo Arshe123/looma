@@ -94,6 +94,20 @@ class AgentDecisionContractTest(unittest.TestCase):
 
 
 class ToolResultContractTest(unittest.TestCase):
+    def test_tool_result_accepts_unknown_non_empty_tool_name(self):
+        result = ToolResult(
+            tool="totally_unknown",
+            success=False,
+            summary="未知工具",
+            error=AgentError(code="tool_not_found", message="工具不存在"),
+        )
+
+        self.assertEqual(result.tool, "totally_unknown")
+
+    def test_tool_result_rejects_empty_tool_name(self):
+        with self.assertRaises(ValidationError):
+            ToolResult(tool="", success=True, summary="成功")
+
     def test_success_result_carries_summary_data_and_truncation(self):
         result = ToolResult(
             tool="file_read",

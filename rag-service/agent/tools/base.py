@@ -5,7 +5,7 @@ from typing import Any, Literal, Type
 
 from pydantic import BaseModel
 
-from schemas import ToolName
+from schemas import AIConfig, KnowledgeConfig, ToolName
 
 
 ToolRiskLevel = Literal["read", "write", "network", "terminal"]
@@ -23,6 +23,8 @@ class AgentToolContext:
     """Execution context shared by tools without coupling them to the runtime."""
 
     workspace_path: Path | str
+    ai_config: AIConfig | None = None
+    knowledge: KnowledgeConfig | None = None
 
 
 class AgentTool(ABC):

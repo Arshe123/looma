@@ -1,6 +1,6 @@
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, root_validator
+from pydantic import BaseModel, Field, root_validator, validator
 
 from schemas import ToolName
 
@@ -14,9 +14,18 @@ class StrictAgentModel(BaseModel):
 
 class AgentToolCall(StrictAgentModel):
     type: Literal["tool_call"]
-    thought_summary: str = Field(..., min_length=1)
+    thought_summary: str = Field(..., min_length=1, max_length=500)
     tool: ToolName
     arguments: dict[str, Any]
+
+    @validator("thought_summary", pre=True)
+    def normalize_thought_summary(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("thought_summary must not be blank")
+        return value
 
 
 class AgentFinalAnswer(StrictAgentModel):

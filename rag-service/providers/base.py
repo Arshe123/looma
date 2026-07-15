@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, List
 
 from agent.decision_parser import (
@@ -11,6 +12,25 @@ from schemas import ChatMessage
 
 
 _MAX_REPAIR_RESPONSE_CHARS = 20_000
+
+
+@dataclass(frozen=True)
+class StructuredChatResponse:
+    content: str
+    reasoning_content: str | None = None
+
+
+def _structured_content(response: str | StructuredChatResponse) -> str:
+    return response.content if isinstance(response, StructuredChatResponse) else response
+
+
+def _attach_provider_state(
+    decision: AgentDecision,
+    response: str | StructuredChatResponse,
+) -> AgentDecision:
+    if isinstance(response, StructuredChatResponse) and response.reasoning_content:
+        decision._provider_state["reasoning_content"] = response.reasoning_content
+    return decision
 
 
 class BaseChatProvider(ABC):
@@ -31,12 +51,14 @@ class BaseChatProvider(ABC):
             messages, tool_schemas
         )
         first_response = await self.chat_structured(prompted_messages)
+        first_content = _structured_content(first_response)
         try:
-            return parse_agent_decision_text(first_response, allowed_tools=allowed_tools)
+            decision = parse_agent_decision_text(first_content, allowed_tools=allowed_tools)
+            return _attach_provider_state(decision, first_response)
         except AgentDecisionParseError:
             failed_content = (
-                first_response[:_MAX_REPAIR_RESPONSE_CHARS]
-                if isinstance(first_response, str) and first_response.strip()
+                first_content[:_MAX_REPAIR_RESPONSE_CHARS]
+                if isinstance(first_content, str) and first_content.strip()
                 else "[invalid or empty response]"
             )
             repair_messages = [
@@ -51,9 +73,14 @@ class BaseChatProvider(ABC):
                 ),
             ]
             second_response = await self.chat_structured(repair_messages)
-            return parse_agent_decision_text(second_response, allowed_tools=allowed_tools)
+            decision = parse_agent_decision_text(
+                _structured_content(second_response), allowed_tools=allowed_tools
+            )
+            return _attach_provider_state(decision, second_response)
 
-    async def chat_structured(self, messages: List[ChatMessage]) -> str:
+    async def chat_structured(
+        self, messages: List[ChatMessage]
+    ) -> str | StructuredChatResponse:
         """Use provider-native structured output when available."""
 
         return await self.chat(messages)

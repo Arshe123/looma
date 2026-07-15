@@ -1,12 +1,14 @@
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, root_validator, validator
+from pydantic import BaseModel, Field, PrivateAttr, root_validator, validator
 
 from schemas import ToolName
 
 
 class StrictAgentModel(BaseModel):
     """Reject protocol drift instead of silently discarding unknown fields."""
+
+    _provider_state: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     class Config:
         extra = "forbid"

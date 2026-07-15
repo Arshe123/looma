@@ -119,8 +119,15 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         secret = "TOP-SECRET-DETAIL"
         sources = [{"path": "docs/a.md", "text": "x", "score": 0.9}]
         tool = FakeRagTool(result={"sources": sources, "blob": "z" * 13_000})
+        tool_decision = AgentToolCall(
+            type="tool_call",
+            thought_summary="检索资料",
+            tool="rag_search",
+            arguments={"value": "q"},
+        )
+        tool_decision._provider_state["reasoning_content"] = "PRIVATE_REASONING"
         provider = FakeProvider([
-            AgentToolCall(type="tool_call", thought_summary="检索资料", tool="rag_search", arguments={"value": "q"}),
+            tool_decision,
             AgentFinalAnswer(type="final", answer="答案"),
         ])
         events = await collect(
@@ -142,12 +149,21 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         observation = provider.calls[1][0][-1].content
         self.assertLessEqual(len(observation), 12000)
         parsed = json.loads(observation)
+        assistant_call = provider.calls[1][0][-2]
+        tool_result = provider.calls[1][0][-1]
+        self.assertEqual(tool_result.role, "tool")
+        self.assertEqual(tool_result.name, "rag_search")
+        self.assertEqual(tool_result.tool_call_id, assistant_call.tool_calls[0].id)
+        self.assertEqual(assistant_call.reasoning_content, "PRIVATE_REASONING")
+        self.assertEqual(assistant_call.tool_calls[0].function.name, "rag_search")
+        self.assertEqual(assistant_call.tool_calls[0].function.arguments, {"value": "q"})
         self.assertNotIn("technical_detail", json.dumps(parsed))
         self.assertNotIn(secret, observation)
         self.assertTrue(parsed["truncated"])
         assistant_decision = json.loads(provider.calls[1][0][-2].content)
         self.assertEqual(set(assistant_decision), {"type", "thought_summary", "tool", "arguments"})
         self.assertEqual(events[4]["sources"], sources)
+        self.assertNotIn("PRIVATE_REASONING", json.dumps(events, ensure_ascii=False))
 
     async def test_tool_timeout_cancels_tool_and_model_can_recover(self):
         tool = FakeTool(delay=1)

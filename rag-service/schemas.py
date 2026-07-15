@@ -52,10 +52,24 @@ class KnowledgeConfig(BaseModel):
     chunking_strategy: ChunkingStrategy = "fixed"
 
 
+class ChatToolFunction(BaseModel):
+    name: str = Field(..., min_length=1)
+    arguments: dict[str, Any]
+
+
+class ChatToolCall(BaseModel):
+    id: str = Field(..., min_length=1)
+    type: Literal["function"] = "function"
+    function: ChatToolFunction
+
+
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str = Field(..., min_length=1)
     name: Optional[str] = None
+    tool_calls: Optional[list[ChatToolCall]] = None
+    tool_call_id: Optional[str] = None
+    reasoning_content: Optional[str] = None
 
 
 class RequestStats(BaseModel):

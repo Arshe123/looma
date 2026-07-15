@@ -72,9 +72,5 @@ const emit = defineEmits<{
         选择带有执行过程的回答后，详情会显示在这里。
       </div>
     </div>
-
-    <footer class="shrink-0 border-t border-border-soft px-3.5 py-2 text-[9px] text-text-subtle">
-      过程与回答分开展示 · 本地工作空间
-    </footer>
   </aside>
 </template>

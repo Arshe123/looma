@@ -22,7 +22,7 @@ from agent.models import (
 from agent.prompts import decision_prompt, final_only_prompt, observation_prompt
 from agent.tools.base import AgentToolContext
 from agent.tools.registry import ToolRegistry
-from schemas import AgentConfig, ChatMessage
+from schemas import AgentConfig, ChatMessage, ChatToolCall, ChatToolFunction
 
 
 class _RunCancelled(Exception):
@@ -246,9 +246,22 @@ class AgentRuntime:
                 )
                 active_step = None
                 messages.extend([
-                    ChatMessage(role="assistant", content=decision_prompt(decision)),
                     ChatMessage(
-                        role="tool", name=decision.tool,
+                        role="assistant",
+                        content=decision_prompt(decision),
+                        reasoning_content=decision._provider_state.get("reasoning_content"),
+                        tool_calls=[ChatToolCall(
+                            id=call_id,
+                            function=ChatToolFunction(
+                                name=decision.tool,
+                                arguments=decision.arguments,
+                            ),
+                        )],
+                    ),
+                    ChatMessage(
+                        role="tool",
+                        name=decision.tool,
+                        tool_call_id=call_id,
                         content=observation_prompt(result),
                     ),
                 ])

@@ -10,11 +10,11 @@ from agent.decision_parser import (
     parse_agent_decision_text,
 )
 from agent.models import AgentFinalAnswer, AgentToolCall
-from providers.base import BaseChatProvider
-from providers.ollama_provider import OllamaChatProvider
+from providers.base import BaseChatProvider, StructuredChatResponse
+from providers.ollama_provider import OllamaChatProvider, _ollama_chat_messages
 from providers.openai_compatible_provider import OpenAICompatibleChatProvider
-from providers.openai_provider import OpenAIChatProvider
-from schemas import ChatMessage
+from providers.openai_provider import OpenAIChatProvider, _openai_chat_messages
+from schemas import ChatMessage, ChatToolCall, ChatToolFunction
 
 
 class AgentDecisionTextTests(unittest.TestCase):
@@ -302,6 +302,20 @@ class StructuredCompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.answer, "ok")
         self.assertEqual(len(provider.calls), 1)
 
+    async def test_preserves_private_reasoning_state_without_serializing_it(self):
+        provider = FakeChatProvider([StructuredChatResponse(
+            content='{"type":"tool_call","thought_summary":"搜索",'
+                    '"tool":"rag_search","arguments":{"query":"学习"}}',
+            reasoning_content="PRIVATE_REASONING",
+        )])
+
+        result = await provider.complete_structured(
+            [], [{"name": "rag_search", "parameters": {"type": "object"}}]
+        )
+
+        self.assertEqual(result._provider_state["reasoning_content"], "PRIVATE_REASONING")
+        self.assertNotIn("PRIVATE_REASONING", result.model_dump_json())
+
     async def test_repairs_once_after_parse_failure(self):
         failed = "not json SECRET_RAW"
         provider = FakeChatProvider(
@@ -411,6 +425,57 @@ class StructuredCompletionTests(unittest.IsolatedAsyncioTestCase):
                     provider_class.complete_structured,
                     BaseChatProvider.complete_structured,
                 )
+
+
+class ProviderToolMessageTests(unittest.TestCase):
+    def setUp(self):
+        call = ChatToolCall(
+            id="call_123",
+            function=ChatToolFunction(
+                name="rag_search",
+                arguments={"query": "发布流程"},
+            ),
+        )
+        self.messages = [
+            ChatMessage(
+                role="assistant",
+                content='{"type":"tool_call"}',
+                reasoning_content="PRIVATE_REASONING",
+                tool_calls=[call],
+            ),
+            ChatMessage(
+                role="tool",
+                name="rag_search",
+                tool_call_id="call_123",
+                content='{"status":"ok"}',
+            ),
+        ]
+
+    def test_openai_uses_native_tool_call_id_protocol(self):
+        payloads = _openai_chat_messages(self.messages)
+
+        self.assertEqual(payloads[0]["tool_calls"][0]["id"], "call_123")
+        self.assertEqual(payloads[0]["reasoning_content"], "PRIVATE_REASONING")
+        self.assertEqual(payloads[0]["tool_calls"][0]["type"], "function")
+        self.assertEqual(
+            payloads[0]["tool_calls"][0]["function"]["arguments"],
+            '{"query":"发布流程"}',
+        )
+        self.assertEqual(payloads[1]["role"], "tool")
+        self.assertEqual(payloads[1]["tool_call_id"], "call_123")
+
+    def test_ollama_uses_native_tool_name_protocol(self):
+        payloads = _ollama_chat_messages(self.messages)
+
+        self.assertEqual(payloads[0]["tool_calls"][0]["function"], {
+            "name": "rag_search",
+            "arguments": {"query": "发布流程"},
+        })
+        self.assertEqual(payloads[1], {
+            "role": "tool",
+            "content": '{"status":"ok"}',
+            "tool_name": "rag_search",
+        })
 
 
 if __name__ == "__main__":

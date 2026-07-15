@@ -7,6 +7,26 @@ from schemas import ChatMessage, ChatModelConfig, EmbeddingModelConfig
 from providers.base import BaseChatProvider, BaseEmbeddingProvider
 
 
+def _ollama_chat_messages(messages: List[ChatMessage]) -> list[dict]:
+    payloads = []
+    for message in messages:
+        payload = {"role": message.role, "content": message.content}
+        if message.tool_calls:
+            payload["tool_calls"] = [
+                {
+                    "function": {
+                        "name": call.function.name,
+                        "arguments": call.function.arguments,
+                    }
+                }
+                for call in message.tool_calls
+            ]
+        if message.role == "tool" and message.name:
+            payload["tool_name"] = message.name
+        payloads.append(payload)
+    return payloads
+
+
 class OllamaChatProvider(BaseChatProvider):
     def __init__(self, config: ChatModelConfig):
         self.model = config.model
@@ -24,7 +44,7 @@ class OllamaChatProvider(BaseChatProvider):
 
         payload = {
             "model": self.model,
-            "messages": [m.model_dump() for m in messages],
+            "messages": _ollama_chat_messages(messages),
             "stream": False,
             "options": {
                 "temperature": self.temperature
@@ -45,7 +65,7 @@ class OllamaChatProvider(BaseChatProvider):
 
         payload = {
             "model": self.model,
-            "messages": [m.model_dump() for m in messages],
+            "messages": _ollama_chat_messages(messages),
             "stream": True,
             "options": {
                 "temperature": self.temperature

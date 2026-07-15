@@ -1,9 +1,23 @@
+import json
 from typing import AsyncIterator, List
 
 from openai import AsyncOpenAI
 
 from schemas import ChatMessage, ChatModelConfig, EmbeddingModelConfig
-from providers.base import BaseChatProvider, BaseEmbeddingProvider
+from providers.base import BaseChatProvider, BaseEmbeddingProvider, StructuredChatResponse
+
+
+def _openai_chat_messages(messages: List[ChatMessage]) -> list[dict]:
+    payloads = [message.model_dump(exclude_none=True) for message in messages]
+    for payload in payloads:
+        for call in payload.get("tool_calls", []):
+            call["function"]["arguments"] = json.dumps(
+                call["function"]["arguments"],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+    return payloads
 
 
 class OpenAIChatProvider(BaseChatProvider):
@@ -23,17 +37,40 @@ class OpenAIChatProvider(BaseChatProvider):
     async def chat(self, messages: List[ChatMessage]) -> str:
         response = await self.client.chat.completions.create(
             model=self.model,
-            messages=[m.model_dump() for m in messages],
+            messages=_openai_chat_messages(messages),
             temperature=self.temperature,
             max_tokens=self.max_tokens
         )
 
         return response.choices[0].message.content or ""
 
+    async def chat_structured(self, messages: List[ChatMessage]) -> StructuredChatResponse:
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=_openai_chat_messages(messages),
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
+        message = response.choices[0].message
+        reasoning_content = getattr(message, "reasoning_content", None)
+        if not isinstance(reasoning_content, str):
+            model_extra = getattr(message, "model_extra", None)
+            reasoning_content = (
+                model_extra.get("reasoning_content")
+                if isinstance(model_extra, dict)
+                else None
+            )
+        return StructuredChatResponse(
+            content=message.content or "",
+            reasoning_content=(
+                reasoning_content if isinstance(reasoning_content, str) else None
+            ),
+        )
+
     async def stream_chat(self, messages: List[ChatMessage]) -> AsyncIterator[str]:
         stream = await self.client.chat.completions.create(
             model=self.model,
-            messages=[m.model_dump() for m in messages],
+            messages=_openai_chat_messages(messages),
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             stream=True

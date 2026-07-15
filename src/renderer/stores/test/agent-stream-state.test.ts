@@ -61,6 +61,12 @@ describe('agent stream state', () => {
     settings.settings.ai.chat.model = 'gpt-4o-mini'
   })
 
+  it('creates request IDs accepted by the Agent IPC boundary', () => {
+    const requestId = useAiAssistantStore().createStreamRequestId()
+
+    expect(requestId).toMatch(/^[A-Za-z0-9_-]{1,128}$/)
+  })
+
   it('snapshots model identity at request time and keeps the user prompt as a user bubble', async () => {
     const conversationId = createConversation()
     const run = await startAgent(conversationId)

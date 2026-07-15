@@ -193,6 +193,7 @@ describe('workspace ai assistant temporary conversation state', () => {
                 { id: 'safe', type: 'source', path: 'docs/guide.md', metadata: { source: 'docs/guide.md', score: 0.9, secret: 'drop-me' } },
                 { id: 'absolute', type: 'source', path: 'C:\\Users\\admin\\secret.md', metadata: { source: 'C:\\Users\\admin\\secret.md', score: 0.1 } },
                 { id: 'traversal', type: 'source', path: '../secret.md', metadata: { file_path: '../secret.md', path: '../secret.md' } },
+                { id: 'internal', type: 'source', path: '.LOOMA/ai/state.json', metadata: { source: '.LOOMA/ai/state.json' } },
               ],
             }],
           },
@@ -212,10 +213,11 @@ describe('workspace ai assistant temporary conversation state', () => {
       modelIdentity: { provider: 'openai', model: 'gpt-4o-mini', displayName: 'GPT 4o Mini' },
       agentSummary: { status: 'completed', toolCallCount: 2, sourceCount: 1 },
     })
-    expect(agentMessage.timeline?.[0].outputs.map(output => output.path)).toEqual(['docs/guide.md', undefined, undefined])
+    expect(agentMessage.timeline?.[0].outputs.map(output => output.path)).toEqual(['docs/guide.md', undefined, undefined, undefined])
     expect(agentMessage.timeline?.[0].outputs.map(output => output.metadata)).toEqual([
       { source: 'docs/guide.md', score: 0.9 },
       { score: 0.1 },
+      undefined,
       undefined,
     ])
 
@@ -234,6 +236,32 @@ describe('workspace ai assistant temporary conversation state', () => {
         })],
       }),
     )
+  })
+
+  it('marks persisted running Agent messages as interrupted after reload', async () => {
+    const store = useWorkspaceStore()
+    ;(window.electronAPI.workspaceAi.get as any).mockResolvedValue({
+      success: true,
+      data: {
+        conversations: [{
+          id: 'interrupted', title: 'Interrupted', createdAt: 1, updatedAt: 2, draft: '',
+          messages: [{
+            id: 1, role: 'assistant', text: '', createdAt: 1, mode: 'agent',
+            agentSummary: { status: 'running', toolCallCount: 1 },
+            timeline: [{ id: 'active', title: '读取文件', status: 'active', startedAt: 1, outputs: [] }],
+          }],
+        }],
+        activeConversationId: 'interrupted',
+      },
+    })
+
+    await store.loadAiAssistantState('workspace-1')
+
+    const message = store.aiAssistant.conversations[0].messages[0]
+    expect(message.agentSummary).toMatchObject({ status: 'cancelled', toolCallCount: 1 })
+    expect(message.text).toBe('应用退出，本次 Agent 运行已中断。')
+    expect(message.timeline?.[0]).toMatchObject({ status: 'completed', detail: '应用退出，本次 Agent 运行已中断。' })
+    expect(message.timeline?.[0].endedAt).toEqual(expect.any(Number))
   })
 
 })

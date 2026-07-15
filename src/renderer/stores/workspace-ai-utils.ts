@@ -31,3 +31,16 @@ export const getAiAssistantHistoryGroup = (timestamp: number, now = Date.now()):
 
 export const hasUserAiAssistantMessage = (conversation: AiAssistantConversation) =>
   conversation.messages.some((message) => message.role === 'user' && message.text.trim())
+
+export const normalizeAiAssistantSourcePath = (value: unknown, workspacePath?: string) => {
+  const normalized = typeof value === 'string' ? value.trim().replace(/\\+/g, '/') : ''
+  if (!normalized || normalized.startsWith('//')) return ''
+  const workspace = workspacePath?.trim().replace(/\\+/g, '/').replace(/\/+$/, '')
+  const candidate = workspace && normalized.toLowerCase().startsWith(`${workspace.toLowerCase()}/`)
+    ? normalized.slice(workspace.length + 1).replace(/^\/+/, '')
+    : normalized
+  if (!candidate || candidate.startsWith('/') || candidate.startsWith('//') || /^[a-zA-Z]:\//.test(candidate)) return ''
+  const segments = candidate.split('/').filter(Boolean)
+  if (!segments.length || segments.some(segment => segment === '.' || segment === '..' || segment.includes(':') || segment.toLowerCase() === '.looma')) return ''
+  return segments.join('/')
+}

@@ -51,6 +51,7 @@ export interface AiAssistantTimelineOutput {
   type: AiAssistantTimelineOutputType
   title?: string
   content?: string
+  technicalDetail?: string
   value?: string | number
   unit?: string
   path?: string

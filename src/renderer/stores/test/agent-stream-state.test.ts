@@ -248,6 +248,42 @@ describe('agent stream state', () => {
     expect(agentApi.start).toHaveBeenCalledOnce()
   })
 
+  it('cancels an Agent during history preparation without starting IPC', async () => {
+    const conversationId = createConversation()
+    const store = useAiAssistantStore()
+    let resolveHistory!: (value: { history: []; stats: Record<string, never> }) => void
+    vi.spyOn(store, 'buildConversationHistoryForRequest').mockImplementation(() => new Promise(resolve => {
+      resolveHistory = resolve as typeof resolveHistory
+    }) as any)
+
+    const start = store.startAgentInConversation({ workspaceId: 'workspace-1', conversationId, text: '稍后取消', aiName: 'AI' })
+    expect(store.isConversationRunningAgent(conversationId)).toBe(true)
+    expect(await store.cancelAgentConversation(conversationId)).toEqual({ success: true })
+    resolveHistory({ history: [], stats: {} })
+
+    expect(await start).toEqual({ success: true, cancelled: true })
+    expect(agentApi.start).not.toHaveBeenCalled()
+    expect(store.agentStartingConversationIds[conversationId]).toBeUndefined()
+  })
+
+  it('locks RAG during history preparation against an Agent start', async () => {
+    const conversationId = createConversation()
+    const store = useAiAssistantStore()
+    let resolveHistory!: (value: { history: []; stats: Record<string, never> }) => void
+    vi.spyOn(store, 'buildConversationHistoryForRequest').mockImplementation(() => new Promise(resolve => {
+      resolveHistory = resolve as typeof resolveHistory
+    }) as any)
+
+    const ragStart = store.askInConversation({ workspaceId: 'workspace-1', conversationId, text: 'RAG 问题', aiName: 'AI' })
+    expect(store.isConversationAsking(conversationId)).toBe(true)
+    const agentStart = await store.startAgentInConversation({ workspaceId: 'workspace-1', conversationId, text: 'Agent 问题', aiName: 'AI' })
+    expect(agentStart.success).toBe(false)
+
+    resolveHistory({ history: [], stats: {} })
+    await ragStart
+    expect((window as any).electronAPI.rag.askStream.start).toHaveBeenCalledOnce()
+  })
+
   it('deduplicates tool events by callId and does not regress a completed result', async () => {
     const conversationId = createConversation()
     const run = await startAgent(conversationId)
@@ -281,5 +317,49 @@ describe('agent stream state', () => {
     expect(result).toEqual({ success: false, error: '取消失败' })
     expect(store.agentRunsByConversationId[conversationId]?.requestId).toBe(run.requestId)
     expect(store.agentRequestIdToConversationId[run.requestId]).toBe(conversationId)
+  })
+
+  it('finishes active timeline steps when cancellation succeeds', async () => {
+    const conversationId = createConversation()
+    const run = await startAgent(conversationId)
+    const store = useAiAssistantStore()
+    store.handleAgentStreamEvent({
+      requestId: run.requestId, type: 'tool_call', runId: 'run-cancel', step: 1,
+      stepId: 'step-active', callId: 'call-active', tool: 'file_read', arguments: {}, thought_summary: '',
+    })
+
+    await store.cancelAgentConversation(conversationId)
+
+    const message = useWorkspaceStore().getAiAssistantConversationById(conversationId)!.messages
+      .find(item => item.id === run.assistantMessageId)!
+    expect(message.agentSummary?.status).toBe('cancelled')
+    expect(message.timeline?.every(step => step.status !== 'active' && step.status !== 'pending')).toBe(true)
+    expect(message.timeline?.find(step => step.id === 'step-active')).toMatchObject({
+      status: 'completed',
+      detail: '运行已取消。',
+    })
+    expect(message.timeline?.find(step => step.id === 'step-active')?.endedAt).toEqual(expect.any(Number))
+  })
+
+  it('persists tool failure technical detail in the collapsed error output', async () => {
+    const conversationId = createConversation()
+    const run = await startAgent(conversationId)
+    const store = useAiAssistantStore()
+    store.handleAgentStreamEvent({
+      requestId: run.requestId, type: 'tool_result', runId: 'run-tool-error', step: 1,
+      stepId: 'step-error', callId: 'call-error',
+      result: {
+        tool: 'file_read', success: false, summary: '读取失败',
+        error: { message: '无法读取文件。', technical_detail: 'WorkspaceSecurityError' },
+      },
+    })
+
+    const message = useWorkspaceStore().getAiAssistantConversationById(conversationId)!.messages
+      .find(item => item.id === run.assistantMessageId)!
+    expect(message.timeline?.find(step => step.id === 'step-error')?.outputs[0]).toMatchObject({
+      type: 'error',
+      content: '读取失败',
+      technicalDetail: 'WorkspaceSecurityError',
+    })
   })
 })

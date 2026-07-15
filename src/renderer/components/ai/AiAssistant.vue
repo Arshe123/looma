@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Bot, Clipboard, Copy, Database, FileText, History, Loader2, MessageSquare, Paperclip, Plus, RotateCcw, Send, Settings, Sparkles } from 'lucide-vue-next'
+import { Bot, Clipboard, Copy, Database, History, Loader2, MessageSquare, Plus, RotateCcw, Send, Settings, Sparkles, Square, Workflow } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import { useAiAssistantStore } from '@/renderer/stores/ai-assistant'
-import type { AiAssistantMessage, AiAssistantMessageAction, AiAssistantTimelineOutput, AiAssistantTimelineStep } from '@/renderer/stores/workspace'
+import { normalizeAiAssistantSourcePath } from '@/renderer/stores/workspace-ai-utils'
+import type { AiAssistantMessage, AiAssistantMessageAction, AiAssistantTimelineOutput } from '@/renderer/stores/workspace'
+import type { AgentMode } from '@/shared/utils/app-settings'
 import AiMarkdown from './AiMarkdown.vue'
-import { getAiTimelineStepDuration } from './aiTimeline'
+import AgentModeSwitch from './AgentModeSwitch.vue'
+import AgentTimelineDrawer from './AgentTimelineDrawer.vue'
+import { deriveAgentUiState } from './agentUiState'
 
 const workspaceStore = useWorkspaceStore()
 const settingsStore = useSettingsStore()
@@ -19,6 +23,10 @@ const messagesRef = ref<HTMLElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 const contextMenuRef = ref<HTMLElement | null>(null)
 const copiedMessageId = ref<number | null>(null)
+const selectedMode = ref<AgentMode>('rag')
+const hasInitializedMode = ref(false)
+const drawerOpen = ref(false)
+const drawerMessageId = ref<number | undefined>()
 const aiContextMenu = ref({
   visible: false,
   top: 0,
@@ -32,21 +40,41 @@ const activeConversation = computed(() => workspaceStore.activeAiAssistantConver
 const activeConversationId = computed(() => workspaceStore.aiAssistant.activeConversationId)
 const messages = computed(() => activeConversation.value.messages)
 const isAsking = computed(() => aiAssistStore.isConversationAsking(activeConversationId.value))
+const isAgentRunning = computed(() => aiAssistStore.isConversationRunningAgent(activeConversationId.value))
+const isAnyConversationRunning = computed(() => (
+  Object.keys(aiAssistStore.streamsByConversationId).length > 0
+  || Object.keys(aiAssistStore.ragStartingConversationIds).length > 0
+  || Object.keys(aiAssistStore.agentRunsByConversationId).length > 0
+  || Object.keys(aiAssistStore.agentStartingConversationIds).length > 0
+))
+const isGenerating = computed(() => isAsking.value || isAgentRunning.value)
 const isIndexing = computed(() => aiAssistStore.isWorkspaceIndexing(workspaceStore.activeWorkspaceId))
 const hasIndex = computed(() => aiAssistStore.getWorkspaceIndexResult(workspaceStore.activeWorkspaceId)?.exists ?? checkedHasIndex.value)
 const question = computed({
   get: () => activeConversation.value.draft,
   set: (value: string) => workspaceStore.setAiAssistantDraft(value),
 })
-const canAsk = computed(() => hasWorkspace.value && hasIndex.value && !isCheckingIndex.value && !isIndexing.value && !isAsking.value && question.value.trim().length > 0)
-const canAskWithText = computed(() => hasWorkspace.value && hasIndex.value && !isCheckingIndex.value && !isIndexing.value && !isAsking.value)
+const modeNeedsIndex = computed(() => selectedMode.value === 'rag')
+const canAsk = computed(() => (
+  hasWorkspace.value
+  && (!modeNeedsIndex.value || hasIndex.value)
+  && (!modeNeedsIndex.value || (!isCheckingIndex.value && !isIndexing.value))
+  && !isGenerating.value
+  && question.value.trim().length > 0
+))
+const canAskWithText = computed(() => (
+  hasWorkspace.value
+  && (!modeNeedsIndex.value || hasIndex.value)
+  && (!modeNeedsIndex.value || (!isCheckingIndex.value && !isIndexing.value))
+  && !isGenerating.value
+))
 const inputPlaceholder = computed(() => {
   if (!hasWorkspace.value) return '请先打开工作空间'
-  if (isCheckingIndex.value) return '正在检查索引...'
-  if (!hasIndex.value) return '请先建立索引'
-  if (isIndexing.value) return '正在建立索引...'
-  if (isAsking.value) return '正在思考...'
-  return '询问当前工作空间中的笔记'
+  if (modeNeedsIndex.value && isCheckingIndex.value) return '正在检查索引...'
+  if (modeNeedsIndex.value && !hasIndex.value) return '请先建立索引'
+  if (modeNeedsIndex.value && isIndexing.value) return '正在建立索引...'
+  if (isGenerating.value) return selectedMode.value === 'agent' ? 'Agent 正在执行...' : '正在思考...'
+  return selectedMode.value === 'agent' ? '让 Agent 读取并分析当前工作空间' : '询问当前工作空间中的笔记'
 })
 const providerLabels: Record<string, string> = {
   ollama: 'Ollama',
@@ -62,7 +90,14 @@ const aiDisplayName = computed(() => {
   const model = chat.model?.trim() || '未选择模型'
   return `${provider} · ${model}`
 })
-const getMessageAiName = (message: { aiName?: string }) => message.aiName?.trim() || 'Looma AI'
+const getMessageAiName = (message: AiAssistantMessage) => message.modelIdentity?.displayName || message.aiName?.trim() || 'Looma AI'
+const drawerState = computed(() => deriveAgentUiState(messages.value, drawerMessageId.value))
+const getMessageProcessState = (message: AiAssistantMessage) => deriveAgentUiState([message], message.id)
+
+const openProcessDrawer = (message: AiAssistantMessage) => {
+  drawerMessageId.value = message.id
+  drawerOpen.value = true
+}
 
 const scrollToBottom = () => {
   nextTick(() => {
@@ -198,57 +233,13 @@ const handleDocumentClick = (event: MouseEvent) => {
   closeAiContextMenu()
 }
 
-const getTimelineStatusClass = (status: AiAssistantTimelineStep['status']) => {
-  if (status === 'active') return 'bg-accent'
-  if (status === 'completed') return 'bg-text-subtle'
-  if (status === 'error') return 'bg-danger'
-  return 'bg-border-soft'
-}
-
-const getTimelineStatusLabel = (status: AiAssistantTimelineStep['status']) => {
-  if (status === 'active') return '进行中'
-  if (status === 'completed') return '完成'
-  if (status === 'error') return '失败'
-  return '等待'
-}
-
-const getTimelineOutputText = (output: AiAssistantTimelineOutput) => {
-  if (output.content) return output.content
-  if (output.path) return output.path
-  if (output.value !== undefined) return `${output.value}${output.unit || ''}`
-  if (output.metadata) return JSON.stringify(output.metadata)
-  return ''
-}
-
-const normalizeTimelineSourcePath = (path?: string) => {
-  const value = (path || '').trim().replace(/\\+/g, '/')
-  if (!value) return ''
-  const workspacePath = workspaceStore.activeWorkspace?.path?.replace(/\\+/g, '/').replace(/\/+$/, '')
-  if (workspacePath && value.toLowerCase().startsWith(`${workspacePath.toLowerCase()}/`)) {
-    return value.slice(workspacePath.length + 1).replace(/^\/+/, '')
-  }
-  return value.replace(/^\/+/, '')
-}
-
 const getTimelineSourcePath = (output: AiAssistantTimelineOutput) => {
   const metadata = output.metadata || {}
   const path = output.path
     || (typeof metadata.source === 'string' ? metadata.source : '')
     || (typeof metadata.file_path === 'string' ? metadata.file_path : '')
     || (typeof metadata.path === 'string' ? metadata.path : '')
-  return normalizeTimelineSourcePath(path)
-}
-
-const getTimelineSourceName = (output: AiAssistantTimelineOutput) => {
-  const path = getTimelineSourcePath(output)
-  if (!path) return output.title || '检索片段'
-  return path.split('/').filter(Boolean).pop() || path
-}
-
-const getTimelineSourceScore = (output: AiAssistantTimelineOutput) => {
-  const score = output.metadata?.score
-  if (typeof score !== 'number' || !Number.isFinite(score)) return ''
-  return score >= 0 && score <= 1 ? `${Math.round(score * 100)}%` : score.toFixed(3)
+  return normalizeAiAssistantSourcePath(path, workspaceStore.activeWorkspace?.path)
 }
 
 const openTimelineSource = (output: AiAssistantTimelineOutput) => {
@@ -306,7 +297,7 @@ const checkIndexStatus = async () => {
     if (workspaceStore.activeWorkspaceId !== workspaceId) return
     if (!result.success) {
       setBuildIndexActionsDisabled(false)
-      ensureBuildIndexPrompt()
+      if (selectedMode.value === 'rag') ensureBuildIndexPrompt()
       console.warn(result.error || '检查索引状态失败。')
       return
     }
@@ -317,7 +308,7 @@ const checkIndexStatus = async () => {
       setBuildIndexActionsDisabled(true)
     } else {
       setBuildIndexActionsDisabled(false)
-      ensureBuildIndexPrompt()
+      if (selectedMode.value === 'rag') ensureBuildIndexPrompt()
     }
   } finally {
     isCheckingIndex.value = false
@@ -341,23 +332,45 @@ const indexWorkspace = async () => {
 const askQuestion = async () => {
   const workspaceId = getActiveWorkspaceId()
   const text = question.value.trim()
-  if (!workspaceId || !text || isAsking.value) return
-  if (!hasIndex.value) {
+  if (!workspaceId || !text || isGenerating.value) return
+  if (selectedMode.value === 'rag' && !hasIndex.value) {
     ensureBuildIndexPrompt()
     return
   }
 
   const conversationId = workspaceStore.ensureAiAssistantConversationForRequest()
-  const result = await aiAssistStore.askInConversation({
-    workspaceId,
-    conversationId,
-    text,
-    aiName: aiDisplayName.value,
-  })
+  if (selectedMode.value === 'agent') {
+    drawerMessageId.value = undefined
+    drawerOpen.value = true
+  }
+  const result = selectedMode.value === 'agent'
+    ? await aiAssistStore.startAgentInConversation({
+        workspaceId,
+        conversationId,
+        text,
+        aiName: aiDisplayName.value,
+      })
+    : await aiAssistStore.askInConversation({
+        workspaceId,
+        conversationId,
+        text,
+        aiName: aiDisplayName.value,
+      })
   if (!result?.success && result?.error) {
     appendMessage('system', result.error)
   }
   scrollToBottom()
+}
+
+const cancelCurrentGeneration = async () => {
+  const conversationId = activeConversationId.value
+  if (!conversationId) return
+  if (isAgentRunning.value) {
+    const result = await aiAssistStore.cancelAgentConversation(conversationId)
+    if (result && !result.success) appendMessage('system', result.error || '取消 Agent 运行失败。')
+  } else if (isAsking.value) {
+    await aiAssistStore.cancelConversation(conversationId)
+  }
 }
 
 const copyAssistantMessage = async (message: AiAssistantMessage) => {
@@ -379,7 +392,7 @@ const copyAssistantMessage = async (message: AiAssistantMessage) => {
 const regenerateAssistantMessage = async (message: AiAssistantMessage) => {
   const workspaceId = getActiveWorkspaceId()
   const conversationId = activeConversationId.value
-  if (!workspaceId || !conversationId || isAsking.value || message.role !== 'assistant') return
+  if (!workspaceId || !conversationId || isGenerating.value || message.role !== 'assistant' || message.mode === 'agent') return
   if (!hasIndex.value) {
     ensureBuildIndexPrompt()
     return
@@ -435,12 +448,21 @@ const isActionDisabled = (action: AiAssistantMessageAction) =>
 
 const isMessageStreaming = (message: AiAssistantMessage) => {
   const stream = aiAssistStore.getConversationStream(activeConversationId.value)
-  return Boolean(stream && message.role === 'assistant' && message.id === stream.assistantMessageId)
+  const agentRun = aiAssistStore.getConversationAgentRun(activeConversationId.value)
+  return Boolean(message.role === 'assistant' && (
+    message.id === stream?.assistantMessageId || message.id === agentRun?.assistantMessageId
+  ))
 }
 
 const backfillLegacyAiNames = () => {
   if (!settingsStore.isLoaded) return
   workspaceStore.backfillAiAssistantMessageNames(aiDisplayName.value)
+}
+
+const initializeMode = () => {
+  if (!settingsStore.isLoaded || hasInitializedMode.value) return
+  selectedMode.value = settingsStore.aiSettings.agent.defaultMode
+  hasInitializedMode.value = true
 }
 
 const createConversation = () => {
@@ -453,7 +475,9 @@ const createConversation = () => {
 onMounted(() => {
   document.addEventListener('click', handleDocumentClick)
   aiAssistStore.ensureStreamEventSubscription()
+  aiAssistStore.ensureAgentStreamEventSubscription()
   workspaceStore.removeAiAssistantMessagesByText(['Not Found'])
+  initializeMode()
   backfillLegacyAiNames()
   scrollToBottom()
   checkIndexStatus().catch(console.error)
@@ -474,18 +498,34 @@ watch(() => workspaceStore.activeWorkspaceId, (_nextWorkspaceId, oldWorkspaceId)
 })
 watch(activeConversationId, () => {
   closeAiContextMenu()
+  drawerMessageId.value = undefined
+  drawerOpen.value = Boolean(isAgentRunning.value)
   backfillLegacyAiNames()
-  if (!hasIndex.value && !isCheckingIndex.value && !workspaceStore.aiAssistant.isTemporaryConversation) {
+  if (selectedMode.value === 'rag' && !hasIndex.value && !isCheckingIndex.value && !workspaceStore.aiAssistant.isTemporaryConversation) {
     ensureBuildIndexPrompt()
   }
   scrollToBottom()
 })
-watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
+watch(() => settingsStore.isLoaded, () => {
+  initializeMode()
+  backfillLegacyAiNames()
+})
+watch(isAgentRunning, (running) => {
+  if (!running) return
+  const run = aiAssistStore.getConversationAgentRun(activeConversationId.value)
+  drawerMessageId.value = run?.assistantMessageId
+  drawerOpen.value = true
+})
+watch(selectedMode, (mode) => {
+  if (mode === 'rag' && !hasIndex.value && !isCheckingIndex.value && !workspaceStore.aiAssistant.isTemporaryConversation) {
+    ensureBuildIndexPrompt()
+  }
+})
 </script>
 
 <template>
-  <div class="h-full min-h-0 flex flex-col bg-panel text-text-main">
-    <header class="shrink-0 border-b border-border-soft bg-panel px-4 py-4">
+  <div class="relative h-full min-h-0 overflow-hidden flex flex-col bg-panel text-text-main">
+    <header class="shrink-0 border-b border-border-soft bg-panel px-4 py-3">
       <div class="flex items-center gap-3">
         <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent shadow-sm">
           <Sparkles :size="18" />
@@ -535,6 +575,19 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
             <Plus :size="16" />
           </button>
         </div>
+      </div>
+      <div class="mt-2.5 flex items-center justify-between gap-2">
+        <AgentModeSwitch v-model="selectedMode" :disabled="isAnyConversationRunning" />
+        <button
+          type="button"
+          class="inline-flex h-7 items-center gap-1.5 rounded-md border border-border-soft bg-panel px-2 text-[10px] text-text-muted transition-colors hover:bg-panel-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="!drawerState.message"
+          :aria-expanded="drawerOpen"
+          @click="drawerOpen = !drawerOpen"
+        >
+          <Workflow :size="12" />
+          过程 {{ drawerState.timeline.length || '' }}
+        </button>
       </div>
     </header>
 
@@ -596,76 +649,6 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
             </div>
 
             <div
-              v-if="message.role === 'assistant' && message.timeline?.length"
-              class="mx-auto mb-3 max-w-[760px] select-text text-[12px] text-text-muted"
-            >
-              <div class="relative flex flex-col gap-1.5 before:absolute before:left-[3px] before:top-2 before:bottom-2 before:w-px before:bg-border-soft">
-                <details
-                  v-for="step in message.timeline"
-                  :key="`${message.id}:timeline:${step.id}`"
-                  class="group relative pl-4"
-                  :open="step.status === 'active' || step.outputs.length > 0"
-                >
-                  <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-1.5 py-1 text-[12px] leading-5 transition-colors hover:text-text-main [&::-webkit-details-marker]:hidden">
-                    <span
-                      class="absolute left-0 top-2.5 h-1.5 w-1.5 rounded-full ring-4 ring-panel-soft"
-                      :class="getTimelineStatusClass(step.status)"
-                    />
-                    <span class="min-w-0 flex-1 truncate font-medium text-text-muted">
-                      {{ step.title }}
-                    </span>
-                    <span class="shrink-0 text-[10px] text-text-subtle">
-                      {{ getTimelineStatusLabel(step.status) }} · {{ getAiTimelineStepDuration(step) }}
-                    </span>
-                  </summary>
-                  <div
-                    v-if="step.detail || step.outputs.length"
-                    class="mb-2 ml-1 px-2.5 py-1.5 text-[11px] leading-5 text-text-muted"
-                  >
-                    <div v-if="step.detail">
-                      {{ step.detail }}
-                    </div>
-                    <div
-                      v-for="output in step.outputs"
-                      :key="`${step.id}:${output.id}`"
-                      class="mt-2 first:mt-0"
-                    >
-                      <button
-                        v-if="output.type === 'source'"
-                        type="button"
-                        class="group w-full rounded-xl border border-border-soft bg-panel/70 px-3 py-2.5 text-left cursor-pointer transition-colors hover:border-accent/30 hover:bg-panel"
-                        :disabled="!getTimelineSourcePath(output)"
-                        @click="openTimelineSource(output)"
-                      >
-                        <div class="mb-1.5 flex items-center justify-between gap-3">
-                          <span class="flex min-w-0 items-center gap-2">
-                            <FileText :size="13" class="shrink-0 text-accent" />
-                            <span class="truncate text-[12px] font-medium text-text-main">
-                              {{ getTimelineSourceName(output) }}
-                            </span>
-                          </span>
-                          <span v-if="getTimelineSourceScore(output)" class="shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] text-accent">
-                            {{ getTimelineSourceScore(output) }}
-                          </span>
-                        </div>
-                        <div v-if="getTimelineSourcePath(output)" class="mb-1 truncate text-[10px] text-text-subtle">
-                          {{ getTimelineSourcePath(output) }}
-                        </div>
-                        <p class="line-clamp-3 text-[11px] leading-5 text-text-muted">
-                          {{ output.content || getTimelineOutputText(output) }}
-                        </p>
-                      </button>
-                      <template v-else>
-                        <span v-if="output.title" class="font-medium text-text-main">{{ output.title }}：</span>
-                        <span>{{ getTimelineOutputText(output) }}</span>
-                      </template>
-                    </div>
-                  </div>
-                </details>
-              </div>
-            </div>
-
-            <div
               :class="[
                 'break-words text-sm leading-6 select-text',
                 message.role === 'assistant' ? 'mx-auto max-w-[760px] px-1 py-1 text-text-main' : '',
@@ -701,6 +684,18 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
                 正在生成
               </div>
 
+              <button
+                v-if="message.role === 'assistant' && (message.timeline?.length || message.agentSummary)"
+                type="button"
+                class="mx-auto mt-3 flex h-7 items-center gap-1.5 rounded-md border border-border-soft bg-panel px-2.5 text-[10px] text-text-muted transition-colors hover:border-accent/40 hover:bg-accent-soft hover:text-text-main"
+                @click="openProcessDrawer(message)"
+              >
+                <Workflow :size="12" />
+                <span>{{ getMessageProcessState(message).statusLabel }}</span>
+                <span v-if="getMessageProcessState(message).toolCallCount">· {{ getMessageProcessState(message).toolCallCount }} 次工具</span>
+                <span v-if="getMessageProcessState(message).sourceCount">· {{ getMessageProcessState(message).sourceCount }} 个来源</span>
+              </button>
+
               <div
                 v-if="message.role === 'assistant' && !isMessageStreaming(message) && !(message.actions && message.actions.length)"
                 class="mt-4 flex flex-wrap items-center justify-center gap-2 pt-1"
@@ -715,6 +710,7 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
                   {{ copiedMessageId === message.id ? '已复制' : '复制' }}
                 </button>
                 <button
+                  v-if="message.mode !== 'agent'"
                   class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-text-muted"
                   type="button"
                   :disabled="isAsking || isIndexing || isCheckingIndex || !hasWorkspace || !hasIndex"
@@ -776,7 +772,7 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
           v-model="question"
           class="h-[58px] w-full resize-none bg-transparent text-sm leading-6 text-text-main outline-none placeholder:text-text-subtle disabled:text-text-muted select-text"
           :placeholder="inputPlaceholder"
-          :disabled="!hasWorkspace || !hasIndex || isCheckingIndex || isIndexing || isAsking"
+          :disabled="!hasWorkspace || (modeNeedsIndex && (!hasIndex || isCheckingIndex || isIndexing)) || isGenerating"
           @keydown="handleComposerKeydown"
           @contextmenu="openComposerContextMenu"
         />
@@ -807,20 +803,36 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
           </div>
 
           <button
+            v-if="isGenerating"
+            type="button"
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-danger/10 text-danger transition-colors hover:bg-danger/20"
+            aria-label="停止生成"
+            @click="cancelCurrentGeneration"
+          >
+            <Square :size="13" fill="currentColor" />
+          </button>
+          <button
+            v-else
             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors"
             :class="canAsk
               ? 'bg-accent text-white hover:bg-accent-hover cursor-pointer shadow-sm'
               : 'bg-accent-soft text-text-muted cursor-not-allowed'"
             type="submit"
             :disabled="!canAsk"
-            :aria-label="isAsking ? '发送中' : '发送'"
+            aria-label="发送"
           >
-            <Loader2 v-if="isAsking" :size="14" class="animate-spin" />
-            <Send v-else :size="14" />
+            <Send :size="14" />
           </button>
         </div>
       </form>
     </footer>
+
+    <AgentTimelineDrawer
+      :open="drawerOpen"
+      :state="drawerState"
+      @close="drawerOpen = false"
+      @open-source="openTimelineSource"
+    />
 
     <div
       v-if="aiContextMenu.visible"

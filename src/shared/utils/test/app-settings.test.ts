@@ -64,3 +64,62 @@ describe('normalizeAppSettings RAG chunking strategy', () => {
     expect(settings.ai.conversationContext.strategy).toBe('sliding_window')
   })
 })
+
+describe('normalizeAppSettings agent settings', () => {
+  it('defaults to RAG mode with eight steps and all read-only tools enabled', () => {
+    const settings = normalizeAppSettings({})
+
+    expect(settings.ai.agent).toEqual({
+      defaultMode: 'rag',
+      maxSteps: 8,
+      enabledTools: [
+        'rag_search',
+        'workspace_list',
+        'workspace_search',
+        'file_read',
+      ],
+    })
+  })
+
+  it('preserves valid agent settings through normalization', () => {
+    const settings = normalizeAppSettings({
+      ai: {
+        agent: {
+          defaultMode: 'agent',
+          maxSteps: 24,
+          enabledTools: ['workspace_search', 'file_read'],
+        },
+      },
+    })
+
+    expect(settings.ai.agent).toEqual({
+      defaultMode: 'agent',
+      maxSteps: 24,
+      enabledTools: ['workspace_search', 'file_read'],
+    })
+  })
+
+  it('normalizes invalid agent values and de-duplicates tools', () => {
+    const settings = normalizeAppSettings({
+      ai: {
+        agent: {
+          defaultMode: 'chat',
+          maxSteps: 99,
+          enabledTools: [
+            'rag_search',
+            'terminal',
+            'rag_search',
+            'workspace_list',
+            'web',
+          ],
+        },
+      },
+    })
+
+    expect(settings.ai.agent).toEqual({
+      defaultMode: 'rag',
+      maxSteps: 50,
+      enabledTools: ['rag_search', 'workspace_list'],
+    })
+  })
+})

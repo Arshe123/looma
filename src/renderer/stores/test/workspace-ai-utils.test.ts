@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AiAssistantConversation } from '../workspace-types'
 import {
   getAiAssistantConversationTitle,
+  normalizeAiAssistantSourcePath,
   sortAiAssistantConversations,
   getAiAssistantHistoryGroup,
 } from '../workspace-ai-utils'
@@ -23,6 +24,16 @@ const makeConversation = (overrides: Partial<AiAssistantConversation>): AiAssist
 })
 
 describe('workspace ai assistant utilities', () => {
+  it('only accepts safe workspace-relative source paths', () => {
+    expect(normalizeAiAssistantSourcePath('docs/guide.md')).toBe('docs/guide.md')
+    expect(normalizeAiAssistantSourcePath('/etc/passwd')).toBe('')
+    expect(normalizeAiAssistantSourcePath('C:/workspace/docs/guide.md', 'C:/workspace')).toBe('docs/guide.md')
+    expect(normalizeAiAssistantSourcePath('C:/workspace/../outside.md', 'C:/workspace')).toBe('')
+    expect(normalizeAiAssistantSourcePath('../outside.md')).toBe('')
+    expect(normalizeAiAssistantSourcePath('.LOOMA/ai/state.json')).toBe('')
+    expect(normalizeAiAssistantSourcePath('//server/share/docs/guide.md', '//server/share')).toBe('')
+  })
+
   it('derives a title from the first non-empty user message', () => {
     expect(getAiAssistantConversationTitle([
       { id: 1, role: 'assistant', text: 'hello', createdAt: 1 },

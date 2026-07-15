@@ -122,7 +122,7 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
     const path = value.trim().replace(/\\+/g, '/')
     if (!path || path.startsWith('/') || /^[a-zA-Z]:\//.test(path) || path.startsWith('//')) return undefined
     const segments = path.split('/').filter(Boolean)
-    if (!segments.length || segments.some(segment => segment === '.' || segment === '..' || segment.includes(':'))) return undefined
+    if (!segments.length || segments.some(segment => segment === '.' || segment === '..' || segment.includes(':') || segment.toLowerCase() === '.looma')) return undefined
     return segments.join('/')
   }
 
@@ -172,6 +172,7 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
               type: output.type,
               title: typeof output.title === 'string' ? output.title : undefined,
               content: typeof output.content === 'string' ? output.content : undefined,
+              technicalDetail: typeof output.technicalDetail === 'string' ? output.technicalDetail.slice(0, 2000) : undefined,
               value: typeof output.value === 'string' || typeof output.value === 'number' ? output.value : undefined,
               unit: typeof output.unit === 'string' ? output.unit : undefined,
               path: normalizeTimelinePath(output.path),
@@ -216,21 +217,32 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
           && (message.role === 'assistant' || message.role === 'user' || message.role === 'system')
           && typeof message.text === 'string',
         ),
-      ).map((message) => ({
-        id: message.id,
-        role: message.role,
-        text: message.text,
-        createdAt: typeof message.createdAt === 'number' ? message.createdAt : message.id,
-        aiName: typeof (message as any).aiName === 'string' && (message as any).aiName.trim()
-          ? (message as any).aiName.trim()
-          : undefined,
-        actions: normalizeActions(message.actions),
-        timeline: normalizeTimeline(message.timeline),
-        ...(typeof (message as any).runId === 'string' && (message as any).runId.trim() ? { runId: (message as any).runId.trim() } : {}),
-        ...((message as any).mode === 'rag' || (message as any).mode === 'agent' ? { mode: (message as any).mode } : {}),
-        ...(normalizeModelIdentity((message as any).modelIdentity) ? { modelIdentity: normalizeModelIdentity((message as any).modelIdentity) } : {}),
-        ...(normalizeAgentSummary((message as any).agentSummary) ? { agentSummary: normalizeAgentSummary((message as any).agentSummary) } : {}),
-      }))
+      ).map((message) => {
+        const wasRunning = (message as any).agentSummary?.status === 'running'
+        const interruptedAt = Date.now()
+        const timeline = normalizeTimeline(message.timeline)?.map(step => (
+          wasRunning && (step.status === 'active' || step.status === 'pending')
+            ? { ...step, status: 'completed' as const, detail: '应用退出，本次 Agent 运行已中断。', endedAt: interruptedAt }
+            : step
+        ))
+        const agentSummary = normalizeAgentSummary((message as any).agentSummary)
+        if (wasRunning && agentSummary) agentSummary.status = 'cancelled'
+        return {
+          id: message.id,
+          role: message.role,
+          text: wasRunning && !message.text.trim() ? '应用退出，本次 Agent 运行已中断。' : message.text,
+          createdAt: typeof message.createdAt === 'number' ? message.createdAt : message.id,
+          aiName: typeof (message as any).aiName === 'string' && (message as any).aiName.trim()
+            ? (message as any).aiName.trim()
+            : undefined,
+          actions: normalizeActions(message.actions),
+          timeline,
+          ...(typeof (message as any).runId === 'string' && (message as any).runId.trim() ? { runId: (message as any).runId.trim() } : {}),
+          ...((message as any).mode === 'rag' || (message as any).mode === 'agent' ? { mode: (message as any).mode } : {}),
+          ...(normalizeModelIdentity((message as any).modelIdentity) ? { modelIdentity: normalizeModelIdentity((message as any).modelIdentity) } : {}),
+          ...(agentSummary ? { agentSummary } : {}),
+        }
+      })
       : []
   )
 

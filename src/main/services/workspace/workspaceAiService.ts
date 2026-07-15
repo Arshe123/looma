@@ -62,6 +62,7 @@ interface AiAssistantTimelineOutput {
   type: AiAssistantTimelineOutputType
   title?: string
   content?: string
+  technicalDetail?: string
   value?: string | number
   unit?: string
   path?: string
@@ -181,7 +182,7 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
     const path = value.trim().replace(/\\+/g, '/')
     if (!path || path.startsWith('/') || /^[a-zA-Z]:\//.test(path) || path.startsWith('//')) return undefined
     const segments = path.split('/').filter(Boolean)
-    if (!segments.length || segments.some(segment => segment === '.' || segment === '..' || segment.includes(':'))) return undefined
+    if (!segments.length || segments.some(segment => segment === '.' || segment === '..' || segment.includes(':') || segment.toLowerCase() === '.looma')) return undefined
     return segments.join('/')
   }
 
@@ -210,6 +211,7 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
           type: item.type,
           title: typeof item.title === 'string' ? item.title : undefined,
           content: typeof item.content === 'string' ? item.content : undefined,
+          technicalDetail: typeof item.technicalDetail === 'string' ? item.technicalDetail.slice(0, 2000) : undefined,
           value: typeof item.value === 'string' || typeof item.value === 'number' ? item.value : undefined,
           unit: typeof item.unit === 'string' ? item.unit : undefined,
           path: normalizeTimelinePath(item.path),

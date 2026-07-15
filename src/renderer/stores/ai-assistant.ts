@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { useSettingsStore } from './settings'
 import { useWorkspaceStore } from './workspace'
 import type { AiAssistantMessage, AiAssistantTimelineOutput, AiAssistantTimelineStep } from './workspace'
+import { normalizeAiAssistantSourcePath } from './workspace-ai-utils'
 import {
   applyRagTimelineEvent,
   createIndexTimeline,
@@ -93,15 +94,26 @@ type AgentConversationRunState = {
   toolCallStates: Record<string, 'called' | 'completed'>
 }
 
+type ConversationPreparingState = {
+  workspaceId: string
+  cancelled: boolean
+}
+
 const compactText = (value: unknown, maxLength: number) => (
   typeof value === 'string' ? value.trim().slice(0, maxLength) : ''
 )
+
+const finishCancelledTimeline = (timeline: AiAssistantTimelineStep[], endedAt = Date.now()) => timeline.map(step => (
+  step.status === 'active' || step.status === 'pending'
+    ? { ...step, status: 'completed' as const, detail: '运行已取消。', endedAt }
+    : step
+))
 
 const normalizeAgentRelativePath = (value: unknown) => {
   const path = compactText(value, 500).replace(/\\+/g, '/')
   if (!path || path.startsWith('/') || /^[a-zA-Z]:\//.test(path) || path.startsWith('//')) return ''
   const segments = path.split('/').filter(Boolean)
-  if (!segments.length || segments.some(segment => segment === '.' || segment === '..' || segment.includes(':'))) return ''
+  if (!segments.length || segments.some(segment => segment === '.' || segment === '..' || segment.includes(':') || segment.toLowerCase() === '.looma')) return ''
   return segments.join('/')
 }
 
@@ -238,16 +250,6 @@ const createConversationContextTimeline = (stats: RagRequestStatsPayload, starte
   ],
 }]
 
-const normalizeTimelineSourcePath = (path?: string, workspacePath?: string) => {
-  const value = (path || '').trim().replace(/\\+/g, '/')
-  if (!value) return ''
-  const normalizedWorkspacePath = workspacePath?.replace(/\\+/g, '/').replace(/\/+$/, '')
-  if (normalizedWorkspacePath && value.toLowerCase().startsWith(`${normalizedWorkspacePath.toLowerCase()}/`)) {
-    return value.slice(normalizedWorkspacePath.length + 1).replace(/^\/+/, '')
-  }
-  return value.replace(/^\/+/, '')
-}
-
 const createSourceOutputs = (sources: RagSourcePayload[], workspacePath?: string): AiAssistantTimelineOutput[] =>
   sources.slice(0, 5).map((source, index) => {
     const path = typeof source.metadata?.source === 'string'
@@ -262,7 +264,7 @@ const createSourceOutputs = (sources: RagSourcePayload[], workspacePath?: string
       type: 'source',
       title: path ? `来源 ${index + 1}` : `片段 ${index + 1}`,
       content: source.text.slice(0, 260),
-      path: normalizeTimelineSourcePath(path, workspacePath),
+      path: normalizeAiAssistantSourcePath(path, workspacePath),
       metadata: {
         ...source.metadata,
         score: source.score,
@@ -282,11 +284,12 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     agentRunsByConversationId: {} as Record<string, AgentConversationRunState>,
     agentRequestIdToConversationId: {} as Record<string, string>,
     subscribeAgentStreamEvents: null as null | (() => void),
-    agentStartingConversationIds: {} as Record<string, true>,
+    agentStartingConversationIds: {} as Record<string, ConversationPreparingState>,
+    ragStartingConversationIds: {} as Record<string, ConversationPreparingState>,
   }),
   getters: {
     isConversationAsking: (state) => (conversationId: string | null | undefined) => (
-      Boolean(conversationId && state.streamsByConversationId[conversationId])
+      Boolean(conversationId && (state.streamsByConversationId[conversationId] || state.ragStartingConversationIds[conversationId]))
     ),
     getConversationStream: (state) => (conversationId: string | null | undefined) => (
       conversationId ? state.streamsByConversationId[conversationId] || null : null
@@ -457,18 +460,26 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       this.ensureAgentStreamEventSubscription()
       const conversationId = options.conversationId || useWorkspaceStore().ensureAiAssistantConversationForRequest()
       if (this.agentRunsByConversationId[conversationId] || this.agentStartingConversationIds[conversationId]) return { success: false, error: '当前会话已有 Agent 正在运行。' }
-      if (this.streamsByConversationId[conversationId]) return { success: false, error: '当前会话正在生成，请等待完成或停止后再发送。' }
+      if (this.streamsByConversationId[conversationId] || this.ragStartingConversationIds[conversationId]) return { success: false, error: '当前会话正在生成，请等待完成或停止后再发送。' }
       if (!useWorkspaceStore().getAiAssistantConversationById(conversationId)) return { success: false, error: 'Conversation not found' }
-      this.agentStartingConversationIds[conversationId] = true
+      this.agentStartingConversationIds[conversationId] = { workspaceId: options.workspaceId, cancelled: false }
 
       const settingsStore = useSettingsStore()
       let history: RagChatMessagePayload[]
       try {
         ;({ history } = await this.buildConversationHistoryForRequest(conversationId, text))
       } catch (error: any) {
+        if (this.agentStartingConversationIds[conversationId]?.cancelled) {
+          delete this.agentStartingConversationIds[conversationId]
+          return { success: true, cancelled: true }
+        }
         delete this.agentStartingConversationIds[conversationId]
         const runtimeError = formatAiRuntimeError(error?.message ?? String(error), '整理对话上下文失败。')
         return { success: false, error: runtimeError.message }
+      }
+      if (!this.agentStartingConversationIds[conversationId] || this.agentStartingConversationIds[conversationId].cancelled) {
+        delete this.agentStartingConversationIds[conversationId]
+        return { success: true, cancelled: true }
       }
       const modelIdentity = {
         provider: settingsStore.aiSettings.chat.provider,
@@ -610,13 +621,14 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
         const summary = compactText(payload.result.summary, 600)
           || compactText(payload.result.error?.message ?? payload.result.error, 600)
           || (success ? '工具执行完成。' : '工具执行失败。')
+        const technicalDetail = success ? undefined : compactText(payload.result.error?.technical_detail, 2000) || undefined
         run.timeline = applyRagTimelineEvent(run.timeline, {
           type: 'timeline',
           stepId: payload.stepId,
           title: `调用 ${compactText(payload.result.tool, 80) || '工具'}`,
           status: success ? 'completed' : 'error',
           detail: summary,
-          outputs: [{ type: success ? 'text' : 'error', title: success ? '结果摘要' : '错误', content: summary }],
+          outputs: [{ type: success ? 'text' : 'error', title: success ? '结果摘要' : '错误', content: summary, technicalDetail }],
         })
         workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, run.assistantMessageId, run.timeline, { persist: false })
         return
@@ -666,6 +678,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       if (!run) return
       const finalStatus = status === 'cancelled' ? 'cancelled' : 'completed'
       const finalText = run.assistantText.trim() || (status === 'cancelled' ? '已取消本次 Agent 运行。' : 'Agent 没有返回可展示的回答。')
+      if (status === 'cancelled') run.timeline = finishCancelledTimeline(run.timeline)
       const workspaceStore = useWorkspaceStore()
       workspaceStore.updateAiAssistantMessageTextInConversation(conversationId, run.assistantMessageId, finalText, { persist: false })
       workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, run.assistantMessageId, run.timeline, { persist: false })
@@ -699,6 +712,11 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     },
 
     async cancelAgentConversation(conversationId: string) {
+      const preparing = this.agentStartingConversationIds[conversationId]
+      if (preparing) {
+        preparing.cancelled = true
+        return { success: true }
+      }
       const run = this.agentRunsByConversationId[conversationId]
       if (!run) return
       const requestId = run.requestId
@@ -823,10 +841,29 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
 
       this.ensureStreamEventSubscription()
       const conversationId = options.conversationId || useWorkspaceStore().ensureAiAssistantConversationForRequest()
-      if (this.streamsByConversationId[conversationId]) return { success: false, error: '当前会话正在生成，请等待完成或停止后再发送。' }
+      if (this.streamsByConversationId[conversationId] || this.ragStartingConversationIds[conversationId]) return { success: false, error: '当前会话正在生成，请等待完成或停止后再发送。' }
+      if (this.agentRunsByConversationId[conversationId] || this.agentStartingConversationIds[conversationId]) return { success: false, error: '当前会话已有 Agent 正在运行。' }
       if (!useWorkspaceStore().getAiAssistantConversationById(conversationId)) return { success: false, error: 'Conversation not found' }
+      this.ragStartingConversationIds[conversationId] = { workspaceId: options.workspaceId, cancelled: false }
 
-      const { history, stats } = await this.buildConversationHistoryForRequest(conversationId, text)
+      let history: RagChatMessagePayload[]
+      let stats: RagRequestStatsPayload
+      try {
+        ;({ history, stats } = await this.buildConversationHistoryForRequest(conversationId, text))
+      } catch (error: any) {
+        if (this.ragStartingConversationIds[conversationId]?.cancelled) {
+          delete this.ragStartingConversationIds[conversationId]
+          return { success: true, cancelled: true }
+        }
+        delete this.ragStartingConversationIds[conversationId]
+        const runtimeError = formatAiRuntimeError(error?.message ?? String(error), '整理对话上下文失败。')
+        return { success: false, error: runtimeError.message }
+      }
+      if (!this.ragStartingConversationIds[conversationId] || this.ragStartingConversationIds[conversationId].cancelled) {
+        delete this.ragStartingConversationIds[conversationId]
+        return { success: true, cancelled: true }
+      }
+      delete this.ragStartingConversationIds[conversationId]
       useWorkspaceStore().setAiAssistantDraft('')
       useWorkspaceStore().appendAiAssistantMessageToConversation(conversationId, 'user', text)
       const assistantMessageId = useWorkspaceStore().appendAiAssistantMessageToConversation(conversationId, 'assistant', '', undefined, { aiName: options.aiName })
@@ -875,15 +912,34 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     }) {
       const text = options.text.trim()
       if (!options.workspaceId || !options.conversationId || !text) return { success: false, error: 'Question is required' }
-      if (this.streamsByConversationId[options.conversationId]) return { success: false, error: '当前会话正在生成，请等待完成或停止后再重新生成。' }
+      if (this.streamsByConversationId[options.conversationId] || this.ragStartingConversationIds[options.conversationId]) return { success: false, error: '当前会话正在生成，请等待完成或停止后再重新生成。' }
+      if (this.agentRunsByConversationId[options.conversationId] || this.agentStartingConversationIds[options.conversationId]) return { success: false, error: '当前会话已有 Agent 正在运行。' }
 
       this.ensureStreamEventSubscription()
+      this.ragStartingConversationIds[options.conversationId] = { workspaceId: options.workspaceId, cancelled: false }
+      let history: RagChatMessagePayload[]
+      let stats: RagRequestStatsPayload
+      try {
+        ;({ history, stats } = await this.buildConversationHistoryForRequest(options.conversationId, text, {
+          sourceMessages: options.sourceMessages,
+          displaySummaryMessage: false,
+        }))
+      } catch (error: any) {
+        if (this.ragStartingConversationIds[options.conversationId]?.cancelled) {
+          delete this.ragStartingConversationIds[options.conversationId]
+          return { success: true, cancelled: true }
+        }
+        delete this.ragStartingConversationIds[options.conversationId]
+        const runtimeError = formatAiRuntimeError(error?.message ?? String(error), '整理对话上下文失败。')
+        return { success: false, error: runtimeError.message }
+      }
+      if (!this.ragStartingConversationIds[options.conversationId] || this.ragStartingConversationIds[options.conversationId].cancelled) {
+        delete this.ragStartingConversationIds[options.conversationId]
+        return { success: true, cancelled: true }
+      }
+      delete this.ragStartingConversationIds[options.conversationId]
       useWorkspaceStore().updateAiAssistantMessageTextInConversation(options.conversationId, options.assistantMessageId, '', { persist: false })
       useWorkspaceStore().updateAiAssistantMessageMetaInConversation(options.conversationId, options.assistantMessageId, { aiName: options.aiName })
-      const { history, stats } = await this.buildConversationHistoryForRequest(options.conversationId, text, {
-        sourceMessages: options.sourceMessages,
-        displaySummaryMessage: false,
-      })
       const requestId = this.createStreamRequestId()
       const timeline = createConversationContextTimeline(stats)
       this.streamsByConversationId[options.conversationId] = {
@@ -1004,6 +1060,11 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     },
 
     async cancelConversation(conversationId: string) {
+      const preparing = this.ragStartingConversationIds[conversationId]
+      if (preparing) {
+        preparing.cancelled = true
+        return { success: true }
+      }
       const stream = this.streamsByConversationId[conversationId]
       if (!stream) return
       await (window as any).electronAPI.rag.askStream.cancel(stream.requestId).catch(() => {})
@@ -1020,9 +1081,17 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       const agentConversationIds = Object.values(this.agentRunsByConversationId as Record<string, AgentConversationRunState>)
         .filter((run) => run.workspaceId === workspaceId)
         .map((run) => run.conversationId)
+      const preparingRagConversationIds = Object.entries(this.ragStartingConversationIds as Record<string, ConversationPreparingState>)
+        .filter(([, state]) => state.workspaceId === workspaceId)
+        .map(([conversationId]) => conversationId)
+      const preparingAgentConversationIds = Object.entries(this.agentStartingConversationIds as Record<string, ConversationPreparingState>)
+        .filter(([, state]) => state.workspaceId === workspaceId)
+        .map(([conversationId]) => conversationId)
       await Promise.all([
         ...conversationIds.map((conversationId) => this.cancelConversation(conversationId)),
+        ...preparingRagConversationIds.map((conversationId) => this.cancelConversation(conversationId)),
         ...agentConversationIds.map((conversationId) => this.cancelAgentConversation(conversationId)),
+        ...preparingAgentConversationIds.map((conversationId) => this.cancelAgentConversation(conversationId)),
       ])
     },
   },

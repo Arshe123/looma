@@ -45,6 +45,7 @@ interface AiAssistantTimelineOutputPayload {
   type: AiAssistantTimelineOutputTypePayload;
   title?: string;
   content?: string;
+  technicalDetail?: string;
   value?: string | number;
   unit?: string;
   path?: string;

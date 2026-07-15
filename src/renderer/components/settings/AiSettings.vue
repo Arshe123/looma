@@ -5,6 +5,7 @@ import { useOllamaStore } from '@/renderer/stores/ollama'
 import {
   getDefaultChatProviderConfig,
   getDefaultEmbeddingProviderConfig,
+  type AgentTool,
   type AiProvider,
   type AppSettings,
 } from '@/shared/utils/app-settings'
@@ -83,6 +84,13 @@ const providerOptions: Array<{ value: ProviderValue; label: string }> = [
   { value: 'deepseek', label: 'DeepSeek' },
   { value: 'qwen', label: '通义千问' },
   { value: 'custom', label: '自定义 HTTP API' },
+]
+
+const agentToolOptions: Array<{ value: AgentTool; label: string }> = [
+  { value: 'rag_search', label: 'RAG 检索' },
+  { value: 'workspace_list', label: '工作区列表' },
+  { value: 'workspace_search', label: '工作区搜索' },
+  { value: 'file_read', label: '文件读取' },
 ]
 
 const settingsStore = useSettingsStore()
@@ -192,6 +200,25 @@ const updateConversationContextSetting = async <K extends keyof AiSettings['conv
       [key]: value,
     },
   })
+}
+
+const updateAgentSetting = async <K extends keyof AiSettings['agent']>(key: K, value: AiSettings['agent'][K]) => {
+  await settingsStore.setAiSettings({
+    agent: {
+      ...aiSettings.value.agent,
+      [key]: value,
+    },
+  })
+}
+
+const toggleAgentTool = async (tool: AgentTool, enabled: boolean) => {
+  const selected = new Set(aiSettings.value.agent.enabledTools)
+  if (enabled) selected.add(tool)
+  else selected.delete(tool)
+  await updateAgentSetting(
+    'enabledTools',
+    agentToolOptions.map(({ value }) => value).filter((value) => selected.has(value)),
+  )
 }
 
 const updateChatSetting = async <K extends keyof AiSettings['chat']>(key: K, value: AiSettings['chat'][K]) => {
@@ -464,7 +491,7 @@ watch(
         <div class="text-[11px] font-semibold uppercase tracking-[0.16em] text-text-subtle">AI Settings</div>
         <h1 class="mt-1 text-xl font-bold tracking-[-0.03em] text-text-main">AI 设置</h1>
         <p class="mt-1 text-sm leading-6 text-text-muted">
-          按通用设置、提示词、对话模型、向量模型分节管理。对话模型和向量模型拥有独立的 Provider 与 API 接入配置。
+          按 Agent、上下文、对话模型、向量模型分节管理。对话模型和向量模型拥有独立的 Provider 与 API 接入配置。
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
@@ -495,6 +522,62 @@ watch(
     <div class="grid gap-0">
       <section class="grid grid-cols-[2.4rem_minmax(0,1fr)] gap-3 border-b border-border-soft py-5">
         <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">01</div>
+        <div class="grid min-w-0 gap-4">
+          <div>
+            <h2 class="text-base font-bold text-text-main">Agent 设置</h2>
+            <p class="mt-1 text-xs leading-5 text-text-muted">设置默认运行模式、单次任务步骤上限和可用的只读工具。</p>
+          </div>
+
+          <div class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-4">
+            <label class="grid gap-2 text-sm text-text-main">
+              <span class="text-xs font-semibold text-text-main">默认模式</span>
+              <select
+                class="h-10 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none focus:border-accent"
+                :value="aiSettings.agent.defaultMode"
+                @change="updateAgentSetting('defaultMode', ($event.target as HTMLSelectElement).value as AiSettings['agent']['defaultMode'])"
+              >
+                <option value="rag">RAG</option>
+                <option value="agent">Agent</option>
+              </select>
+            </label>
+
+            <label class="grid gap-2 text-sm text-text-main">
+              <span class="text-xs font-semibold text-text-main">最大步骤</span>
+              <input
+                class="h-10 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none focus:border-accent"
+                :value="aiSettings.agent.maxSteps"
+                type="number"
+                min="1"
+                max="50"
+                step="1"
+                @change="updateAgentSetting('maxSteps', Number(($event.target as HTMLInputElement).value))"
+              />
+            </label>
+          </div>
+
+          <fieldset class="grid gap-2">
+            <legend class="mb-2 text-xs font-semibold text-text-main">启用工具</legend>
+            <div class="flex flex-wrap gap-x-5 gap-y-2">
+              <label
+                v-for="tool in agentToolOptions"
+                :key="tool.value"
+                class="inline-flex items-center gap-2 text-xs text-text-main"
+              >
+                <input
+                  class="h-4 w-4 rounded border-border-soft accent-accent"
+                  type="checkbox"
+                  :checked="aiSettings.agent.enabledTools.includes(tool.value)"
+                  @change="toggleAgentTool(tool.value, ($event.target as HTMLInputElement).checked)"
+                />
+                {{ tool.label }}
+              </label>
+            </div>
+          </fieldset>
+        </div>
+      </section>
+
+      <section class="grid grid-cols-[2.4rem_minmax(0,1fr)] gap-3 border-b border-border-soft py-5">
+        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">02</div>
         <div class="grid min-w-0 gap-4">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -538,7 +621,7 @@ watch(
       </section>
 
       <section class="grid grid-cols-[2.4rem_minmax(0,1fr)] gap-3 border-b border-border-soft py-5">
-        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">02</div>
+        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">03</div>
         <div class="grid min-w-0 gap-4">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -652,7 +735,7 @@ watch(
       </section>
 
       <section class="grid grid-cols-[2.4rem_minmax(0,1fr)] gap-3 py-5 pb-0">
-        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">03</div>
+        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">04</div>
                 <div class="grid min-w-0 gap-4">
                   <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>

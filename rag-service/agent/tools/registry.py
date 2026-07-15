@@ -225,6 +225,14 @@ class ToolRegistry:
                 if tool_timeout_seconds is None
                 else await asyncio.wait_for(operation, timeout=tool_timeout_seconds)
             )
+        except ValueError as exc:
+            return self._failure(
+                tool_name,
+                "tool_invalid_arguments",
+                "The tool arguments are invalid.",
+                "Tool execution failed because its arguments are invalid.",
+                technical_detail=type(exc).__name__,
+            )
         except asyncio.TimeoutError:
             return self._failure(
                 tool_name,

@@ -37,7 +37,7 @@ afterEach(() => {
 })
 
 describe('Agent stream contract', () => {
-  it('posts the exact safe default body and forwards valid events', async () => {
+  it('posts the exact approval-capable default body and forwards valid events', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ndjsonResponse(validEvents))
     vi.stubGlobal('fetch', fetchMock)
     const received: AgentStreamEvent[] = []
@@ -58,11 +58,11 @@ describe('Agent stream contract', () => {
       workspace: { workspace_path: 'D:/work/demo' },
       history: [],
       agent: {
-        enabled_tools: ['rag_search', 'workspace_list', 'workspace_search', 'file_read'],
+        enabled_tools: ['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch'],
         max_steps: 8,
         tool_timeout_seconds: 30,
         run_timeout_seconds: 300,
-        allow_write: false,
+        allow_write: true,
       },
     })
     expect(init.body).not.toContain('apiKey')

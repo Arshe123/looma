@@ -65,61 +65,21 @@ describe('normalizeAppSettings RAG chunking strategy', () => {
   })
 })
 
-describe('normalizeAppSettings agent settings', () => {
-  it('defaults to RAG mode with eight steps and all read-only tools enabled', () => {
+describe('normalizeAppSettings Agent-only migration', () => {
+  it('does not expose Agent tool settings to users', () => {
     const settings = normalizeAppSettings({})
-
-    expect(settings.ai.agent).toEqual({
-      defaultMode: 'rag',
-      maxSteps: 8,
-      enabledTools: [
-        'rag_search',
-        'workspace_list',
-        'workspace_search',
-        'file_read',
-      ],
-    })
+    expect(settings.ai).not.toHaveProperty('agent')
   })
 
-  it('preserves valid agent settings through normalization', () => {
+  it('drops legacy Agent tool and step overrides', () => {
     const settings = normalizeAppSettings({
       ai: {
         agent: {
-          defaultMode: 'agent',
           maxSteps: 24,
-          enabledTools: ['workspace_search', 'file_read'],
+          enabledTools: ['file_read'],
         },
       },
     })
-
-    expect(settings.ai.agent).toEqual({
-      defaultMode: 'agent',
-      maxSteps: 24,
-      enabledTools: ['workspace_search', 'file_read'],
-    })
-  })
-
-  it('normalizes invalid agent values and de-duplicates tools', () => {
-    const settings = normalizeAppSettings({
-      ai: {
-        agent: {
-          defaultMode: 'chat',
-          maxSteps: 99,
-          enabledTools: [
-            'rag_search',
-            'terminal',
-            'rag_search',
-            'workspace_list',
-            'web',
-          ],
-        },
-      },
-    })
-
-    expect(settings.ai.agent).toEqual({
-      defaultMode: 'rag',
-      maxSteps: 50,
-      enabledTools: ['rag_search', 'workspace_list'],
-    })
+    expect(settings.ai).not.toHaveProperty('agent')
   })
 })

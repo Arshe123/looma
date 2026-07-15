@@ -81,7 +81,7 @@ describe('workspace ai assistant temporary conversation state', () => {
     expect(store.aiAssistant.conversations[0].messages[0]).toMatchObject({ role: 'user', text: '第一条问题' })
   })
 
-  it('updates the original conversation when a stream event arrives after switching conversations', () => {
+  it('updates the original Agent conversation when an event arrives after switching conversations', () => {
     const workspaceStore = useWorkspaceStore()
     const aiAssistStore = useAiAssistantStore()
 
@@ -94,8 +94,9 @@ describe('workspace ai assistant temporary conversation state', () => {
     )
     expect(assistantMessageId).toBeTypeOf('number')
 
-    aiAssistStore.streamsByConversationId[conversationAId] = {
+    aiAssistStore.agentRunsByConversationId[conversationAId] = {
       requestId: 'req-a',
+      runId: 'run-a',
       workspaceId: 'workspace-1',
       conversationId: conversationAId,
       assistantMessageId: assistantMessageId!,
@@ -103,16 +104,22 @@ describe('workspace ai assistant temporary conversation state', () => {
       timeline: [],
       status: 'streaming',
       startedAt: Date.now(),
+      toolCallCount: 0,
+      sourceCount: 0,
+      toolCallStates: {},
+      approvals: {},
     }
-    aiAssistStore.requestIdToConversationId['req-a'] = conversationAId
+    aiAssistStore.agentRequestIdToConversationId['req-a'] = conversationAId
 
     workspaceStore.startTemporaryAiAssistantConversation()
     const conversationBId = workspaceStore.ensureAiAssistantConversationForRequest()
 
-    aiAssistStore.handleStreamEvent({
+    aiAssistStore.handleAgentStreamEvent({
       requestId: 'req-a',
       type: 'delta',
+      runId: 'run-a',
       text: 'A 会话回答',
+      content: 'A 会话回答',
     })
 
     const aMessage = workspaceStore

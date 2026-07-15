@@ -109,20 +109,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   rag: {
     health: () => ipcRenderer.invoke('rag:health'),
     status: (workspaceId: string) => ipcRenderer.invoke('rag:status', workspaceId),
-    chat: (workspaceId: string, question: string, history?: RagChatMessagePayload[], requestStats?: RagRequestStatsPayload) =>
-      ipcRenderer.invoke('rag:chat', workspaceId, question, history, requestStats),
-    summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) =>
-      ipcRenderer.invoke('rag:summarizeConversation', messages, maxChars),
-    askStream: {
-      start: (requestId: string, workspaceId: string, question: string, history?: RagChatMessagePayload[], requestStats?: RagRequestStatsPayload) =>
-        ipcRenderer.invoke('rag:askStream:start', requestId, workspaceId, question, history, requestStats),
-      cancel: (requestId: string) => ipcRenderer.invoke('rag:askStream:cancel', requestId),
-      onEvent: (listener: (payload: RagStreamEventPayload) => void) => {
-        const handler = (_: unknown, payload: RagStreamEventPayload) => listener(payload);
-        ipcRenderer.on('rag:askStream:event', handler);
-        return () => ipcRenderer.removeListener('rag:askStream:event', handler);
-      },
-    },
+
     indexStream: {
       start: (requestId: string, workspaceId: string, mode: 'incremental' | 'full' | 'retry_failed' = 'incremental') =>
         ipcRenderer.invoke('rag:indexStream:start', requestId, workspaceId, mode),
@@ -141,6 +128,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteIndex: (workspaceId: string) => ipcRenderer.invoke('rag:index:delete', workspaceId),
   },
   agent: {
+    summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) =>
+      ipcRenderer.invoke('agent:summarizeConversation', messages, maxChars),
+    resolveApproval: (approvalId: string, approved: boolean) =>
+      ipcRenderer.invoke('agent:approval:resolve', approvalId, approved),
     runStream: {
       start: (requestId: string, workspaceId: string, options: AgentRunOptionsPayload) =>
         ipcRenderer.invoke('agent:runStream:start', requestId, workspaceId, options),

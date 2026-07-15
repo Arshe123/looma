@@ -76,7 +76,7 @@ class MalformedRiskTool(FakeTool):
 
 
 class WriteTool(AgentTool):
-    name: Literal["file_write"] = "file_write"
+    name: Literal["file_patch"] = "file_patch"
     description = "Fake write tool"
     risk_level: ToolRiskLevel = "write"
     args_model = FakeArgs
@@ -114,7 +114,7 @@ class ToolRegistryTest(unittest.IsolatedAsyncioTestCase):
         registry.register(FakeTool())
         registry.register(WriteTool())
 
-        listed = registry.list_tools(enabled_tools={"rag_search", "file_write"})
+        listed = registry.list_tools(enabled_tools={"rag_search", "file_patch"})
 
         self.assertEqual([tool.name for tool in listed], ["rag_search"])
 
@@ -166,7 +166,7 @@ class ToolRegistryTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_default_policy_denies_high_risk_tools(self):
         cases = (
-            (WriteTool(), "file_write"),
+            (WriteTool(), "file_patch"),
             (NetworkTool(), "web_search"),
             (TerminalTool(), "terminal"),
         )
@@ -186,28 +186,28 @@ class ToolRegistryTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.error.code, "tool_policy_denied")
 
     async def test_write_tool_requires_request_level_allow_write(self):
-        registry = ToolRegistry(allowed_tools={"file_write"})
+        registry = ToolRegistry(allowed_tools={"file_patch"})
         registry.register(WriteTool())
 
         result = await registry.execute(
-            "file_write",
+            "file_patch",
             self.context,
             {"query": "x"},
-            enabled_tools={"file_write"},
+            enabled_tools={"file_patch"},
         )
 
         self.assertFalse(result.success)
         self.assertEqual(result.error.code, "tool_write_not_allowed")
 
     async def test_explicit_global_request_and_allow_write_allows_write_tool(self):
-        registry = ToolRegistry(allowed_tools={"file_write"})
+        registry = ToolRegistry(allowed_tools={"file_patch"})
         registry.register(WriteTool())
 
         result = await registry.execute(
-            "file_write",
+            "file_patch",
             self.context,
             {"query": "x"},
-            enabled_tools={"file_write"},
+            enabled_tools={"file_patch"},
             allow_write=True,
         )
 
@@ -215,18 +215,18 @@ class ToolRegistryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.data, {"written": True})
 
     def test_list_tools_requires_allow_write_for_write_tool(self):
-        registry = ToolRegistry(allowed_tools={"rag_search", "file_write"})
+        registry = ToolRegistry(allowed_tools={"rag_search", "file_patch"})
         registry.register(FakeTool())
         registry.register(WriteTool())
 
-        denied = registry.list_tools(enabled_tools={"rag_search", "file_write"})
+        denied = registry.list_tools(enabled_tools={"rag_search", "file_patch"})
         allowed = registry.list_tools(
-            enabled_tools={"rag_search", "file_write"}, allow_write=True
+            enabled_tools={"rag_search", "file_patch"}, allow_write=True
         )
 
         self.assertEqual([tool.name for tool in denied], ["rag_search"])
         self.assertEqual(
-            [tool.name for tool in allowed], ["rag_search", "file_write"]
+            [tool.name for tool in allowed], ["rag_search", "file_patch"]
         )
 
     async def test_invalid_arguments_return_structured_failure(self):

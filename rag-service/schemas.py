@@ -82,11 +82,12 @@ class RequestStats(BaseModel):
     distant_summary_messages: int = Field(default=0, ge=0)
 
 
-class ChatRequest(BaseModel):
-    question: str = Field(..., min_length=1)
-    ai_config: Optional[AIConfig] = None
-    history: list[ChatMessage] = Field(default_factory=list)
-    request_stats: Optional[RequestStats] = None
+class AgentSummarizeRequest(BaseModel):
+    messages: list[ChatMessage] = Field(..., min_items=1, max_items=100)
+    max_chars: int = Field(default=1600, ge=200, le=8000)
+
+    class Config:
+        extra = "forbid"
 
 
 class RagQueryRequest(BaseModel):
@@ -124,8 +125,7 @@ ToolName = Literal[
     "workspace_list",
     "workspace_search",
     "file_read",
-    # Reserved for future registry/policy support; never enabled by default.
-    "file_write",
+    "file_patch",
     "web_search",
     "terminal",
 ]
@@ -135,6 +135,7 @@ DEFAULT_AGENT_TOOLS: tuple[ToolName, ...] = (
     "workspace_list",
     "workspace_search",
     "file_read",
+    "file_patch",
 )
 
 
@@ -166,3 +167,10 @@ class AgentRunRequest(BaseModel):
     ai_config: Optional[AIConfig] = None
     agent: AgentConfig = Field(default_factory=AgentConfig)
     history: list[ChatMessage] = Field(default_factory=list)
+
+
+class AgentApprovalResolveRequest(StrictAgentModel):
+    approval_id: str = Field(..., min_length=1)
+    status: Literal["approved", "rejected"]
+    reason: Optional[str] = None
+    applied: Optional[bool] = None

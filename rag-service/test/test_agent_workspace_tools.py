@@ -468,7 +468,7 @@ class WorkspaceToolsTest(unittest.IsolatedAsyncioTestCase):
             "file_read", self.context, {"path": "../secret"}, enabled_tools={"file_read"}
         )
         self.assertFalse(result.success)
-        self.assertEqual(result.error.code, "tool_execution_failed")
+        self.assertEqual(result.error.code, "tool_invalid_arguments")
         self.assertNotIn(str(self.workspace), result.summary)
 
     async def test_symlink_escape_is_rejected_or_skipped(self):

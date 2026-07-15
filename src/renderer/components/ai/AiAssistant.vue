@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Bot, Clipboard, Copy, Database, History, Loader2, MessageSquare, Plus, RotateCcw, Send, Settings, Sparkles, Square, Workflow } from 'lucide-vue-next'
+import { Bot, Clipboard, Copy, Database, History, Loader2, MessageSquare, Plus, Send, Settings, Sparkles, Square, Workflow } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import { useAiAssistantStore } from '@/renderer/stores/ai-assistant'
 import { normalizeAiAssistantSourcePath } from '@/renderer/stores/workspace-ai-utils'
 import type { AiAssistantMessage, AiAssistantMessageAction, AiAssistantTimelineOutput } from '@/renderer/stores/workspace'
-import type { AgentMode } from '@/shared/utils/app-settings'
 import AiMarkdown from './AiMarkdown.vue'
-import AgentModeSwitch from './AgentModeSwitch.vue'
 import AgentTimelineDrawer from './AgentTimelineDrawer.vue'
 import { deriveAgentUiState } from './agentUiState'
 
@@ -23,8 +21,6 @@ const messagesRef = ref<HTMLElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 const contextMenuRef = ref<HTMLElement | null>(null)
 const copiedMessageId = ref<number | null>(null)
-const selectedMode = ref<AgentMode>('rag')
-const hasInitializedMode = ref(false)
 const drawerOpen = ref(false)
 const drawerMessageId = ref<number | undefined>()
 const aiContextMenu = ref({
@@ -39,42 +35,31 @@ const hasWorkspace = computed(() => Boolean(workspaceStore.activeWorkspaceId))
 const activeConversation = computed(() => workspaceStore.activeAiAssistantConversation)
 const activeConversationId = computed(() => workspaceStore.aiAssistant.activeConversationId)
 const messages = computed(() => activeConversation.value.messages)
-const isAsking = computed(() => aiAssistStore.isConversationAsking(activeConversationId.value))
 const isAgentRunning = computed(() => aiAssistStore.isConversationRunningAgent(activeConversationId.value))
 const isAnyConversationRunning = computed(() => (
-  Object.keys(aiAssistStore.streamsByConversationId).length > 0
-  || Object.keys(aiAssistStore.ragStartingConversationIds).length > 0
-  || Object.keys(aiAssistStore.agentRunsByConversationId).length > 0
+  Object.keys(aiAssistStore.agentRunsByConversationId).length > 0
   || Object.keys(aiAssistStore.agentStartingConversationIds).length > 0
 ))
-const isGenerating = computed(() => isAsking.value || isAgentRunning.value)
+const isGenerating = computed(() => isAgentRunning.value)
 const isIndexing = computed(() => aiAssistStore.isWorkspaceIndexing(workspaceStore.activeWorkspaceId))
 const hasIndex = computed(() => aiAssistStore.getWorkspaceIndexResult(workspaceStore.activeWorkspaceId)?.exists ?? checkedHasIndex.value)
 const question = computed({
   get: () => activeConversation.value.draft,
   set: (value: string) => workspaceStore.setAiAssistantDraft(value),
 })
-const modeNeedsIndex = computed(() => selectedMode.value === 'rag')
 const canAsk = computed(() => (
   hasWorkspace.value
-  && (!modeNeedsIndex.value || hasIndex.value)
-  && (!modeNeedsIndex.value || (!isCheckingIndex.value && !isIndexing.value))
   && !isGenerating.value
   && question.value.trim().length > 0
 ))
 const canAskWithText = computed(() => (
   hasWorkspace.value
-  && (!modeNeedsIndex.value || hasIndex.value)
-  && (!modeNeedsIndex.value || (!isCheckingIndex.value && !isIndexing.value))
   && !isGenerating.value
 ))
 const inputPlaceholder = computed(() => {
   if (!hasWorkspace.value) return '请先打开工作空间'
-  if (modeNeedsIndex.value && isCheckingIndex.value) return '正在检查索引...'
-  if (modeNeedsIndex.value && !hasIndex.value) return '请先建立索引'
-  if (modeNeedsIndex.value && isIndexing.value) return '正在建立索引...'
-  if (isGenerating.value) return selectedMode.value === 'agent' ? 'Agent 正在执行...' : '正在思考...'
-  return selectedMode.value === 'agent' ? '让 Agent 读取并分析当前工作空间' : '询问当前工作空间中的笔记'
+  if (isGenerating.value) return 'Agent 正在执行...'
+  return '让 Agent 读取、检索并处理当前工作空间'
 })
 const providerLabels: Record<string, string> = {
   ollama: 'Ollama',
@@ -92,11 +77,23 @@ const aiDisplayName = computed(() => {
 })
 const getMessageAiName = (message: AiAssistantMessage) => message.modelIdentity?.displayName || message.aiName?.trim() || 'Looma AI'
 const drawerState = computed(() => deriveAgentUiState(messages.value, drawerMessageId.value))
+const drawerApprovals = computed(() => {
+  const run = aiAssistStore.getConversationAgentRun(activeConversationId.value)
+  if (!run || (drawerMessageId.value !== undefined && drawerMessageId.value !== run.assistantMessageId)) return []
+  return aiAssistStore.getConversationAgentApprovals(activeConversationId.value)
+})
 const getMessageProcessState = (message: AiAssistantMessage) => deriveAgentUiState([message], message.id)
 
 const openProcessDrawer = (message: AiAssistantMessage) => {
   drawerMessageId.value = message.id
   drawerOpen.value = true
+}
+
+const resolveApproval = async (approvalId: string, approved: boolean) => {
+  const conversationId = activeConversationId.value
+  if (!conversationId) return
+  const result = await aiAssistStore.resolveAgentApproval(conversationId, approvalId, approved)
+  if (!result?.success && result?.error) appendMessage('system', result.error)
 }
 
 const scrollToBottom = () => {
@@ -297,7 +294,6 @@ const checkIndexStatus = async () => {
     if (workspaceStore.activeWorkspaceId !== workspaceId) return
     if (!result.success) {
       setBuildIndexActionsDisabled(false)
-      if (selectedMode.value === 'rag') ensureBuildIndexPrompt()
       console.warn(result.error || '检查索引状态失败。')
       return
     }
@@ -308,7 +304,6 @@ const checkIndexStatus = async () => {
       setBuildIndexActionsDisabled(true)
     } else {
       setBuildIndexActionsDisabled(false)
-      if (selectedMode.value === 'rag') ensureBuildIndexPrompt()
     }
   } finally {
     isCheckingIndex.value = false
@@ -333,29 +328,15 @@ const askQuestion = async () => {
   const workspaceId = getActiveWorkspaceId()
   const text = question.value.trim()
   if (!workspaceId || !text || isGenerating.value) return
-  if (selectedMode.value === 'rag' && !hasIndex.value) {
-    ensureBuildIndexPrompt()
-    return
-  }
-
   const conversationId = workspaceStore.ensureAiAssistantConversationForRequest()
-  if (selectedMode.value === 'agent') {
-    drawerMessageId.value = undefined
-    drawerOpen.value = true
-  }
-  const result = selectedMode.value === 'agent'
-    ? await aiAssistStore.startAgentInConversation({
-        workspaceId,
-        conversationId,
-        text,
-        aiName: aiDisplayName.value,
-      })
-    : await aiAssistStore.askInConversation({
-        workspaceId,
-        conversationId,
-        text,
-        aiName: aiDisplayName.value,
-      })
+  drawerMessageId.value = undefined
+  drawerOpen.value = true
+  const result = await aiAssistStore.startAgentInConversation({
+    workspaceId,
+    conversationId,
+    text,
+    aiName: aiDisplayName.value,
+  })
   if (!result?.success && result?.error) {
     appendMessage('system', result.error)
   }
@@ -365,12 +346,8 @@ const askQuestion = async () => {
 const cancelCurrentGeneration = async () => {
   const conversationId = activeConversationId.value
   if (!conversationId) return
-  if (isAgentRunning.value) {
-    const result = await aiAssistStore.cancelAgentConversation(conversationId)
-    if (result && !result.success) appendMessage('system', result.error || '取消 Agent 运行失败。')
-  } else if (isAsking.value) {
-    await aiAssistStore.cancelConversation(conversationId)
-  }
+  const result = await aiAssistStore.cancelAgentConversation(conversationId)
+  if (result && !result.success) appendMessage('system', result.error || '取消 Agent 运行失败。')
 }
 
 const copyAssistantMessage = async (message: AiAssistantMessage) => {
@@ -387,45 +364,6 @@ const copyAssistantMessage = async (message: AiAssistantMessage) => {
     appendMessage('system', '复制失败，请检查浏览器剪贴板权限后重试。')
     console.error(error)
   }
-}
-
-const regenerateAssistantMessage = async (message: AiAssistantMessage) => {
-  const workspaceId = getActiveWorkspaceId()
-  const conversationId = activeConversationId.value
-  if (!workspaceId || !conversationId || isGenerating.value || message.role !== 'assistant' || message.mode === 'agent') return
-  if (!hasIndex.value) {
-    ensureBuildIndexPrompt()
-    return
-  }
-
-  const conversationMessages = messages.value
-  const assistantIndex = conversationMessages.findIndex((item) => item.id === message.id)
-  if (assistantIndex < 0) return
-
-  let userIndex = -1
-  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
-    const candidate = conversationMessages[index]
-    if (candidate.role === 'user' && candidate.text.trim()) {
-      userIndex = index
-      break
-    }
-  }
-
-  if (userIndex < 0) {
-    appendMessage('system', '找不到这条回复对应的上一条用户问题，无法重新生成。')
-    return
-  }
-
-  const userMessage = conversationMessages[userIndex]
-  const result = await aiAssistStore.regenerateInConversation({
-    workspaceId,
-    conversationId,
-    text: userMessage.text.trim(),
-    assistantMessageId: message.id,
-    sourceMessages: conversationMessages.slice(0, userIndex),
-    aiName: aiDisplayName.value,
-  })
-  if (!result?.success && result?.error) appendMessage('system', result.error)
 }
 
 const handleComposerKeydown = (event: KeyboardEvent) => {
@@ -447,22 +385,13 @@ const isActionDisabled = (action: AiAssistantMessageAction) =>
   Boolean(action.disabled || hasIndex.value || isCheckingIndex.value || !hasWorkspace.value)
 
 const isMessageStreaming = (message: AiAssistantMessage) => {
-  const stream = aiAssistStore.getConversationStream(activeConversationId.value)
   const agentRun = aiAssistStore.getConversationAgentRun(activeConversationId.value)
-  return Boolean(message.role === 'assistant' && (
-    message.id === stream?.assistantMessageId || message.id === agentRun?.assistantMessageId
-  ))
+  return Boolean(message.role === 'assistant' && message.id === agentRun?.assistantMessageId)
 }
 
 const backfillLegacyAiNames = () => {
   if (!settingsStore.isLoaded) return
   workspaceStore.backfillAiAssistantMessageNames(aiDisplayName.value)
-}
-
-const initializeMode = () => {
-  if (!settingsStore.isLoaded || hasInitializedMode.value) return
-  selectedMode.value = settingsStore.aiSettings.agent.defaultMode
-  hasInitializedMode.value = true
 }
 
 const createConversation = () => {
@@ -474,10 +403,8 @@ const createConversation = () => {
 
 onMounted(() => {
   document.addEventListener('click', handleDocumentClick)
-  aiAssistStore.ensureStreamEventSubscription()
   aiAssistStore.ensureAgentStreamEventSubscription()
   workspaceStore.removeAiAssistantMessagesByText(['Not Found'])
-  initializeMode()
   backfillLegacyAiNames()
   scrollToBottom()
   checkIndexStatus().catch(console.error)
@@ -501,25 +428,14 @@ watch(activeConversationId, () => {
   drawerMessageId.value = undefined
   drawerOpen.value = Boolean(isAgentRunning.value)
   backfillLegacyAiNames()
-  if (selectedMode.value === 'rag' && !hasIndex.value && !isCheckingIndex.value && !workspaceStore.aiAssistant.isTemporaryConversation) {
-    ensureBuildIndexPrompt()
-  }
   scrollToBottom()
 })
-watch(() => settingsStore.isLoaded, () => {
-  initializeMode()
-  backfillLegacyAiNames()
-})
+watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
 watch(isAgentRunning, (running) => {
   if (!running) return
   const run = aiAssistStore.getConversationAgentRun(activeConversationId.value)
   drawerMessageId.value = run?.assistantMessageId
   drawerOpen.value = true
-})
-watch(selectedMode, (mode) => {
-  if (mode === 'rag' && !hasIndex.value && !isCheckingIndex.value && !workspaceStore.aiAssistant.isTemporaryConversation) {
-    ensureBuildIndexPrompt()
-  }
 })
 </script>
 
@@ -576,8 +492,7 @@ watch(selectedMode, (mode) => {
           </button>
         </div>
       </div>
-      <div class="mt-2.5 flex items-center justify-between gap-2">
-        <AgentModeSwitch v-model="selectedMode" :disabled="isAnyConversationRunning" />
+      <div class="mt-2.5 flex items-center justify-end gap-2">
         <button
           type="button"
           class="inline-flex h-7 items-center gap-1.5 rounded-md border border-border-soft bg-panel px-2 text-[10px] text-text-muted transition-colors hover:bg-panel-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-50"
@@ -709,16 +624,6 @@ watch(selectedMode, (mode) => {
                   <Copy :size="12" />
                   {{ copiedMessageId === message.id ? '已复制' : '复制' }}
                 </button>
-                <button
-                  v-if="message.mode !== 'agent'"
-                  class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-text-muted"
-                  type="button"
-                  :disabled="isAsking || isIndexing || isCheckingIndex || !hasWorkspace || !hasIndex"
-                  @click="regenerateAssistantMessage(message)"
-                >
-                  <RotateCcw :size="12" />
-                  重新生成
-                </button>
               </div>
             </div>
 
@@ -772,7 +677,7 @@ watch(selectedMode, (mode) => {
           v-model="question"
           class="h-[58px] w-full resize-none bg-transparent text-sm leading-6 text-text-main outline-none placeholder:text-text-subtle disabled:text-text-muted select-text"
           :placeholder="inputPlaceholder"
-          :disabled="!hasWorkspace || (modeNeedsIndex && (!hasIndex || isCheckingIndex || isIndexing)) || isGenerating"
+          :disabled="!hasWorkspace || isGenerating"
           @keydown="handleComposerKeydown"
           @contextmenu="openComposerContextMenu"
         />
@@ -830,8 +735,10 @@ watch(selectedMode, (mode) => {
     <AgentTimelineDrawer
       :open="drawerOpen"
       :state="drawerState"
+      :approvals="drawerApprovals"
       @close="drawerOpen = false"
       @open-source="openTimelineSource"
+      @resolve-approval="resolveApproval"
     />
 
     <div

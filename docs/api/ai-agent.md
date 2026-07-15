@@ -1,285 +1,326 @@
-# AI Agent API（Canonical Contract）
+# Looma Agent API（第二阶段 Canonical Contract）
 
-本文定义 Looma Renderer、Electron 主进程与 `rag-service` 之间的首版 Agent 契约，并记录当前已实现的只读 Tool Registry、有限步运行时、Electron 转发层及桌面端 Renderer UI。
+本文定义 Looma Renderer、Electron Main 与 `rag-service` 的唯一 AI 对话链路。产品不再公开普通 Chat 或独立 RAG 问答；RAG 索引管理继续保留，`rag_search` 作为 Agent 内部工具使用。
 
-## 1. 安全默认值与领域约束
+## 1. 架构与可信边界
 
-`AgentConfig` 只表达 Agent 执行策略，不再承载 `chat` / `rag` / `agent` 模式：
+```text
+Renderer
+  └─ agent:runStream:start
+       └─ Electron Main
+            └─ POST /agent/run/stream
+                 └─ Python Agent Runtime
+                      ├─ 只读工具
+                      └─ file_patch：只生成 proposal
+
+file_patch proposal
+  └─ approval_required
+       └─ Renderer 展示 diff，用户批准/拒绝
+            └─ agent:approval:resolve(approvalId, approved)
+                 └─ Electron Main 从可信内存读取原 proposal
+                      ├─ 拒绝：不触碰磁盘
+                      └─ 批准：复验路径/hash → 原子应用
+                           └─ POST /agent/approvals/resolve
+                                └─ Runtime 恢复
+```
+
+安全不变量：
+
+1. Python 和 Renderer 都没有任意文件写入 API。
+2. `file_patch` 只能生成文本文件 `create/update` 提案。
+3. Renderer 审批时只能提交 `approvalId + approved`，不能提交路径、内容或 hash。
+4. Electron Main 是唯一可信落盘边界，并保存从 Python 流收到的原始 proposal。
+5. `approved=true` 只表示用户同意；只有 Electron 成功应用后才向 Python 回传 `applied=true`。
+6. 每个审批绑定发起 `WebContents`、当前 Agent run、workspace 和截止时间；跨窗口、重复、过期审批均拒绝。
+
+## 2. Agent 配置
+
+Agent 能力由产品固定配置，不在用户设置中暴露工具开关或步骤上限。Renderer 启动运行时不传 `enabledTools`/`maxSteps`，Electron 使用以下内置默认配置：
 
 ```json
 {
-  "enabled_tools": ["rag_search", "workspace_list", "workspace_search", "file_read"],
+  "enabled_tools": [
+    "rag_search",
+    "workspace_list",
+    "workspace_search",
+    "file_read",
+    "file_patch"
+  ],
   "max_steps": 8,
   "tool_timeout_seconds": 30,
   "run_timeout_seconds": 300,
-  "allow_write": false
+  "allow_write": true
 }
 ```
 
-- `max_steps`：`1..50`。
-- `tool_timeout_seconds`：`1..300` 秒。
-- `run_timeout_seconds`：整个 Agent 运行的累计内部等待预算，`1..1800` 秒，默认 `300` 秒。
-- 首版默认开放且仅开放只读工具：`rag_search`、`workspace_list`、`workspace_search`、`file_read`。
-- `file_write`、`web_search`、`terminal` 是为未来策略/注册表保留的工具类型，**不得默认开放**。
-- `allow_write` 默认为 `false`；它是写操作的额外策略门槛，而不是自动启用写工具的开关。
-- Agent 契约模型拒绝未知字段（`extra=forbid`），避免拼写错误或协议漂移被静默忽略。
+全部现有工具始终可供 Agent 选择。`allow_write=true` 只允许模型提出 `file_patch`，不允许跳过审批直接写盘；文件修改仍须逐次由用户批准。
 
-## 2. Electron IPC
+限制：
 
-Renderer 使用以下通道；主进程负责把 HTTP NDJSON 流转发为事件：
+- `max_steps`: `1..50`
+- `tool_timeout_seconds`: `1..300`
+- `run_timeout_seconds`: `5..1800`
+- 输入最多 32,000 字符
+- 历史最多 50 条、总计最多 100,000 字符
+- 单条 NDJSON 事件最多 1,000,000 字符
+- patch 目标和提议内容最多 200,000 UTF-8 字节
 
-### `agent:runStream:start`
+## 3. HTTP API
 
-Renderer 传入本地 `requestId`、`workspaceId` 和 `AgentRunOptions`。主进程返回 `Result<void>` 表示是否已启动，并通过 `agent:runStream:event` 推送同时包含原 `requestId` 与后端 `runId` 的事件。
+### 3.1 `POST /agent/run/stream`
 
-### `agent:runStream:cancel`
-
-Renderer 传入本地请求 ID：
-
-```json
-{ "requestId": "request_01..." }
-```
-
-取消按当前窗口与 `requestId` 精确作用于一个运行，并可安全重复调用。Renderer 不使用尚未返回或不可用的后端 `runId` 发起取消。
-
-### `agent:runStream:event`
-
-主进程向 Renderer 推送服务端事件。**所有 Agent 事件都必须带非空 `runId`**；Renderer 使用它隔离并发运行及忽略已取消运行的迟到事件。
-
-## 3. `POST /agent/run/stream`
-
-请求体（字段名使用 snake_case）：
+请求：
 
 ```json
 {
-  "input": "总结当前工作区的发布流程",
+  "input": "把 docs/release.md 中的版本号改为 2.0",
   "workspace": { "workspace_path": "D:/work/demo" },
   "agent": {
-    "enabled_tools": ["rag_search", "workspace_list", "workspace_search", "file_read"],
+    "enabled_tools": ["rag_search", "workspace_list", "workspace_search", "file_read", "file_patch"],
     "max_steps": 8,
     "tool_timeout_seconds": 30,
     "run_timeout_seconds": 300,
-    "allow_write": false
+    "allow_write": true
   },
   "history": []
 }
 ```
 
-`input` 必填且非空；`workspace` 可选。正常应用请求**不重复发送** `ai_config` 和 `knowledge`，二者缺省时由后端从全局设置解析。诊断、测试或显式覆盖场景仍可传入：
+返回 `application/x-ndjson`。每行是一个完整事件。
+
+### 3.2 `POST /agent/approvals/resolve`
+
+仅由 Electron Main 调用。Renderer 不直接访问该接口。
+
+批准且已成功应用：
 
 ```json
 {
-  "ai_config": null,
-  "knowledge": null
+  "approval_id": "approval_01...",
+  "status": "approved",
+  "reason": null,
+  "applied": true,
+  "apply_error": null
 }
 ```
 
-响应媒体类型为 `application/x-ndjson`；每行是一个完整 JSON 对象并以换行结束。
-
-## 4. Agent Decision
-
-模型输出必须严格解析为以下二选一结构，未知 `type`、空文本、非法工具名及额外字段均拒绝。
-
-工具调用：
+用户拒绝：
 
 ```json
 {
-  "type": "tool_call",
-  "thought_summary": "先检索发布文档",
-  "tool": "rag_search",
-  "arguments": { "query": "发布流程" }
+  "approval_id": "approval_01...",
+  "status": "rejected",
+  "reason": "用户拒绝了文件修改",
+  "applied": false,
+  "apply_error": null
 }
 ```
 
-最终回答：
-
-```json
-{ "type": "final", "answer": "发布流程如下……" }
-```
-
-`thought_summary` 只能是适合展示的简短步骤说明，不得包含隐藏推理链。
-
-## 5. Tool Result 与 Agent Error
-
-成功结果：
+用户批准但 Electron 应用失败：
 
 ```json
 {
-  "tool": "file_read",
-  "success": true,
-  "summary": "已读取 README.md 前 100 行",
-  "data": { "path": "README.md", "content": "..." },
-  "error": null,
-  "truncated": true
+  "approval_id": "approval_01...",
+  "status": "approved",
+  "reason": null,
+  "applied": false,
+  "apply_error": "文件已在审批期间发生变化，请重新生成修改提案"
 }
 ```
 
-失败结果：
+状态只能为 `approved` 或 `rejected`。未知、重复或已过期的 `approval_id` 返回失败。
+
+### 3.3 `POST /agent/summarize`
+
+Agent 历史压缩专用端点，不是普通 Chat 入口。
 
 ```json
 {
-  "tool": "rag_search",
-  "success": false,
-  "summary": "检索超时",
-  "data": null,
-  "error": {
-    "code": "tool_timeout",
-    "message": "工具执行超时",
-    "technical_detail": "deadline exceeded after 30 seconds",
-    "retryable": true
+  "messages": [
+    { "role": "user", "content": "..." },
+    { "role": "assistant", "content": "..." }
+  ],
+  "max_chars": 1600
+}
+```
+
+### 3.4 已删除的对话路由
+
+以下路由不再注册：
+
+- `POST /chat`
+- `POST /chat/stream`
+- `POST /rag/query`
+- `POST /rag/query/stream`
+
+`/rag/index...` 索引构建、状态、文件分块、重建和删除接口继续保留。
+
+## 4. `file_patch` 工具
+
+### 4.1 create 参数
+
+```json
+{
+  "path": "docs/release.md",
+  "operation": "create",
+  "content": "# Release\n\nVersion 2.0\n"
+}
+```
+
+### 4.2 update 参数
+
+```json
+{
+  "path": "docs/release.md",
+  "operation": "update",
+  "old_text": "Version 1.0",
+  "new_text": "Version 2.0"
+}
+```
+
+`old_text` 必须在当前文件中唯一匹配。工具不会应用修改，而是返回：
+
+```json
+{
+  "requiresApproval": true,
+  "path": "docs/release.md",
+  "operation": "update",
+  "unified_diff": "--- a/docs/release.md\n+++ b/docs/release.md\n...",
+  "expected_sha256": "64位小写十六进制摘要",
+  "proposed_sha256": "64位小写十六进制摘要",
+  "proposed_content": "完整的提议 UTF-8 内容"
+}
+```
+
+`create` 的 `expected_sha256` 为 `null`。`proposed_content` 只保存在 Electron Main 的可信内存，不转发给 Renderer；Renderer 只接收 diff 和展示字段。
+
+## 5. NDJSON 事件
+
+所有事件都包含非空 `runId`。主要事件：
+
+- `run_started`
+- `timeline`
+- `tool_call`
+- `tool_result`
+- `approval_required`
+- `approval_resolved`
+- `sources`
+- `delta`
+- `done`
+- `error`
+
+### 5.1 `approval_required`
+
+```json
+{
+  "type": "approval_required",
+  "runId": "run_01...",
+  "step": 2,
+  "stepId": "step_02...",
+  "callId": "call_02...",
+  "approvalId": "approval_01...",
+  "tool": "file_patch",
+  "proposal": {
+    "path": "docs/release.md",
+    "operation": "update",
+    "unified_diff": "--- a/docs/release.md\n+++ b/docs/release.md\n...",
+    "expected_sha256": "...",
+    "proposed_sha256": "...",
+    "proposed_content": "..."
   },
-  "truncated": false
+  "requestedAt": "2026-07-15T07:00:00Z",
+  "deadlineAt": "2026-07-15T07:05:00Z"
 }
 ```
 
-`success=false` 时必须有 `error`；`success=true` 时不得携带 `error`。面向用户的稳定说明使用 `message`，内部诊断信息统一命名为 **`technical_detail`**，不得混用 `detail`、`technicalDetails` 或 `technicalDetail`。该字段可能包含敏感运行信息，Renderer 默认不直接展示。
+Electron 缓存完整事件后，向 Renderer 发送的版本会清空 `proposal.proposed_content`。
 
-## 6. NDJSON 事件
-
-事件公共字段：
+### 5.2 `approval_resolved`
 
 ```json
-{ "type": "timeline", "runId": "run_01..." }
+{
+  "type": "approval_resolved",
+  "runId": "run_01...",
+  "step": 2,
+  "stepId": "step_02...",
+  "callId": "call_02...",
+  "approvalId": "approval_01...",
+  "resolution": {
+    "status": "approved",
+    "reason": null,
+    "applied": true,
+    "apply_error": null
+  }
+}
 ```
 
-`type` 与 `runId` 是每个事件的必需字段。事件类型如下。
+`status` 可能为 `approved`、`rejected`、`expired` 或 `cancelled`。
 
-### `run_started`
+### 5.3 写入失败 observation
 
-```json
-{"type":"run_started","runId":"run_01...","startedAt":"2026-07-14T10:00:00Z"}
-```
+用户批准但磁盘应用失败时，Runtime 向模型返回失败的 `file_patch` result，错误码为 `patch_apply_failed`。模型必须说明冲突或失败，不能声称文件已经写入。
 
-### `timeline`
+## 6. Electron IPC / Preload
 
-表示计划/步骤状态变化；`status` 建议为 `pending`、`running`、`completed`、`failed` 或 `cancelled`。
-
-```json
-{"type":"timeline","runId":"run_01...","step":1,"stepId":"step_01...","status":"running","summary":"检索发布文档"}
-```
-
-### `tool_call`
-
-```json
-{"type":"tool_call","runId":"run_01...","step":1,"stepId":"step_01...","callId":"call_01...","tool":"rag_search","arguments":{"query":"发布流程"},"thought_summary":"先检索发布文档"}
-```
-
-### `tool_result`
-
-```json
-{"type":"tool_result","runId":"run_01...","step":1,"stepId":"step_01...","callId":"call_01...","result":{"tool":"rag_search","success":true,"summary":"找到 3 条结果","data":[],"error":null,"truncated":false}}
-```
-
-### `sources`
-
-```json
-{"type":"sources","runId":"run_01...","sources":[{"path":"docs/release.md","score":0.91,"text":"..."}]}
-```
-
-### `delta`
-
-兼容现有与通用流客户端，`text` 和 `content` 必须同时存在且值相同：
-
-```json
-{"type":"delta","runId":"run_01...","text":"发布","content":"发布"}
-```
-
-### `approval_required`
-
-运行时需要用户批准有副作用的动作时暂停：
-
-```json
-{"type":"approval_required","runId":"run_01...","approvalId":"approval_01...","tool":"file_write","summary":"写入 docs/release.md","arguments":{"path":"docs/release.md"}}
-```
-
-### `approval_resolved`
-
-```json
-{"type":"approval_resolved","runId":"run_01...","approvalId":"approval_01...","approved":false}
-```
-
-### `done`
-
-```json
-{"type":"done","runId":"run_01...","status":"completed","answer":"发布流程如下……"}
-```
-
-### `error`
-
-```json
-{"type":"error","runId":"run_01...","error":{"code":"agent_failed","message":"Agent 运行失败","technical_detail":"provider connection reset","retryable":true}}
-```
-
-流在 `done` 或 `error` 后结束。取消运行应通过 `timeline`/`done` 表达 `cancelled` 状态；事件生产者仍须保留原 `runId`。
-
-## Electron IPC 边界
-
-Renderer 不直接请求 FastAPI，也不传递 workspace 绝对路径或 AI 密钥。首版只通过 preload 暴露以下接口：
+Renderer 可用的最小 API：
 
 ```ts
-electronAPI.agent.runStream.start(requestId, workspaceId, {
-  input,
-  history,
-  enabledTools,
-  maxSteps,
-  toolTimeoutSeconds,
-  runTimeoutSeconds,
-})
+electronAPI.agent.runStream.start(requestId, workspaceId, options)
 electronAPI.agent.runStream.cancel(requestId)
 electronAPI.agent.runStream.onEvent(listener)
+electronAPI.agent.resolveApproval(approvalId, approved)
+electronAPI.agent.summarizeConversation(messages, maxChars)
 ```
 
-对应 IPC channel 为：
+审批 IPC：
 
-- `agent:runStream:start`
-- `agent:runStream:cancel`
-- `agent:runStream:event`
+- `agent:approval:resolve`
+- 参数：`approvalId: string`, `approved: boolean`
+- Main 按 `event.sender` 查找审批，Renderer 不能批准其他窗口或已结束运行的 proposal。
+- 进入 `resolving` 后拒绝重复点击和重放。
+- 到达 `deadlineAt` 后不允许先写盘再依赖 Python 拒绝。
 
-main process 根据 `workspaceId` 从已登记 workspace 中解析真实路径，并固定 `allow_write=false`。`enabledTools` 仅接受 `rag_search`、`workspace_list`、`workspace_search`、`file_read`。
+旧的 `rag:chat`、`rag:askStream:*` 和 `rag:summarizeConversation` IPC 已删除。RAG IPC 只保留索引管理。
 
-活动运行按 `WebContents + requestId` 隔离；重复启动同一运行会取消旧请求，renderer 主动取消、窗口销毁和应用退出都会触发 `AbortController`。每个转发事件附带 renderer 的 `requestId` 和后端 `runId`。每个窗口最多同时运行 4 个 Agent，全局最多 32 个；输入最多 32,000 字符、历史最多 50 条且合计最多 100,000 字符，单条 NDJSON 事件最多 1,000,000 字符。
+## 7. Electron 文件应用规则
 
-Electron main 会对事件执行最小运行时校验。未知类型、缺少 `runId` 或关键字段不合法的事件不会进入 renderer，只记录不包含事件正文的技术日志。preload 的 `onEvent` 返回只移除自身 listener 的取消订阅函数。
+应用前 Main 必须重新执行：
 
-## Renderer UI 与持久化
+1. 从已登记 workspace 解析根目录并 `realpath`。
+2. 拒绝绝对路径、UNC、盘符路径、`..`、空路径段和 `.looma`。
+3. Windows 拒绝 ADS `:`、尾随点/空格和设备名 `CON/PRN/AUX/NUL/COM1..9/LPT1..9`。
+4. 检查路径链中的 symlink、junction/reparse point 和特殊文件。
+5. 验证 UTF-8、NUL 字节、大小及 `proposed_sha256`。
+6. `update` 重新计算当前文件 SHA-256，并与 `expected_sha256` 比较。
+7. `create` 必须保证目标仍不存在；通过同目录临时文件和无覆盖原子提交防止并发覆盖。
+8. 临时文件写入后 `fsync`，更新通过同目录 rename 提交。
+9. 写入后再次读取并验证结果 SHA-256；失败时删除临时文件并返回 `applied=false`。
 
-桌面端 AI 助手采用“聊天 + 右侧时间线抽屉”结构：回答区域只显示用户消息、Assistant 回答及紧凑过程摘要；步骤、工具结果、来源卡片、友好错误和可折叠技术详情在右侧抽屉中展示。该版本不实现移动端 Bottom Sheet、移动端断点或移动端专项视图。
+已知系统边界：能够向 Electron Main 注入代码或具有当前用户同等权限并持续竞争文件系统的恶意本地进程，不属于应用层完全可防御范围。更新操作已在提交前再次复验 hash，但 Node 路径 API 不提供原生 compare-and-swap rename。
 
-模式栏规则：
+## 8. Renderer UI
 
-- `RAG` 是默认模式，沿用现有索引检查和索引缺失引导。
-- `Agent` 不要求 RAG 索引存在，可以使用设置中启用的四个只读工具：`rag_search`、`workspace_list`、`workspace_search`、`file_read`。
-- `Chat` 仅作为禁用的“后续开放”入口展示；当前没有独立 Chat IPC，Renderer 不得用 RAG 请求冒充普通 Chat。
-- 任一 RAG 或 Agent 从异步整理历史开始到运行终止期间都禁止切换模式；准备阶段点击停止不会继续启动 IPC。Agent 运行会自动打开时间线抽屉，并可通过 `cancel(requestId)` 主动取消。
+产品只显示 Agent 对话。RAG 仅出现在：
 
-每个 Agent assistant message 可持久化以下可选字段，以兼容旧 RAG 会话：
+- “索引库”管理界面；
+- Agent 时间线中的 `rag_search` 工具步骤。
 
-```ts
-{
-  runId?: string
-  mode?: 'rag' | 'agent'
-  modelIdentity?: { provider: string; model: string; displayName: string }
-  agentSummary?: {
-    status: 'running' | 'completed' | 'cancelled' | 'error'
-    toolCallCount?: number
-    sourceCount?: number
-    error?: { message: string; technicalDetail?: string }
-  }
-  timeline?: AiAssistantTimelineStep[]
-}
-```
+审批采用时间线抽屉内卡片：
 
-`modelIdentity` 在请求开始时固化，读取历史消息时不得按当前设置回填。工具调用不创建独立聊天 bubble。持久化只保留短摘要、受限来源片段、友好错误和允许的技术详情；不得保存完整 arguments、大 observation 或隐藏 `thought_summary`。来源路径只接受工作区相对 POSIX 路径；盘符、UNC、绝对路径、URI 风格路径、包含 `..` 的路径以及任意大小写 `.looma` 路径段必须丢弃，不得通过剥离 workspace 前缀把绝对路径转换为相对路径。
+- 显示相对路径、操作类型和 unified diff；
+- 明确提示“未批准不会写入”；
+- 提交期间禁用重复操作；
+- 展示拒绝、超时、hash 冲突和应用失败；
+- 小屏使用全宽抽屉。
 
-Agent 事件通过 renderer 维护的 `requestId → conversationId` 映射写回原会话，因此切换会话不会误路由迟到但仍有效的事件；取消成功后清理映射、结束所有活动/等待步骤并忽略迟到事件。取消失败时保留运行映射并恢复可观察的运行状态，不能静默标记为已取消。应用重启后，遗留的 `running` 消息会恢复为“已取消/运行中断”，不会继续显示为运行中。工具失败的友好摘要与受限 `technicalDetail` 分开持久化，技术详情默认折叠展示。
+历史旧消息可以继续只读展示，但不能通过旧 RAG/Chat 链路重新发送或重新生成。
 
-## 真实服务 Smoke 验收
+## 9. 发布验收
 
-启动 `rag-service` 后执行：
+发布前至少验证：
 
-```bash
-cd rag-service
-python test/e2e_agent_smoke.py
-```
-
-脚本使用当前真实聊天模型和临时 workspace，验证无索引时的 `workspace_list → file_read`、精确文本的 `workspace_search → file_read`，以及越权路径被拒绝后 run 仍能给出最终解释。服务不在默认 `http://127.0.0.1:8767` 时，通过 `LOOMA_RAG_URL` 指定地址。`rag_search` 的真实索引场景要求当前 Python 环境已安装 LlamaIndex；未安装时相关单元测试会明确标记为 skipped，不能伪报为真实索引验收通过。
+- Python：proposal schema、路径边界、审批批准/拒绝/超时/取消、应用失败恢复。
+- Electron：create/update、hash 冲突、内容篡改、路径穿越、`.looma`、ADS、设备名、symlink/junction、临时文件清理、跨窗口和重复审批。
+- Renderer：diff 展示、按钮竞态、审批状态和 Agent-only 入口。
+- E2E：`file_patch → approval_required → 用户批准 → Electron 应用 → approval_resolved → Agent 最终答复`。
+- E2E 还需分别覆盖拒绝、取消、超时和 hash 冲突，并比较目标文件、工作空间外哨兵及 `.looma` 哨兵的前后 hash。

@@ -1,12 +1,11 @@
 import { ipcMain } from 'electron';
-import { aiService, type AISettings, type RagChatMessage, type RagRequestStats } from '../services/ai/AIService';
+import { aiService, type AISettings } from '../services/ai/AIService';
 import { normalizeOllamaBaseUrl } from '../services/ollama/ollamaService';
 import { getWorkspacePathById }  from './workspaceIpc';
 import { appSettingsService } from './appSettingsIpc';
 
 const activeRagIndexStreams = new Map<string, AbortController>();
 
-const activeRagStreams = new Map<string, AbortController>();
 
 type RagRuntimeSettings = AISettings & {
   vectorStorePath: string
@@ -15,14 +14,6 @@ type RagRuntimeSettings = AISettings & {
   chunkingStrategy: 'fixed' | 'markdown' | 'semantic' | 'parent_child' | 'code_aware'
 }
 
-const estimateTokenCount = (text: string) => {
-  const normalized = text.trim();
-  if (!normalized) return 0;
-  const cjkChars = normalized.match(/[\u3400-\u9fff\uf900-\ufaff]/g)?.length ?? 0;
-  const nonCjkText = normalized.replace(/[\u3400-\u9fff\uf900-\ufaff]/g, ' ');
-  const asciiTokenEstimate = Math.ceil(nonCjkText.replace(/\s+/g, ' ').trim().length / 4);
-  return Math.max(1, cjkChars + asciiTokenEstimate);
-};
 
 const normalizeVectorStorePath = (value: string) => {
   return (value || '').trim() || '.looma/rag-index';
@@ -52,40 +43,6 @@ const getRagAiSettings = async (): Promise<RagRuntimeSettings> => {
   };
 };
 
-const normalizeRagHistory = (history: unknown): RagChatMessage[] => {
-  if (!Array.isArray(history)) return [];
-  const allowedRoles = new Set(['user', 'assistant', 'system', 'tool']);
-  return history
-    .filter((item): item is RagChatMessage => Boolean(
-      item
-      && typeof item === 'object'
-      && allowedRoles.has((item as any).role)
-      && typeof (item as any).content === 'string'
-      && (item as any).content.trim().length > 0,
-    ))
-    .map((item) => ({
-      role: item.role,
-      content: item.content.trim(),
-      name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : undefined,
-    }));
-};
-
-const normalizeRagRequestStats = (stats: unknown): RagRequestStats => {
-  const raw = stats && typeof stats === 'object' ? stats as Record<string, unknown> : {};
-  const toNonNegativeInt = (value: unknown) => {
-    const numberValue = typeof value === 'number' ? value : Number(value);
-    return Number.isFinite(numberValue) && numberValue > 0 ? Math.round(numberValue) : 0;
-  };
-  return {
-    history_messages: toNonNegativeInt(raw.history_messages),
-    history_token_estimate: toNonNegativeInt(raw.history_token_estimate),
-    question_token_estimate: toNonNegativeInt(raw.question_token_estimate),
-    total_token_estimate: toNonNegativeInt(raw.total_token_estimate),
-    recent_turns: toNonNegativeInt(raw.recent_turns),
-    distant_summary_enabled: raw.distant_summary_enabled === true,
-    distant_summary_messages: toNonNegativeInt(raw.distant_summary_messages),
-  };
-};
 
 ipcMain.handle('rag:health', async () => {
   return await aiService.health();
@@ -168,90 +125,3 @@ ipcMain.handle('rag:indexFile:delete', async (_, workspaceId: string, relativePa
   return await aiService.deleteFileIndex(workspacePath, relativePath);
 });
 
-ipcMain.handle('rag:chat', async (_, workspaceId: string, question: string, history?: unknown, requestStats?: unknown) => {
-  const workspacePath = await getWorkspacePathById(workspaceId);
-  if (!workspacePath) return { success: false, error: 'Workspace not found' };
-  if (!question.trim()) return { success: false, error: 'Question is required' };
-  const ragSettings = await getRagAiSettings();
-  const normalizedStats = normalizeRagRequestStats(requestStats);
-  const result = await aiService.chat(
-    workspacePath,
-    question,
-    ragSettings,
-    normalizeRagHistory(history),
-    normalizedStats,
-  );
-  return result;
-});
-
-ipcMain.handle('rag:summarizeConversation', async (_, messages?: unknown, maxChars?: unknown) => {
-  const normalizedMessages = normalizeRagHistory(messages);
-  if (!normalizedMessages.length) return { success: false, error: 'Messages are required' };
-  const parsedMaxChars = typeof maxChars === 'number' ? maxChars : Number(maxChars);
-  const boundedMaxChars = Number.isFinite(parsedMaxChars) ? Math.min(8000, Math.max(200, Math.round(parsedMaxChars))) : 1200;
-  const ragSettings = await getRagAiSettings();
-  const result = await aiService.summarizeConversation(
-    normalizedMessages,
-    boundedMaxChars,
-    ragSettings,
-  );
-  return result;
-});
-
-ipcMain.handle('rag:askStream:start', async (event, requestId: string, workspaceId: string, question: string, history?: unknown, requestStats?: unknown) => {
-  const workspacePath = await getWorkspacePathById(workspaceId);
-  if (!workspacePath) return { success: false, error: 'Workspace not found' };
-  if (!question.trim()) return { success: false, error: 'Question is required' };
-
-  activeRagStreams.get(requestId)?.abort();
-  const controller = new AbortController();
-  activeRagStreams.set(requestId, controller);
-  const sender = event.sender;
-  const ragSettings = await getRagAiSettings();
-  const normalizedStats = normalizeRagRequestStats(requestStats);
-  const normalizedHistory = normalizeRagHistory(history);
-  let assistantOutput = '';
-
-  aiService
-    .streamAssistant(
-      workspacePath,
-      question,
-      ragSettings,
-      normalizedHistory,
-      normalizedStats,
-      (payload) => {
-        if (payload.type === 'delta') {
-          assistantOutput += payload.text || payload.content || '';
-        }
-        if (sender.isDestroyed()) return;
-        sender.send('rag:askStream:event', { requestId, ...payload });
-      },
-      controller.signal,
-    )
-    .then((result) => {
-      if (!result.success && !sender.isDestroyed()) {
-        sender.send('rag:askStream:event', {
-          requestId,
-          type: 'error',
-          error: result.error || 'AI 助手请求失败。',
-        });
-      }
-    })
-    .finally(() => {
-      if (activeRagStreams.get(requestId) === controller) {
-        activeRagStreams.delete(requestId);
-      }
-    });
-
-  return { success: true };
-});
-
-ipcMain.handle('rag:askStream:cancel', async (_, requestId: string) => {
-  activeRagStreams.get(requestId)?.abort();
-  activeRagStreams.delete(requestId);
-  return { success: true };
-});
-
-export {
-    activeRagStreams,
-}

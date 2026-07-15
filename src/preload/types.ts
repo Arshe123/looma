@@ -221,14 +221,10 @@ type RagStreamEventPayload =
   | { requestId: string; type: 'done'; result?: RagIndexPayload; status?: string; document_count?: number; file_count?: number; exists?: boolean; persist_dir?: string }
   | { requestId: string; type: 'error'; error: string; stepId?: string };
 
-type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read';
+type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch';
 interface AgentRunOptionsPayload {
   input: string;
   history?: RagChatMessagePayload[];
-  enabledTools?: AgentToolNamePayload[];
-  maxSteps?: number;
-  toolTimeoutSeconds?: number;
-  runTimeoutSeconds?: number;
 }
 interface AgentErrorPayload {
   code: string;
@@ -241,6 +237,8 @@ type AgentStreamEventPayload =
   | { requestId: string; type: 'timeline'; runId: string; step: number; stepId: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; summary: string }
   | { requestId: string; type: 'tool_call'; runId: string; step: number; stepId: string; callId: string; tool: AgentToolNamePayload; arguments: Record<string, unknown>; thought_summary: string }
   | { requestId: string; type: 'tool_result'; runId: string; step: number; stepId: string; callId: string; result: Record<string, unknown> }
+  | { requestId: string; type: 'approval_required'; runId: string; step: number; stepId: string; callId: string; approvalId: string; tool: 'file_patch'; proposal: { requiresApproval: true; path: string; operation: 'create' | 'update'; unified_diff: string; expected_sha256: string | null; proposed_sha256: string; proposed_content: '' }; requestedAt: string; deadlineAt: string }
+  | { requestId: string; type: 'approval_resolved'; runId: string; step: number; stepId: string; callId: string; approvalId: string; resolution: { status: 'approved' | 'rejected' | 'expired' | 'cancelled'; reason?: string | null; resolvedAt?: string | null; applied?: boolean | null } }
   | { requestId: string; type: 'sources'; runId: string; sources: Array<Record<string, unknown>> }
   | { requestId: string; type: 'delta'; runId: string; text: string; content: string }
   | { requestId: string; type: 'done'; runId: string; status: 'completed' | 'cancelled'; answer?: string }
@@ -314,13 +312,7 @@ interface ElectronAPI {
   rag: {
     health: () => Promise<Result<{ status: string; service: string }>>;
     status: (workspaceId: string) => Promise<Result<RagIndexStatusPayload>>;
-    chat: (workspaceId: string, question: string, history?: RagChatMessagePayload[], requestStats?: RagRequestStatsPayload) => Promise<Result<RagAnswerPayload>>;
-    summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) => Promise<Result<{ answer: string }>>;
-    askStream: {
-      start: (requestId: string, workspaceId: string, question: string, history?: RagChatMessagePayload[], requestStats?: RagRequestStatsPayload) => Promise<Result<void>>;
-      cancel: (requestId: string) => Promise<Result<void>>;
-      onEvent: (listener: (payload: RagStreamEventPayload) => void) => () => void;
-    };
+
     indexStream: {
       start: (requestId: string, workspaceId: string, mode?: 'incremental' | 'full' | 'retry_failed') => Promise<Result<void>>;
       cancel: (requestId: string) => Promise<Result<void>>;
@@ -334,6 +326,8 @@ interface ElectronAPI {
     deleteIndex: (workspaceId: string) => Promise<Result<void>>;
   };
   agent: {
+    summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) => Promise<Result<{ answer: string }>>;
+    resolveApproval: (approvalId: string, approved: boolean) => Promise<Result<{ applied: boolean }>>;
     runStream: {
       start: (requestId: string, workspaceId: string, options: AgentRunOptionsPayload) => Promise<Result<void>>;
       cancel: (requestId: string) => Promise<Result<void>>;

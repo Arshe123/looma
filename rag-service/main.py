@@ -7,11 +7,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from agent.approvals import ApprovalManager, ApprovalResolution
 from agent.events import error_event, event, utc_iso_z
 from agent.models import AgentError
 from agent.runtime import AgentRuntime
 from agent.tools import (
     AgentToolContext,
+    FilePatchTool,
     FileReadTool,
     RagSearchTool,
     ToolRegistry,
@@ -20,7 +22,7 @@ from agent.tools import (
 )
 from config import with_global_ai_config, with_global_knowledge_config
 from providers.factory import create_chat_provider
-from prompt.main import BASE_SYSTEM_PROMPT, build_rag_context_prompt
+
 from rag.index_service import build_index as build_knowledge_index, build_index_events, get_index_status
 from rag.index_manager import (
     build_managed_index,
@@ -31,12 +33,12 @@ from rag.index_manager import (
     get_file_chunks,
     reindex_file,
 )
-from rag.query_service import retrieve_context_sources
 from schemas import (
     AIConfig,
+    AgentApprovalResolveRequest,
     AgentRunRequest,
     ChatMessage,
-    ChatRequest,
+    AgentSummarizeRequest,
     IndexRequest,
     IndexBuildRequest,
     IndexStatusRequest,
@@ -45,6 +47,7 @@ from schemas import (
 )
 
 app = FastAPI(title="Looma RAG Service")
+approval_manager = ApprovalManager()
 
 app.add_middleware(
     CORSMiddleware,
@@ -59,20 +62,12 @@ def ndjson_event(event_type: str, **payload) -> str:
     return json.dumps({"type": event_type, **payload}, ensure_ascii=False) + "\n"
 
 
-def resolve_request_config(request: ChatRequest | RagQueryRequest | IndexRequest | IndexBuildRequest | AgentRunRequest):
+def resolve_request_config(request: RagQueryRequest | IndexRequest | IndexBuildRequest | AgentRunRequest):
     request.ai_config = with_global_ai_config(request.ai_config)
     if hasattr(request, "knowledge"):
         request.knowledge = with_global_knowledge_config(getattr(request, "knowledge"))
     return request
 
-
-def build_chat_messages(request: ChatRequest) -> list[ChatMessage]:
-    request = resolve_request_config(request)
-    return [
-        ChatMessage(role="system", content=BASE_SYSTEM_PROMPT),
-        *request.history,
-        ChatMessage(role="user", content=request.question),
-    ]
 
 
 def get_index_status_result(request: IndexStatusRequest):
@@ -95,120 +90,23 @@ def health():
     }
 
 
-@app.post("/chat")
-async def chat(request: ChatRequest):
-    request = resolve_request_config(request)
-    chat_provider = create_chat_provider(request.ai_config.chat)
-    answer = await chat_provider.chat(build_chat_messages(request))
-    return {"answer": answer}
-
-
-@app.post("/chat/stream")
-async def stream_chat(request: ChatRequest):
-    request = resolve_request_config(request)
-    chat_provider = create_chat_provider(request.ai_config.chat)
-    messages = build_chat_messages(request)
-
-    async def generate() -> AsyncIterator[str]:
-        try:
-            async for chunk in chat_provider.stream_chat(messages):
-                yield ndjson_event("delta", text=chunk, content=chunk)
-            yield ndjson_event("done")
-        except Exception as e:
-            yield ndjson_event("error", error=str(e), message=str(e))
-
-    return StreamingResponse(generate(), media_type="application/x-ndjson; charset=utf-8")
-
-
-async def rag_query_events(request: RagQueryRequest) -> AsyncIterator[str]:
-    try:
-        request = resolve_request_config(request)
-        yield ndjson_event(
-            "timeline",
-            stepId="validate-workspace",
-            status="completed",
-            title="检查工作空间",
-            detail="请求参数已验证。",
-        )
-
-        chat_provider = create_chat_provider(request.ai_config.chat)
-
-        yield ndjson_event(
-            "timeline",
-            stepId="retrieve-context",
-            status="active",
-            title="检索上下文",
-            detail="正在加载本地 LlamaIndex 索引并检索相关笔记。",
-        )
-        sources = await retrieve_context_sources(request)
-        yield ndjson_event("sources", sources=sources)
-        yield ndjson_event(
-            "timeline",
-            stepId="retrieve-context",
-            status="completed",
-            title="检索上下文",
-            detail=f"命中 {len(sources)} 个相关片段。",
-            outputs=[{"type": "metric", "title": "命中片段", "value": len(sources), "unit": "个"}],
-        )
-
-        context_prompt = build_rag_context_prompt(sources)
-        messages = [
-            ChatMessage(role="system", content=BASE_SYSTEM_PROMPT),
-            *request.history,
-            ChatMessage(role="system", content=context_prompt),
-            ChatMessage(role="user", content=request.question),
-        ]
-
-        yield ndjson_event(
-            "timeline",
-            stepId="compose-answer",
-            status="active",
-            title="生成回复",
-            detail="正在流式生成最终回答。",
-        )
-        async for chunk in chat_provider.stream_chat(messages):
-            yield ndjson_event("delta", text=chunk, content=chunk)
-        yield ndjson_event(
-            "timeline",
-            stepId="compose-answer",
-            status="completed",
-            title="生成回复",
-            detail="最终回复已生成。",
-        )
-        yield ndjson_event("done")
-    except HTTPException as e:
-        yield ndjson_event("error", stepId="validate-workspace", error=str(e.detail), message=str(e.detail))
-    except Exception as e:
-        yield ndjson_event("error", stepId="compose-answer", error=str(e), message=str(e))
-
-
-async def rag_answer_result(request: RagQueryRequest):
-    request = resolve_request_config(request)
-    chat_provider = create_chat_provider(request.ai_config.chat)
-    require_embedding_config(request)
-    sources = await retrieve_context_sources(request)
-    context_prompt = build_rag_context_prompt(sources)
+@app.post("/agent/summarize")
+async def agent_summarize(request: AgentSummarizeRequest):
+    ai_config = with_global_ai_config(None)
+    chat_provider = create_chat_provider(ai_config.chat)
     messages = [
-        ChatMessage(role="system", content=BASE_SYSTEM_PROMPT),
-        *request.history,
-        ChatMessage(role="system", content=context_prompt),
-        ChatMessage(role="user", content=request.question),
+        ChatMessage(
+            role="system",
+            content="你是 Looma Agent 的上下文压缩器。保留用户目标、关键事实、已确认结论、未完成事项、约束和专有名词，不得添加不存在的信息。",
+        ),
+        *request.messages,
+        ChatMessage(
+            role="user",
+            content=f"请将以上早期上下文压缩为不超过 {request.max_chars} 个中文字符的 Markdown 摘要。",
+        ),
     ]
     answer = await chat_provider.chat(messages)
-    return {"answer": answer, "sources": sources}
-
-
-@app.post("/rag/query")
-async def rag_query(request: RagQueryRequest):
-    return await rag_answer_result(request)
-
-
-@app.post("/rag/query/stream")
-async def rag_query_stream(request: RagQueryRequest):
-    return StreamingResponse(
-        rag_query_events(request),
-        media_type="application/x-ndjson; charset=utf-8",
-    )
+    return {"answer": answer}
 
 
 async def build_index_result(request: IndexRequest):
@@ -318,11 +216,14 @@ async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
             return
 
         provider = create_chat_provider(request.ai_config.chat)
-        registry = ToolRegistry()
+        # Product policy explicitly allows every built-in Agent tool. Write-risk tools
+        # still require request.agent.allow_write and always pause for Electron approval.
+        registry = ToolRegistry(allowed_tools=DEFAULT_AGENT_TOOLS)
         registry.register(RagSearchTool())
         registry.register(WorkspaceListTool())
         registry.register(WorkspaceSearchTool())
         registry.register(FileReadTool())
+        registry.register(FilePatchTool())
         runtime = AgentRuntime(
             provider=provider,
             registry=registry,
@@ -333,6 +234,7 @@ async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
                 ai_config=request.ai_config,
                 knowledge=request.knowledge,
             ),
+            approval_manager=approval_manager,
         )
         async for runtime_event in runtime.run(
             input=request.input,
@@ -363,3 +265,23 @@ async def agent_run_stream(request: AgentRunRequest):
         agent_run_events(request),
         media_type="application/x-ndjson; charset=utf-8",
     )
+
+
+@app.post("/agent/approvals/resolve")
+async def agent_approval_resolve(request: AgentApprovalResolveRequest):
+    try:
+        approval = await approval_manager.resolve(
+            request.approval_id,
+            ApprovalResolution(
+                status=request.status,
+                reason=request.reason,
+                applied=request.applied,
+            ),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="approval not found") from exc
+    return {
+        "approvalId": approval.approval_id,
+        "runId": approval.run_id,
+        "status": request.status,
+    }

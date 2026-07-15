@@ -2,6 +2,7 @@ import { app, shell } from 'electron'
 import chokidar, { type FSWatcher } from 'chokidar'
 import fs from 'fs/promises'
 import path from 'path'
+import { createHash, randomUUID } from 'crypto'
 import type { WebContents } from 'electron'
 import type { Result } from '../../../shared/types/Result'
 
@@ -9,6 +10,21 @@ export type WatchState = {
   workspacePath: string
   watcher: FSWatcher
   watchedTargets: Set<string>
+}
+
+export interface AgentFileProposal {
+  path: string
+  operation: 'create' | 'update'
+  unified_diff: string
+  expected_sha256: string | null
+  proposed_sha256: string
+  proposed_content: string
+}
+
+export interface AgentFileApplyResult {
+  path: string
+  operation: 'create' | 'update'
+  sha256: string
 }
 
 interface FsEntry {
@@ -27,6 +43,131 @@ const resolveInWorkspace = (workspacePath: string, relativePath: string) => {
   if (target === root) return { ok: true as const, root, target }
   if (!target.startsWith(root + path.sep)) return { ok: false as const, error: '这不是工作空间内的路径' }
   return { ok: true as const, root, target }
+}
+
+const MAX_AGENT_PATCH_BYTES = 200_000
+const sha256 = (value: Buffer) => createHash('sha256').update(value).digest('hex')
+const isWithin = (root: string, target: string) => target === root || target.startsWith(root + path.sep)
+
+const validateAgentRelativePath = (relativePath: string) => {
+  if (!relativePath || relativePath.includes('\0') || path.isAbsolute(relativePath) || /^[A-Za-z]:/.test(relativePath) || /^[/\\]{2}/.test(relativePath)) {
+    throw new Error('无效的工作空间相对路径')
+  }
+  const parts = relativePath.replace(/\\/g, '/').split('/')
+  const reserved = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
+  if (parts.some((part) => !part || part === '.' || part === '..' || part.includes(':')
+    || part.endsWith('.') || part.endsWith(' ') || part.toLowerCase() === '.looma' || reserved.test(part))) {
+    throw new Error('路径包含不允许的目录段')
+  }
+  return parts
+}
+
+const assertNoLinksOrReparsePoints = async (root: string, parts: string[]) => {
+  let current = root
+  for (const part of parts) {
+    current = path.join(current, part)
+    try {
+      const stats = await fs.lstat(current)
+      if (stats.isSymbolicLink() || (!stats.isFile() && !stats.isDirectory())) {
+        throw new Error('Agent 文件修改不允许经过链接或特殊文件')
+      }
+    } catch (error: any) {
+      if (error?.code === 'ENOENT') break
+      throw error
+    }
+  }
+}
+
+export const applyAgentFileProposal = async (
+  workspacePath: string,
+  proposal: AgentFileProposal,
+): Promise<Result<AgentFileApplyResult>> => {
+  let tempPath = ''
+  try {
+    if (!proposal || !['create', 'update'].includes(proposal.operation)) throw new Error('无效的修改提案')
+    const parts = validateAgentRelativePath(proposal.path)
+    const root = await fs.realpath(path.resolve(workspacePath))
+    const target = path.resolve(root, ...parts)
+    if (!isWithin(root, target)) throw new Error('目标路径不在工作空间内')
+    await assertNoLinksOrReparsePoints(root, parts)
+
+    const parent = path.dirname(target)
+    const parentReal = await fs.realpath(parent)
+    if (!isWithin(root, parentReal)) throw new Error('目标目录不在工作空间内')
+    const parentStats = await fs.lstat(parentReal)
+    if (!parentStats.isDirectory() || parentStats.isSymbolicLink()) throw new Error('目标父目录不安全')
+
+    const proposed = Buffer.from(proposal.proposed_content, 'utf8')
+    if (!proposal.proposed_content || proposed.length > MAX_AGENT_PATCH_BYTES || proposed.includes(0)) {
+      throw new Error('提案内容为空、过大或不是文本')
+    }
+    if (!/^[a-f0-9]{64}$/.test(proposal.proposed_sha256) || sha256(proposed) !== proposal.proposed_sha256) {
+      throw new Error('提案内容校验失败')
+    }
+
+    let mode: number | undefined
+    if (proposal.operation === 'create') {
+      if (proposal.expected_sha256 !== null) throw new Error('新建提案不能包含原文件 hash')
+      try {
+        await fs.lstat(target)
+        throw new Error('目标文件已经存在')
+      } catch (error: any) {
+        if (error?.code !== 'ENOENT') throw error
+      }
+    } else {
+      if (!/^[a-f0-9]{64}$/.test(proposal.expected_sha256 || '')) throw new Error('更新提案缺少有效 hash')
+      const targetStats = await fs.lstat(target)
+      if (!targetStats.isFile() || targetStats.isSymbolicLink()) throw new Error('目标不是安全的普通文件')
+      const current = await fs.readFile(target)
+      if (current.length > MAX_AGENT_PATCH_BYTES || current.includes(0)) throw new Error('目标文件过大或不是文本')
+      new TextDecoder('utf-8', { fatal: true }).decode(current)
+      if (sha256(current) !== proposal.expected_sha256) throw new Error('文件已在审批期间发生变化，请重新生成修改提案')
+      mode = targetStats.mode
+    }
+
+    await assertNoLinksOrReparsePoints(root, parts)
+    if (await fs.realpath(parent) !== parentReal) throw new Error('目标目录在审批期间发生变化')
+    if (proposal.operation === 'create') {
+      try {
+        await fs.lstat(target)
+        throw new Error('目标文件已经存在')
+      } catch (error: any) {
+        if (error?.code !== 'ENOENT') throw error
+      }
+    } else {
+      const latestStats = await fs.lstat(target)
+      if (!latestStats.isFile() || latestStats.isSymbolicLink()) throw new Error('目标文件类型在审批期间发生变化')
+      const latest = await fs.readFile(target)
+      if (sha256(latest) !== proposal.expected_sha256) throw new Error('文件已在审批期间发生变化，请重新生成修改提案')
+    }
+
+    tempPath = path.join(parentReal, `.looma-agent-${randomUUID()}.tmp`)
+    const handle = await fs.open(tempPath, 'wx', mode)
+    try {
+      await handle.writeFile(proposed)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+
+    if (proposal.operation === 'create') {
+      // link() is the no-overwrite atomic commit: a concurrent creator makes it fail with EEXIST.
+      await fs.link(tempPath, target)
+      await fs.unlink(tempPath)
+    } else {
+      await fs.rename(tempPath, target)
+    }
+    tempPath = ''
+    const written = await fs.readFile(target)
+    if (sha256(written) !== sha256(proposed)) throw new Error('写入后的文件校验失败')
+    return {
+      success: true,
+      data: { path: proposal.path.replace(/\\/g, '/'), operation: proposal.operation, sha256: sha256(written) },
+    }
+  } catch (error: any) {
+    if (tempPath) await fs.unlink(tempPath).catch(() => {})
+    return { success: false, error: error?.message || '应用文件修改失败', errorCode: 'AGENT_PATCH_APPLY_FAILED' }
+  }
 }
 
 const toFsEntryFromDirent = (root: string, parentAbs: string, d: import('fs').Dirent): FsEntry => {

@@ -15,19 +15,17 @@ const installElectronApiStub = () => {
   ;(globalThis as any).window.electronAPI = {
     workspaceAi: { set: vi.fn().mockResolvedValue({ success: true }) },
     rag: {
-      askStream: {
-        start: vi.fn().mockResolvedValue({ success: true }),
-        cancel: vi.fn().mockResolvedValue({ success: true }),
-        onEvent: vi.fn(() => vi.fn()),
-      },
       indexStream: {
         start: vi.fn().mockResolvedValue({ success: true }),
         cancel: vi.fn().mockResolvedValue({ success: true }),
         onEvent: vi.fn(() => vi.fn()),
       },
+    },
+    agent: {
+      runStream: agentApi,
+      resolveApproval: vi.fn().mockResolvedValue({ success: true, data: { applied: true } }),
       summarizeConversation: vi.fn().mockResolvedValue({ success: true, data: { answer: '摘要' } }),
     },
-    agent: { runStream: agentApi },
   }
 }
 
@@ -272,23 +270,6 @@ describe('agent stream state', () => {
     expect(store.agentStartingConversationIds[conversationId]).toBeUndefined()
   })
 
-  it('locks RAG during history preparation against an Agent start', async () => {
-    const conversationId = createConversation()
-    const store = useAiAssistantStore()
-    let resolveHistory!: (value: { history: []; stats: Record<string, never> }) => void
-    vi.spyOn(store, 'buildConversationHistoryForRequest').mockImplementation(() => new Promise(resolve => {
-      resolveHistory = resolve as typeof resolveHistory
-    }) as any)
-
-    const ragStart = store.askInConversation({ workspaceId: 'workspace-1', conversationId, text: 'RAG 问题', aiName: 'AI' })
-    expect(store.isConversationAsking(conversationId)).toBe(true)
-    const agentStart = await store.startAgentInConversation({ workspaceId: 'workspace-1', conversationId, text: 'Agent 问题', aiName: 'AI' })
-    expect(agentStart.success).toBe(false)
-
-    resolveHistory({ history: [], stats: {} })
-    await ragStart
-    expect((window as any).electronAPI.rag.askStream.start).toHaveBeenCalledOnce()
-  })
 
   it('deduplicates tool events by callId and does not regress a completed result', async () => {
     const conversationId = createConversation()
@@ -367,5 +348,32 @@ describe('agent stream state', () => {
       content: '读取失败',
       technicalDetail: 'WorkspaceSecurityError',
     })
+  })
+
+  it('stores file proposals and resolves them through the Agent approval API', async () => {
+    const conversationId = createConversation()
+    const run = await startAgent(conversationId)
+    const store = useAiAssistantStore()
+    store.handleAgentStreamEvent({
+      requestId: run.requestId,
+      type: 'approval_required',
+      runId: 'run-approval',
+      step: 1,
+      stepId: 'step-1',
+      callId: 'call-1',
+      approvalId: 'approval-1',
+      tool: 'file_patch',
+      proposal: { path: 'notes/a.md', operation: 'update', unified_diff: '--- a\n+++ a\n-old\n+new' },
+      requestedAt: new Date().toISOString(),
+      deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+    })
+
+    expect(store.getConversationAgentApprovals(conversationId)).toEqual([
+      expect.objectContaining({ approvalId: 'approval-1', path: 'notes/a.md', status: 'pending' }),
+    ])
+    const result = await store.resolveAgentApproval(conversationId, 'approval-1', true)
+    expect((window as any).electronAPI.agent.resolveApproval).toHaveBeenCalledWith('approval-1', true)
+    expect(result).toEqual({ success: true })
+    expect(store.getConversationAgentApprovals(conversationId)[0].status).toBe('resolving')
   })
 })

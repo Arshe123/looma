@@ -23,7 +23,7 @@ class AgentRequestContractTest(unittest.TestCase):
         self.assertIsNone(request.knowledge)
         self.assertEqual(
             request.agent.enabled_tools,
-            ["rag_search", "workspace_list", "workspace_search", "file_read"],
+            ["rag_search", "workspace_list", "workspace_search", "file_read", "file_patch"],
         )
         self.assertEqual(request.agent.max_steps, 8)
         self.assertEqual(request.agent.tool_timeout_seconds, 30)
@@ -38,7 +38,7 @@ class AgentRequestContractTest(unittest.TestCase):
     def test_agent_config_does_not_enable_write_network_or_terminal_by_default(self):
         enabled = AgentConfig().enabled_tools
 
-        self.assertNotIn("file_write", enabled)
+        self.assertIn("file_patch", enabled)
         self.assertNotIn("web_search", enabled)
         self.assertNotIn("terminal", enabled)
 

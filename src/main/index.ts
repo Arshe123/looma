@@ -3,9 +3,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { workspaceService } from './services/workspace/workspaceService';
 import { fileSystemService } from './services/file/fileSystemService';
-import { activeRagStreams } from './ipc/ragIpc';
 import { abortAllAgentRuns } from './ipc/agentIpc';
 import { setWindowTitleForWorkspace } from './ipc/workspaceIpc';
+import './ipc/appSettingsIpc';
+import './ipc/ragIpc';
 import './ipc/appIpc';
 import './ipc/fileIpc';
 import './ipc/fsIpc';
@@ -185,10 +186,6 @@ app.on('before-quit', async (e) => {
   e.preventDefault();
   isQuitting = true;
 
-  for (const controller of activeRagStreams.values()) {
-    controller.abort();
-  }
-  activeRagStreams.clear();
   abortAllAgentRuns();
   
   try {

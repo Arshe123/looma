@@ -11,7 +11,7 @@ from agent.models import AgentFinalAnswer, AgentToolCall
 from agent.runtime import AgentRuntime
 from agent.tools.base import AgentTool, AgentToolContext, StrictToolArgs
 from agent.tools.registry import ToolRegistry
-from schemas import AgentConfig, AgentRunRequest, ChatMessage
+from schemas import AgentConfig, AgentRunRequest, ChatMessage, WorkspaceContext
 
 
 class EchoArgs(StrictToolArgs):
@@ -52,7 +52,7 @@ class FailingFakeTool(FakeTool):
 
 
 class FakeWriteTool(FakeTool):
-    name = "file_write"
+    name = "file_patch"
     risk_level = "write"
 
 
@@ -82,7 +82,7 @@ async def collect(runtime, **kwargs):
 
 
 def build_runtime(provider, *tools):
-    registry = ToolRegistry(allowed_tools=["rag_search", "workspace_search", "file_write"])
+    registry = ToolRegistry(allowed_tools=["rag_search", "workspace_search", "file_patch"])
     for tool in tools:
         registry.register(tool)
     return AgentRuntime(
@@ -288,7 +288,7 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         provider = FakeProvider([AgentFinalAnswer(type="final", answer="好")])
         await collect(
             build_runtime(provider, read, write), input="问", history=[],
-            config=AgentConfig(enabled_tools=["workspace_search", "file_write"], allow_write=False),
+            config=AgentConfig(enabled_tools=["workspace_search", "file_patch"], allow_write=False),
         )
         self.assertEqual([s["name"] for s in provider.calls[0][1]], ["workspace_search"])
 
@@ -418,12 +418,52 @@ class AgentMainStreamTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(event["runId"] == events[0]["runId"] for event in events))
         self.assertNotIn("must-not-leak", "".join(lines))
 
-    async def test_agent_route_and_existing_rag_stream_route_are_registered(self):
+    async def test_main_product_policy_exposes_file_patch_when_request_allows_write(self):
+        import main
+
+        captured = {}
+
+        class RuntimeStub:
+            async def run(self, **kwargs):
+                yield {"type": "run_started", "runId": kwargs["run_id"], "startedAt": "2026-01-01T00:00:00Z"}
+                yield {"type": "done", "runId": kwargs["run_id"], "status": "completed", "answer": "ok"}
+
+        def runtime_factory(**kwargs):
+            captured["tools"] = [
+                schema["name"]
+                for schema in kwargs["registry"].tool_schemas(
+                    enabled_tools=["rag_search", "workspace_list", "workspace_search", "file_read", "file_patch"],
+                    allow_write=True,
+                )
+            ]
+            return RuntimeStub()
+
+        request = AgentRunRequest(
+            input="列出工具",
+            workspace=WorkspaceContext(workspace_path="."),
+            agent=AgentConfig(allow_write=True),
+        )
+        ai = {"chat": {"provider": "ollama", "model": "fake"}}
+        with patch.object(main, "resolve_request_config", side_effect=lambda value: value), \
+             patch.object(main, "create_chat_provider", return_value=object()), \
+             patch.object(main, "AgentRuntime", side_effect=runtime_factory):
+            request.ai_config = main.AIConfig(**ai)
+            _ = [line async for line in main.agent_run_events(request)]
+
+        self.assertEqual(captured["tools"], [
+            "rag_search", "workspace_list", "workspace_search", "file_read", "file_patch"
+        ])
+
+    async def test_agent_routes_are_registered_without_legacy_conversation_routes(self):
         import main
 
         paths = {route.path for route in main.app.routes}
         self.assertIn("/agent/run/stream", paths)
-        self.assertIn("/rag/query/stream", paths)
+        self.assertIn("/agent/summarize", paths)
+        self.assertNotIn("/chat", paths)
+        self.assertNotIn("/chat/stream", paths)
+        self.assertNotIn("/rag/query", paths)
+        self.assertNotIn("/rag/query/stream", paths)
 
 
 if __name__ == "__main__":

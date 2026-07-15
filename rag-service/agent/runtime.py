@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass
 from typing import Any
 
+from agent.approvals import ApprovalManager, ApprovalResolution
 from pydantic import ValidationError
 
 from agent.decision_parser import AgentDecisionParseError
@@ -84,10 +85,18 @@ class _AwaitBudget:
 class AgentRuntime:
     """Bounded provider/tool decision loop with one terminal stream event."""
 
-    def __init__(self, *, provider: Any, registry: ToolRegistry, context: AgentToolContext):
+    def __init__(
+        self,
+        *,
+        provider: Any,
+        registry: ToolRegistry,
+        context: AgentToolContext,
+        approval_manager: ApprovalManager | None = None,
+    ):
         self.provider = provider
         self.registry = registry
         self.context = context
+        self.approval_manager = approval_manager
 
     async def run(
         self,
@@ -225,6 +234,43 @@ class AgentRuntime:
                     ),
                     cancel_event,
                 )
+                if self._requires_approval(decision.tool, result):
+                    if self.approval_manager is None:
+                        raise RuntimeError("approval manager is required for file_patch")
+                    approval = self.approval_manager.create(
+                        run_id=run_id,
+                        step_id=step_id,
+                        call_id=call_id,
+                        tool_name=decision.tool,
+                        payload=result.data,
+                    )
+                    yield event(
+                        "approval_required",
+                        run_id,
+                        step=steps,
+                        **approval.as_event(),
+                    )
+                    try:
+                        resolution = await budget.wait(
+                            self.approval_manager.wait_for_resolution(approval.approval_id),
+                            cancel_event,
+                        )
+                    except _RunCancelled:
+                        await self.approval_manager.cancel_run(run_id)
+                        resolution = ApprovalResolution(
+                            status="cancelled",
+                            reason="run cancelled",
+                        )
+                    yield event(
+                        "approval_resolved",
+                        run_id,
+                        step=steps,
+                        stepId=step_id,
+                        callId=call_id,
+                        approvalId=approval.approval_id,
+                        resolution=resolution.as_dict(),
+                    )
+                    result = self._approval_tool_result(decision.tool, result, resolution)
                 yield tool_result_event(
                     run_id, step=steps, step_id=step_id,
                     call_id=call_id, result=result,
@@ -241,10 +287,17 @@ class AgentRuntime:
                     )
                 yield event(
                     "timeline", run_id, step=steps, stepId=step_id,
-                    status="completed" if result.success else "failed",
+                    status=(
+                        "cancelled"
+                        if result.error and result.error.code == "approval_cancelled"
+                        else ("completed" if result.success else "failed")
+                    ),
                     summary=result.summary,
                 )
                 active_step = None
+                if result.error and result.error.code == "approval_cancelled":
+                    yield event("done", run_id, status="cancelled")
+                    return
                 messages.extend([
                     ChatMessage(
                         role="assistant",
@@ -327,3 +380,70 @@ class AgentRuntime:
             return cleaned
 
         return [sanitize(source) for source in sources]
+
+    @staticmethod
+    def _requires_approval(tool_name: str, result: ToolResult) -> bool:
+        return (
+            tool_name == "file_patch"
+            and result.success
+            and isinstance(result.data, dict)
+            and result.data.get("requiresApproval") is True
+        )
+
+    @staticmethod
+    def _approval_tool_result(
+        tool_name: str, pending_result: ToolResult, resolution: ApprovalResolution
+    ) -> ToolResult:
+        payload = pending_result.data if isinstance(pending_result.data, dict) else {}
+        safe_proposal = {
+            key: value
+            for key, value in payload.items()
+            if key in {"path", "operation", "expected_sha256", "proposed_sha256"}
+        }
+        data = {
+            "status": resolution.status,
+            "reason": resolution.reason,
+            "applied": resolution.applied,
+            "proposal": safe_proposal,
+        }
+        if resolution.status == "approved":
+            if resolution.applied is not True:
+                return ToolResult(
+                    tool=tool_name,
+                    success=False,
+                    summary="Patch was approved but could not be applied.",
+                    data=data,
+                    error=AgentError(
+                        code="patch_apply_failed",
+                        message="文件修改已获批准，但写入失败。",
+                        technical_detail=resolution.reason,
+                        retryable=True,
+                    ),
+                )
+            return ToolResult(
+                tool=tool_name,
+                success=True,
+                summary="Patch proposal approved.",
+                data=data,
+            )
+        error_codes = {
+            "rejected": "approval_rejected",
+            "expired": "approval_expired",
+            "cancelled": "approval_cancelled",
+        }
+        messages = {
+            "rejected": "Patch proposal was rejected.",
+            "expired": "Patch proposal approval timed out.",
+            "cancelled": "Patch proposal approval was cancelled.",
+        }
+        return ToolResult(
+            tool=tool_name,
+            success=False,
+            summary=messages[resolution.status],
+            data=data,
+            error=AgentError(
+                code=error_codes[resolution.status],
+                message=messages[resolution.status],
+                retryable=resolution.status == "expired",
+            ),
+        )

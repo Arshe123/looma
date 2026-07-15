@@ -129,7 +129,17 @@ export interface RagChatMessage {
   name?: string
 }
 
-export type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read'
+export type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch'
+
+export interface AgentFileProposalPayload {
+  requiresApproval: true
+  path: string
+  operation: 'create' | 'update'
+  unified_diff: string
+  expected_sha256: string | null
+  proposed_sha256: string
+  proposed_content: string
+}
 
 export interface AgentRunOptions {
   input: string
@@ -161,6 +171,8 @@ export type AgentStreamEvent =
   | { type: 'timeline'; runId: string; step: number; stepId: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; summary: string }
   | { type: 'tool_call'; runId: string; step: number; stepId: string; callId: string; tool: AgentToolName; arguments: Record<string, unknown>; thought_summary: string }
   | { type: 'tool_result'; runId: string; step: number; stepId: string; callId: string; result: AgentToolResultPayload }
+  | { type: 'approval_required'; runId: string; step: number; stepId: string; callId: string; approvalId: string; tool: 'file_patch'; proposal: AgentFileProposalPayload; requestedAt: string; deadlineAt: string }
+  | { type: 'approval_resolved'; runId: string; step: number; stepId: string; callId: string; approvalId: string; resolution: { status: 'approved' | 'rejected' | 'expired' | 'cancelled'; reason?: string | null; resolvedAt?: string | null; applied?: boolean | null } }
   | { type: 'sources'; runId: string; sources: Array<Record<string, unknown>> }
   | { type: 'delta'; runId: string; text: string; content: string }
   | { type: 'done'; runId: string; status: 'completed' | 'cancelled'; answer?: string }
@@ -228,19 +240,7 @@ interface AIService {
     signal?: AbortSignal,
   ): Promise<Result<void>>
 
-  chat(workspacePath: string, question: string, aiSettings: RagRequestSettings, history?: RagChatMessage[], requestStats?: RagRequestStats): Promise<Result<RagAnswer>>
-
-  summarizeConversation(messages: RagChatMessage[], maxChars: number, aiSettings: RagRequestSettings): Promise<Result<ChatAnswer>>
-
-  streamAssistant(
-    workspacePath: string,
-    question: string,
-    aiSettings: RagRequestSettings,
-    history: RagChatMessage[],
-    requestStats: RagRequestStats,
-    onEvent: (event: RagStreamEvent) => void,
-    signal?: AbortSignal,
-  ): Promise<Result<void>>
+  summarizeAgentConversation(messages: RagChatMessage[], maxChars: number): Promise<Result<ChatAnswer>>
 
   streamAgent(
     workspacePath: string,
@@ -248,9 +248,11 @@ interface AIService {
     onEvent: (event: AgentStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<Result<void>>
+
+  resolveAgentApproval(approvalId: string, status: 'approved' | 'rejected', reason?: string, applied?: boolean): Promise<Result<{ approvalId: string; runId: string; status: string }>>
 }
 
-const AGENT_TOOLS: readonly AgentToolName[] = ['rag_search', 'workspace_list', 'workspace_search', 'file_read']
+const AGENT_TOOLS: readonly AgentToolName[] = ['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch']
 const AGENT_TOOL_SET = new Set<string>(AGENT_TOOLS)
 const MAX_AGENT_INPUT_CHARS = 32_000
 const MAX_AGENT_HISTORY_MESSAGES = 50
@@ -323,6 +325,17 @@ export const isAgentStreamEvent = (value: unknown): value is AgentStreamEvent =>
       && (value.result.error === null || isErrorPayload(value.result.error))
       && Object.prototype.hasOwnProperty.call(value.result, 'data')
       && (value.result.success ? value.result.error === null : isErrorPayload(value.result.error))
+    case 'approval_required': return Number.isInteger(value.step) && isNonEmptyString(value.stepId)
+      && isNonEmptyString(value.callId) && isNonEmptyString(value.approvalId) && value.tool === 'file_patch'
+      && isNonEmptyString(value.requestedAt) && isNonEmptyString(value.deadlineAt) && isRecord(value.proposal)
+      && value.proposal.requiresApproval === true && isNonEmptyString(value.proposal.path)
+      && ['create', 'update'].includes(value.proposal.operation) && isString(value.proposal.unified_diff)
+      && (value.proposal.expected_sha256 === null || (isString(value.proposal.expected_sha256) && /^[a-f0-9]{64}$/.test(value.proposal.expected_sha256)))
+      && isString(value.proposal.proposed_sha256) && /^[a-f0-9]{64}$/.test(value.proposal.proposed_sha256)
+      && isString(value.proposal.proposed_content)
+    case 'approval_resolved': return Number.isInteger(value.step) && isNonEmptyString(value.stepId)
+      && isNonEmptyString(value.callId) && isNonEmptyString(value.approvalId) && isRecord(value.resolution)
+      && ['approved', 'rejected', 'expired', 'cancelled'].includes(value.resolution.status)
     case 'sources': return Array.isArray(value.sources) && value.sources.every(isRecord)
     case 'delta': return isString(value.text) && isString(value.content) && value.text === value.content
     case 'done': return ['completed', 'cancelled'].includes(value.status)
@@ -343,7 +356,7 @@ const toAgentRequestBody = (workspacePath: string, rawOptions: AgentRunOptions) 
       max_steps: options.maxSteps,
       tool_timeout_seconds: options.toolTimeoutSeconds,
       run_timeout_seconds: options.runTimeoutSeconds,
-      allow_write: false,
+      allow_write: options.enabledTools.includes('file_patch'),
     },
   }
 }
@@ -353,33 +366,6 @@ const omitUndefined = <T extends Record<string, unknown>>(value: T): T => {
   return Object.fromEntries(entries) as T
 }
 
-const toRagQueryBody = (
-  workspacePath: string,
-  question: string,
-  _aiSettings: RagRequestSettings,
-  history: RagChatMessage[] = [],
-  requestStats?: RagRequestStats,
-) => omitUndefined({
-  question,
-  workspace: {
-    workspace_path: workspacePath,
-  },
-  history,
-  request_stats: requestStats,
-})
-
-const toChatRequestBody = (
-  question: string,
-  aiSettings: RagRequestSettings,
-  history: RagChatMessage[] = [],
-) => omitUndefined({
-  question,
-  ai_config: {
-    chat: aiSettings.chat,
-    embedding: aiSettings.embedding,
-  },
-  history,
-})
 
 const toIndexBody = (workspacePath: string, _aiSettings?: RagRequestSettings) => ({
   workspace: {
@@ -564,42 +550,8 @@ export const aiService: AIService = {
     return streamNdjson<RagStreamEvent>('/rag/index/build/stream', toIndexBuildBody(workspacePath, 'incremental'), onEvent, signal)
   },
 
-  async chat(
-    workspacePath: string,
-    question: string,
-    aiSettings: RagRequestSettings,
-    history: RagChatMessage[] = [],
-    requestStats?: RagRequestStats,
-  ): Promise<Result<RagAnswer>> {
-    return postJson<RagAnswer>('/rag/query', toRagQueryBody(workspacePath, question, aiSettings, history, requestStats))
-  },
-
-  async summarizeConversation(
-    messages: RagChatMessage[],
-    maxChars: number,
-    aiSettings: RagRequestSettings,
-  ): Promise<Result<ChatAnswer>> {
-    const history: RagChatMessage[] = [
-      {
-        role: 'system',
-        content: '你是 Looma 的对话上下文压缩器。请把用户提供的早期多轮对话重新总结为结构化长期上下文摘要，保留用户目标、关键事实、已确认结论、未完成事项、重要约束和专有名词。不要逐条照抄原文，不要添加不存在的信息。',
-      },
-      ...messages,
-    ]
-    const question = `请将以上早期对话压缩为不超过 ${maxChars} 个中文字符的摘要。输出 Markdown，包含：关键信息、已达成结论、待继续事项。`
-    return postJson<ChatAnswer>('/chat', toChatRequestBody(question, aiSettings, history))
-  },
-
-  async streamAssistant(
-    workspacePath: string,
-    question: string,
-    aiSettings: RagRequestSettings,
-    history: RagChatMessage[],
-    requestStats: RagRequestStats,
-    onEvent: (event: RagStreamEvent) => void,
-    signal?: AbortSignal,
-  ): Promise<Result<void>> {
-    return streamNdjson<RagStreamEvent>('/rag/query/stream', toRagQueryBody(workspacePath, question, aiSettings, history, requestStats), onEvent, signal)
+  async summarizeAgentConversation(messages: RagChatMessage[], maxChars: number): Promise<Result<ChatAnswer>> {
+    return postJson<ChatAnswer>('/agent/summarize', { messages, max_chars: maxChars })
   },
 
   async streamAgent(
@@ -620,5 +572,14 @@ export const aiService: AIService = {
       },
       signal,
     )
+  },
+
+  async resolveAgentApproval(approvalId, status, reason, applied) {
+    return postJson('/agent/approvals/resolve', {
+      approval_id: approvalId,
+      status,
+      reason,
+      applied,
+    })
   },
 }

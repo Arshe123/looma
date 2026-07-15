@@ -21,14 +21,6 @@ export type ChatProviderConfigs = Record<AiProvider, ChatProviderConfig>
 export type EmbeddingProviderConfigs = Record<AiProvider, EmbeddingProviderConfig>
 export type ChunkingStrategy = 'fixed' | 'markdown' | 'semantic' | 'parent_child' | 'code_aware'
 export type ConversationContextStrategy = 'sliding_window' | 'summary'
-export type AgentMode = 'rag' | 'agent'
-export type AgentTool = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read'
-
-export interface AgentSettings {
-  defaultMode: AgentMode
-  maxSteps: number
-  enabledTools: AgentTool[]
-}
 
 export interface AppSettings {
   inlineMenu: {
@@ -58,7 +50,7 @@ export interface AppSettings {
       summaryMaxMessages: number
       summaryMaxChars: number
     }
-    agent: AgentSettings
+
   }
 }
 
@@ -67,12 +59,6 @@ const defaultInlineMenuItems = (): string[] =>
 
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 
-export const agentTools: AgentTool[] = [
-  'rag_search',
-  'workspace_list',
-  'workspace_search',
-  'file_read',
-]
 
 export const aiProviders: AiProvider[] = [
   'ollama',
@@ -205,11 +191,7 @@ const createDefaultAppSettings = (): AppSettings => {
         summaryMaxMessages: 24,
         summaryMaxChars: 1200,
       },
-      agent: {
-        defaultMode: 'rag',
-        maxSteps: 8,
-        enabledTools: [...agentTools],
-      },
+
     },
   }
 }
@@ -261,18 +243,6 @@ const normalizeBoundedInteger = (raw: unknown, fallback: number, min: number, ma
   return Math.min(max, Math.max(min, numberValue))
 }
 
-const normalizeAgentSettings = (value: unknown, fallback: AgentSettings): AgentSettings => {
-  const raw = asRecord(value)
-  const enabledTools = Array.isArray(raw.enabledTools)
-    ? [...new Set(raw.enabledTools.filter((tool): tool is AgentTool => agentTools.includes(tool as AgentTool)))]
-    : [...fallback.enabledTools]
-
-  return {
-    defaultMode: raw.defaultMode === 'agent' || raw.defaultMode === 'rag' ? raw.defaultMode : fallback.defaultMode,
-    maxSteps: normalizeBoundedInteger(raw.maxSteps, fallback.maxSteps, 1, 50),
-    enabledTools,
-  }
-}
 
 const normalizeConversationContextStrategy = (raw: unknown, fallback: ConversationContextStrategy): ConversationContextStrategy =>
   raw === 'sliding_window' || raw === 'summary' ? raw : fallback
@@ -408,7 +378,7 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
       enableSourceCitation: normalizeBoolean(rawAi.enableSourceCitation, defaults.ai.enableSourceCitation),
       localFirstMode: normalizeBoolean(rawAi.localFirstMode, defaults.ai.localFirstMode),
       conversationContext: normalizeConversationContextSettings(rawAi.conversationContext ?? rawAi.conversation_context, defaults.ai.conversationContext),
-      agent: normalizeAgentSettings(rawAi.agent, defaults.ai.agent),
+
     },
   }
 }

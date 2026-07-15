@@ -2,26 +2,31 @@
 import { X } from 'lucide-vue-next'
 import type { AiAssistantTimelineOutput } from '@/renderer/stores/workspace'
 import type { AgentUiState } from './agentUiState'
+import type { AgentApprovalState } from '@/renderer/stores/ai-assistant'
+import AgentApprovalCard from './AgentApprovalCard.vue'
 import AgentErrorDetails from './AgentErrorDetails.vue'
 import AgentToolStep from './AgentToolStep.vue'
 
 withDefaults(defineProps<{
   open: boolean
   state: AgentUiState
+  approvals?: AgentApprovalState[]
 }>(), {
   open: false,
+  approvals: () => [],
 })
 
 const emit = defineEmits<{
   close: []
   openSource: [output: AiAssistantTimelineOutput]
+  resolveApproval: [approvalId: string, approved: boolean]
 }>()
 </script>
 
 <template>
   <aside
     v-if="open"
-    class="absolute inset-y-0 right-0 z-30 flex w-[340px] flex-col border-l border-border-soft bg-panel shadow-xl"
+    class="absolute inset-y-0 right-0 z-30 flex w-full flex-col border-l border-border-soft bg-panel shadow-xl sm:w-[420px]"
     aria-label="Agent 执行过程"
   >
     <header class="flex h-[58px] shrink-0 items-center justify-between border-b border-border-soft px-3.5">
@@ -57,6 +62,14 @@ const emit = defineEmits<{
         :message="state.errorMessage"
         :technical-detail="state.technicalDetail"
       />
+      <div v-if="approvals.length" class="mt-3 space-y-3">
+        <AgentApprovalCard
+          v-for="approval in approvals"
+          :key="approval.approvalId"
+          :approval="approval"
+          @resolve="(approvalId, approved) => emit('resolveApproval', approvalId, approved)"
+        />
+      </div>
       <div
         v-if="state.timeline.length"
         class="relative mt-3 space-y-4 before:absolute before:bottom-2 before:left-[5px] before:top-2 before:w-px before:bg-border-soft"

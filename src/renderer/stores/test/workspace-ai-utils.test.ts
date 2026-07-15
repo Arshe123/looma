@@ -27,11 +27,11 @@ describe('workspace ai assistant utilities', () => {
   it('only accepts safe workspace-relative source paths', () => {
     expect(normalizeAiAssistantSourcePath('docs/guide.md')).toBe('docs/guide.md')
     expect(normalizeAiAssistantSourcePath('/etc/passwd')).toBe('')
-    expect(normalizeAiAssistantSourcePath('C:/workspace/docs/guide.md', 'C:/workspace')).toBe('docs/guide.md')
-    expect(normalizeAiAssistantSourcePath('C:/workspace/../outside.md', 'C:/workspace')).toBe('')
+    expect(normalizeAiAssistantSourcePath('C:/workspace/docs/guide.md')).toBe('')
+    expect(normalizeAiAssistantSourcePath('C:/workspace/../outside.md')).toBe('')
     expect(normalizeAiAssistantSourcePath('../outside.md')).toBe('')
     expect(normalizeAiAssistantSourcePath('.LOOMA/ai/state.json')).toBe('')
-    expect(normalizeAiAssistantSourcePath('//server/share/docs/guide.md', '//server/share')).toBe('')
+    expect(normalizeAiAssistantSourcePath('//server/share/docs/guide.md')).toBe('')
   })
 
   it('derives a title from the first non-empty user message', () => {

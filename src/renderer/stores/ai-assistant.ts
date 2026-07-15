@@ -250,7 +250,7 @@ const createConversationContextTimeline = (stats: RagRequestStatsPayload, starte
   ],
 }]
 
-const createSourceOutputs = (sources: RagSourcePayload[], workspacePath?: string): AiAssistantTimelineOutput[] =>
+const createSourceOutputs = (sources: RagSourcePayload[]): AiAssistantTimelineOutput[] =>
   sources.slice(0, 5).map((source, index) => {
     const path = typeof source.metadata?.source === 'string'
       ? source.metadata.source
@@ -264,7 +264,7 @@ const createSourceOutputs = (sources: RagSourcePayload[], workspacePath?: string
       type: 'source',
       title: path ? `来源 ${index + 1}` : `片段 ${index + 1}`,
       content: source.text.slice(0, 260),
-      path: normalizeAiAssistantSourcePath(path, workspacePath),
+      path: normalizeAiAssistantSourcePath(path),
       metadata: {
         ...source.metadata,
         score: source.score,
@@ -992,7 +992,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
           title: '检索上下文',
           status: 'completed',
           detail: sources.length ? `命中 ${sources.length} 个相关片段。` : '未收到可展示的来源片段。',
-          outputs: createSourceOutputs(sources, useWorkspaceStore().activeWorkspace?.path || ''),
+          outputs: createSourceOutputs(sources),
         })
         useWorkspaceStore().updateAiAssistantMessageTimelineInConversation(conversationId, stream.assistantMessageId, stream.timeline, { persist: false })
         return

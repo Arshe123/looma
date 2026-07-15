@@ -239,7 +239,7 @@ const getTimelineSourcePath = (output: AiAssistantTimelineOutput) => {
     || (typeof metadata.source === 'string' ? metadata.source : '')
     || (typeof metadata.file_path === 'string' ? metadata.file_path : '')
     || (typeof metadata.path === 'string' ? metadata.path : '')
-  return normalizeAiAssistantSourcePath(path, workspaceStore.activeWorkspace?.path)
+  return normalizeAiAssistantSourcePath(path)
 }
 
 const openTimelineSource = (output: AiAssistantTimelineOutput) => {

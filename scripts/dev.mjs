@@ -159,7 +159,12 @@ try {
   const npmRunner = resolveNpmRunner()
   renderer = spawn(npmRunner.command, npmRunner.args, {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env,
+    env: {
+      ...process.env,
+      RAG_SERVICE_URL: ragServiceUrl,
+      RAG_SERVICE_PORT: String(ragPort),
+      ...(loomaSettingsPath ? { LOOMA_SETTINGS_PATH: loomaSettingsPath } : {}),
+    },
     windowsHide: true,
   })
 } catch (err) {

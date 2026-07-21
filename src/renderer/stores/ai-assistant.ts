@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import type { AgentEvent, AgentSource } from '../../shared/types/agent-events'
 import { useSettingsStore } from './settings'
 import { useWorkspaceStore } from './workspace'
 import type { AiAssistantMessage, AiAssistantTimelineOutput, AiAssistantTimelineStep } from './workspace'
@@ -9,11 +10,14 @@ import {
   failAiTimelineStep,
   formatAiRuntimeError,
 } from '../components/ai/aiTimeline'
+import { projectAgentRunView } from './agent-event-view'
+import {
+  flattenAgentHistoryForSummary,
+  normalizeAgentConversationHistory,
+  type AgentHistoryMessage,
+} from './agent-history'
 
-type RagChatMessagePayload = {
-  role: 'user' | 'assistant' | 'system'
-  content: string
-}
+type RagChatMessagePayload = AgentHistoryMessage
 
 type RagRequestStatsPayload = {
   history_messages: number
@@ -57,6 +61,14 @@ type AiIndexResultState = {
 
 type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch'
 
+export type AgentRecoveryState = {
+  recoverable: boolean
+  checkpointAvailable: boolean
+  reason: string
+  resuming?: boolean
+  continuedToRunId?: string
+}
+
 export type AgentApprovalState = {
   approvalId: string
   stepId: string
@@ -69,7 +81,7 @@ export type AgentApprovalState = {
   error?: string
 }
 
-type AgentStreamEventPayload =
+type AgentStreamEventData =
   | { requestId: string; type: 'run_started'; runId: string; startedAt: string }
   | { requestId: string; type: 'timeline'; runId: string; step: number; stepId: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; summary: string }
   | { requestId: string; type: 'tool_call'; runId: string; step: number; stepId: string; callId: string; tool: AgentToolName; arguments: Record<string, unknown>; thought_summary: string }
@@ -79,22 +91,26 @@ type AgentStreamEventPayload =
   | { requestId: string; type: 'sources'; runId: string; sources: Array<Record<string, unknown>> }
   | { requestId: string; type: 'delta'; runId: string; text: string; content: string }
   | { requestId: string; type: 'done'; runId: string; status: 'completed' | 'cancelled'; answer?: string }
+  | { requestId: string; type: 'usage_updated'; runId: string; operationId: string; phase: 'decision' | 'tool' | 'finalization' | 'continuation'; provider?: string | null; model?: string | null; inputTokens?: number | null; outputTokens?: number | null; totalTokens?: number | null; latencyMs: number; cost?: { amount: number; currency: 'USD'; estimated: boolean } | null }
+  | { requestId: string; type: 'continuation_created' | 'run_interrupted' | 'recovery_failed'; runId: string; parentRunId?: string; reason?: string; message?: string }
   | { requestId: string; type: 'error'; runId: string; error: { code: string; message: string; technical_detail?: string | null; retryable: boolean } }
+
+type AgentStreamEventPayload = AgentStreamEventData & {
+  agentEvents?: AgentEvent[]
+  agentSources?: AgentSource[]
+}
 
 type AgentConversationRunState = {
   requestId: string
+  taskId?: string
   runId?: string
   workspaceId: string
   conversationId: string
   assistantMessageId: number
   assistantText: string
-  timeline: AiAssistantTimelineStep[]
   status: 'starting' | 'streaming' | 'cancelling'
   startedAt: number
-  toolCallCount: number
-  sourceCount: number
-  toolCallStates: Record<string, 'called' | 'completed'>
-  approvals: Record<string, AgentApprovalState>
+  approvalResolutionInFlight: Record<string, boolean>
 }
 
 type ConversationPreparingState = {
@@ -106,42 +122,7 @@ const compactText = (value: unknown, maxLength: number) => (
   typeof value === 'string' ? value.trim().slice(0, maxLength) : ''
 )
 
-const finishCancelledTimeline = (timeline: AiAssistantTimelineStep[], endedAt = Date.now()) => timeline.map(step => (
-  step.status === 'active' || step.status === 'pending'
-    ? { ...step, status: 'completed' as const, detail: '运行已取消。', endedAt }
-    : step
-))
-
-const normalizeAgentRelativePath = (value: unknown) => {
-  const path = compactText(value, 500).replace(/\\+/g, '/')
-  if (!path || path.startsWith('/') || /^[a-zA-Z]:\//.test(path) || path.startsWith('//')) return ''
-  const segments = path.split('/').filter(Boolean)
-  if (!segments.length || segments.some(segment => segment === '.' || segment === '..' || segment.includes(':') || segment.toLowerCase() === '.looma')) return ''
-  return segments.join('/')
-}
-
-const getAgentSourcePath = (source: Record<string, unknown>) => {
-  const metadata = source.metadata && typeof source.metadata === 'object'
-    ? source.metadata as Record<string, unknown>
-    : {}
-  return normalizeAgentRelativePath(source.path ?? metadata.path ?? metadata.source ?? metadata.file_path)
-}
-
-const createAgentSourceOutputs = (sources: Array<Record<string, unknown>>): AiAssistantTimelineOutput[] => (
-  sources.slice(0, 8).map((source, index) => {
-    const path = getAgentSourcePath(source)
-    const score = typeof source.score === 'number' && Number.isFinite(source.score) ? source.score : undefined
-    return {
-      id: `agent-source-${index + 1}`,
-      type: 'source',
-      title: path || `来源 ${index + 1}`,
-      path,
-      content: compactText(source.text ?? source.content ?? source.snippet, 320),
-      metadata: score === undefined ? undefined : { score },
-    }
-  })
-)
-
+const getAgentDisplayMessageKey = (conversationId: string, messageId: number) => `${conversationId}:${messageId}`
 
 const estimateTokenCount = (text: string) => {
   const normalized = text.trim()
@@ -152,7 +133,12 @@ const estimateTokenCount = (text: string) => {
   return Math.max(1, cjkChars + asciiTokenEstimate)
 }
 
-const estimateMessageTokens = (message: RagChatMessagePayload) => estimateTokenCount(message.content) + 4
+const estimateMessageTokens = (message: RagChatMessagePayload) => {
+  const toolMetadata = message.tool_calls?.length
+    ? JSON.stringify(message.tool_calls)
+    : `${message.name || ''}${message.tool_call_id || ''}`
+  return estimateTokenCount(`${message.content}${toolMetadata}`) + 4
+}
 
 const CONVERSATION_SUMMARY_PREFIX = '系统：已压缩早期对话'
 const CONVERSATION_SUMMARY_PENDING_TEXT = '系统：正在压缩早期对话，请稍候...'
@@ -202,19 +188,7 @@ const splitMessagesKeepingRecentTurns = (allMessages: RagChatMessagePayload[], k
   }
 }
 
-const normalizeConversationMessagesForContext = (sourceMessages: AiAssistantMessage[], excluded: Set<number>) =>
-  sourceMessages
-    .filter((message) => (
-      (message.role === 'user' || message.role === 'assistant')
-      && !excluded.has(message.id)
-      && !message.actions?.length
-      && message.createdAt !== 1
-      && message.text.trim().length > 0
-    ))
-    .map((message): RagChatMessagePayload => ({
-      role: message.role === 'assistant' ? 'assistant' : 'user',
-      content: message.text.trim(),
-    }))
+const normalizeConversationMessagesForContext = normalizeAgentConversationHistory
 
 const buildConversationStats = (
   currentQuestion: string,
@@ -283,6 +257,9 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     subscribeIndexStreamEvents: null as null | (() => void),
     agentRunsByConversationId: {} as Record<string, AgentConversationRunState>,
     agentRequestIdToConversationId: {} as Record<string, string>,
+    agentEventsByMessageKey: {} as Record<string, AgentEvent[]>,
+    agentSourcesByMessageKey: {} as Record<string, AgentSource[]>,
+    agentRecoveryByMessageKey: {} as Record<string, AgentRecoveryState>,
     subscribeAgentStreamEvents: null as null | (() => void),
     agentStartingConversationIds: {} as Record<string, ConversationPreparingState>,
   }),
@@ -293,11 +270,31 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     getConversationAgentRun: (state) => (conversationId: string | null | undefined) => (
       conversationId ? state.agentRunsByConversationId[conversationId] || null : null
     ),
-    getConversationAgentApprovals: (state) => (conversationId: string | null | undefined) => (
-      conversationId
-        ? Object.values(state.agentRunsByConversationId[conversationId]?.approvals || {})
-        : []
-    ),
+    getConversationAgentApprovals: (state) => (conversationId: string | null | undefined) => {
+      if (!conversationId) return []
+      const run = state.agentRunsByConversationId[conversationId]
+      if (!run) return []
+      const key = getAgentDisplayMessageKey(conversationId, run.assistantMessageId)
+      return projectAgentRunView(state.agentEventsByMessageKey[key] || [], state.agentSourcesByMessageKey[key] || [])
+        .approvals.map((approval): AgentApprovalState => ({
+          ...approval,
+          status: run.approvalResolutionInFlight[approval.approvalId] ? 'resolving' : approval.status,
+        }))
+    },
+    getMessageAgentRecovery: (state) => (conversationId: string | null | undefined, messageId: number | undefined, runId?: string): AgentRecoveryState | null => {
+      if (!conversationId || messageId === undefined || !runId) return null
+      const key = getAgentDisplayMessageKey(conversationId, messageId)
+      const cached = state.agentRecoveryByMessageKey[key]
+      if (cached) return cached
+      const projection = projectAgentRunView(state.agentEventsByMessageKey[key] || [], state.agentSourcesByMessageKey[key] || [])
+      if (!['failed', 'cancelled'].includes(projection.state.status)) return null
+      return { recoverable: true, checkpointAvailable: false, reason: '将从已确认的事件和消息继续。' }
+    },
+    getMessageAgentDisplayEvents: (state) => (conversationId: string | null | undefined, messageId: number | undefined) => {
+      if (!conversationId || messageId === undefined) return []
+      const key = getAgentDisplayMessageKey(conversationId, messageId)
+      return projectAgentRunView(state.agentEventsByMessageKey[key] || [], state.agentSourcesByMessageKey[key] || []).displayEvents
+    },
     isWorkspaceIndexing: (state) => (workspaceId: string | null | undefined) => (
       Boolean(workspaceId && state.indexStreamsByWorkspaceId[workspaceId])
     ),
@@ -311,6 +308,79 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
   actions: {
     createStreamRequestId() {
       return `${Date.now()}_${Math.random().toString(36).slice(2)}`
+    },
+
+    appendCanonicalAgentFacts(run: AgentConversationRunState, payload: AgentStreamEventPayload) {
+      const key = getAgentDisplayMessageKey(run.conversationId, run.assistantMessageId)
+      const existingEvents = this.agentEventsByMessageKey[key] || []
+      const knownEventIds = new Set(existingEvents.map((event) => event.id))
+      const nextEvents = (payload.agentEvents || []).filter((event) => event.runId === (run.runId || event.runId) && !knownEventIds.has(event.id))
+      if (nextEvents.length) this.agentEventsByMessageKey[key] = [...existingEvents, ...nextEvents].sort((a, b) => a.sequence - b.sequence)
+
+      const existingSources = this.agentSourcesByMessageKey[key] || []
+      const knownSourceIds = new Set(existingSources.map((source) => source.sourceId))
+      const nextSources = (payload.agentSources || []).filter((source) => !knownSourceIds.has(source.sourceId))
+      if (nextSources.length) this.agentSourcesByMessageKey[key] = [...existingSources, ...nextSources]
+    },
+
+    syncAgentProjection(run: AgentConversationRunState) {
+      const key = getAgentDisplayMessageKey(run.conversationId, run.assistantMessageId)
+      const projection = projectAgentRunView(this.agentEventsByMessageKey[key] || [], this.agentSourcesByMessageKey[key] || [])
+      const status = projection.state.status === 'failed'
+        ? 'error'
+        : projection.state.status === 'cancelled'
+          ? 'cancelled'
+          : projection.state.status === 'completed'
+            ? 'completed'
+            : 'running'
+      const workspaceStore = useWorkspaceStore()
+      workspaceStore.updateAiAssistantMessageTimelineInConversation(run.conversationId, run.assistantMessageId, projection.timeline, { persist: false })
+      workspaceStore.updateAiAssistantMessageMetaInConversation(run.conversationId, run.assistantMessageId, {
+        taskId: run.taskId,
+        runId: run.runId,
+        agentSummary: {
+          status,
+          toolCallCount: projection.toolCallCount,
+          sourceCount: projection.sourceCount,
+          ...(projection.state.status === 'failed' ? { error: { message: projection.state.currentStep } } : {}),
+        },
+      }, { persist: false })
+      return projection
+    },
+
+    async hydrateAgentHistory(workspaceId: string, conversations: Array<{ id: string; messages: AiAssistantMessage[] }>) {
+      const workspaceStore = useWorkspaceStore()
+      const getRun = (window as any).electronAPI?.agent?.getRun
+      if (typeof getRun !== 'function') return
+      const entries = conversations.flatMap(conversation => conversation.messages
+        .filter(message => message.mode === 'agent' && typeof message.runId === 'string' && Boolean(message.runId))
+        .map(message => ({ conversationId: conversation.id, message })))
+      await Promise.all(entries.map(async ({ conversationId, message }) => {
+        const result = await (window as any).electronAPI.agent.getRun(workspaceId, message.runId)
+        if (!result?.success || !result.data) return
+        const key = getAgentDisplayMessageKey(conversationId, message.id)
+        this.agentEventsByMessageKey[key] = result.data.events
+        this.agentSourcesByMessageKey[key] = result.data.sources
+        this.agentRecoveryByMessageKey[key] = result.data.recovery
+        const projection = projectAgentRunView(result.data.events, result.data.sources)
+        workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, message.id, projection.timeline, { persist: false })
+        workspaceStore.updateAiAssistantMessageMetaInConversation(conversationId, message.id, {
+          taskId: result.data.run.taskId,
+          runId: result.data.run.id,
+          agentSummary: {
+            status: projection.state.status === 'failed'
+              ? 'error'
+              : projection.state.status === 'cancelled'
+                ? 'cancelled'
+                : projection.state.status === 'completed'
+                  ? 'completed'
+                  : 'running',
+            toolCallCount: projection.toolCallCount,
+            sourceCount: projection.sourceCount,
+            ...(projection.state.status === 'failed' ? { error: { message: projection.state.currentStep } } : {}),
+          },
+        }, { persist: false })
+      }))
     },
 
     ensureAgentStreamEventSubscription() {
@@ -429,6 +499,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       delete this.indexStreamsByWorkspaceId[workspaceId]
     },
 
+
     async cancelWorkspaceIndex(workspaceId: string | null) {
       if (!workspaceId) return
       const stream = this.indexStreamsByWorkspaceId[workspaceId]
@@ -494,32 +565,21 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
 
       const requestId = this.createStreamRequestId()
       const startedAt = Date.now()
-      const timeline: AiAssistantTimelineStep[] = [{
-        id: 'agent-start',
-        title: '启动 Agent',
-        description: '准备模型、上下文和内置工具。',
-        detail: '正在启动 Agent；文件修改工具仍需逐次审批。',
-        status: 'active',
-        startedAt,
-        outputs: [],
-      }]
       this.agentRunsByConversationId[conversationId] = {
         requestId,
         workspaceId: options.workspaceId,
         conversationId,
         assistantMessageId,
         assistantText: '',
-        timeline,
         status: 'starting',
         startedAt,
-        toolCallCount: 0,
-        sourceCount: 0,
-        toolCallStates: {},
-        approvals: {},
+        approvalResolutionInFlight: {},
       }
+      const messageKey = getAgentDisplayMessageKey(conversationId, assistantMessageId)
+      this.agentEventsByMessageKey[messageKey] = []
+      this.agentSourcesByMessageKey[messageKey] = []
       this.agentRequestIdToConversationId[requestId] = conversationId
       delete this.agentStartingConversationIds[conversationId]
-      useWorkspaceStore().updateAiAssistantMessageTimelineInConversation(conversationId, assistantMessageId, timeline, { persist: true })
 
       try {
         const result = await (window as any).electronAPI.agent.runStream.start(requestId, options.workspaceId, {
@@ -531,7 +591,11 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
           return result
         }
         const run = this.agentRunsByConversationId[conversationId]
-        if (run) run.status = 'streaming'
+        if (run) {
+          run.status = 'streaming'
+          run.taskId = result.data?.taskId
+          run.runId = result.data?.runId
+        }
         return { success: true }
       } catch (error: any) {
         const runtimeError = formatAiRuntimeError(error?.message ?? String(error), 'Agent 启动失败。')
@@ -540,172 +604,122 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       }
     },
 
+    async resumeAgentRun(conversationId: string, parentMessage: AiAssistantMessage) {
+      const workspaceStore = useWorkspaceStore()
+      const workspaceId = workspaceStore.activeWorkspaceId
+      if (!workspaceId || !parentMessage.runId || !parentMessage.taskId) return { success: false, error: '恢复信息不完整，请重新发起任务。' }
+      if (this.agentRunsByConversationId[conversationId] || this.agentStartingConversationIds[conversationId]) {
+        return { success: false, error: '当前会话已有 Agent 正在运行。' }
+      }
+      const parentKey = getAgentDisplayMessageKey(conversationId, parentMessage.id)
+      const recovery = this.getMessageAgentRecovery(conversationId, parentMessage.id, parentMessage.runId)
+      if (!recovery?.recoverable || recovery.continuedToRunId) return { success: false, error: recovery?.reason || '当前运行不支持继续。' }
+      this.agentRecoveryByMessageKey[parentKey] = { ...recovery, resuming: true }
+
+      this.ensureAgentStreamEventSubscription()
+      const assistantMessageId = workspaceStore.appendAiAssistantMessageToConversation(
+        conversationId,
+        'assistant',
+        '',
+        undefined,
+        {
+          aiName: parentMessage.aiName,
+          mode: 'agent',
+          modelIdentity: parentMessage.modelIdentity,
+          taskId: parentMessage.taskId,
+          agentSummary: { status: 'running', toolCallCount: 0, sourceCount: 0 },
+        },
+      )
+      if (!assistantMessageId) {
+        this.agentRecoveryByMessageKey[parentKey] = { ...recovery, resuming: false }
+        return { success: false, error: '无法创建后续运行消息。' }
+      }
+      const requestId = this.createStreamRequestId()
+      const messageKey = getAgentDisplayMessageKey(conversationId, assistantMessageId)
+      this.agentEventsByMessageKey[messageKey] = []
+      this.agentSourcesByMessageKey[messageKey] = []
+      this.agentRunsByConversationId[conversationId] = {
+        requestId,
+        workspaceId,
+        conversationId,
+        assistantMessageId,
+        assistantText: '',
+        status: 'starting',
+        startedAt: Date.now(),
+        taskId: parentMessage.taskId,
+        approvalResolutionInFlight: {},
+      }
+      this.agentRequestIdToConversationId[requestId] = conversationId
+      try {
+        const result = await (window as any).electronAPI.agent.resumeRun(requestId, workspaceId, parentMessage.runId)
+        if (!result?.success) {
+          this.agentRecoveryByMessageKey[parentKey] = { ...recovery, resuming: false }
+          this.failAgentConversation(conversationId, result?.error || '创建后续运行失败。')
+          return { success: false, error: result?.error || '创建后续运行失败。' }
+        }
+        const run = this.agentRunsByConversationId[conversationId]
+        if (run) {
+          run.status = 'streaming'
+          run.taskId = result.data.taskId
+          run.runId = result.data.runId
+        }
+        this.agentRecoveryByMessageKey[parentKey] = {
+          recoverable: false,
+          checkpointAvailable: recovery.checkpointAvailable,
+          reason: '任务已在新的后续运行中继续。',
+          continuedToRunId: result.data.runId,
+        }
+        workspaceStore.updateAiAssistantMessageMetaInConversation(conversationId, assistantMessageId, {
+          taskId: result.data.taskId,
+          runId: result.data.runId,
+        }, { persist: true })
+        return { success: true, data: result.data }
+      } catch (error: any) {
+        this.agentRecoveryByMessageKey[parentKey] = { ...recovery, resuming: false }
+        const message = compactText(error?.message ?? String(error), 1000) || '创建后续运行失败。'
+        this.failAgentConversation(conversationId, message)
+        return { success: false, error: message }
+      }
+    },
+
     handleAgentStreamEvent(payload: AgentStreamEventPayload) {
       const conversationId = this.agentRequestIdToConversationId[payload.requestId]
       if (!conversationId) return
       const run = this.agentRunsByConversationId[conversationId]
       if (!run || run.requestId !== payload.requestId) return
-      const workspaceStore = useWorkspaceStore()
       if (run.status === 'cancelling' && payload.type !== 'done' && payload.type !== 'error') return
 
+      run.runId = payload.runId
+      this.appendCanonicalAgentFacts(run, payload)
+      this.syncAgentProjection(run)
+      const workspaceStore = useWorkspaceStore()
+
       if (payload.type === 'run_started') {
-        run.runId = payload.runId
-        run.timeline = applyRagTimelineEvent(run.timeline, {
-          type: 'timeline', stepId: 'agent-start', title: '启动 Agent', status: 'completed', detail: 'Agent 已启动。',
-        })
-        workspaceStore.updateAiAssistantMessageMetaInConversation(conversationId, run.assistantMessageId, { runId: payload.runId }, { persist: false })
-        workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, run.assistantMessageId, run.timeline, { persist: false })
-        return
-      }
-
-      if (payload.type === 'timeline') {
-        run.runId = payload.runId
-        const status = payload.status === 'running'
-          ? 'active'
-          : payload.status === 'failed'
-            ? 'error'
-            : payload.status === 'pending'
-              ? 'pending'
-              : 'completed'
-        run.timeline = applyRagTimelineEvent(run.timeline, {
-          type: 'timeline',
-          stepId: payload.stepId,
-          title: `步骤 ${payload.step}`,
-          status,
-          detail: compactText(payload.summary, 500),
-        })
-        workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, run.assistantMessageId, run.timeline, { persist: false })
-        return
-      }
-
-      if (payload.type === 'tool_call') {
-        if (run.toolCallStates[payload.callId]) return
-        run.runId = payload.runId
-        run.toolCallStates[payload.callId] = 'called'
-        run.toolCallCount += 1
-        run.timeline = applyRagTimelineEvent(run.timeline, {
-          type: 'timeline',
-          stepId: payload.stepId,
-          title: `调用 ${payload.tool}`,
-          status: 'active',
-          detail: payload.tool === 'file_patch'
-            ? 'Agent 正在生成文件修改提案；写入磁盘前必须由你审批。'
-            : `正在执行工具 ${payload.tool}。`,
-        })
         workspaceStore.updateAiAssistantMessageMetaInConversation(conversationId, run.assistantMessageId, {
-          agentSummary: { status: 'running', toolCallCount: run.toolCallCount, sourceCount: run.sourceCount },
+          runId: payload.runId,
         }, { persist: false })
-        workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, run.assistantMessageId, run.timeline, { persist: false })
-        return
-      }
-
-      if (payload.type === 'approval_required') {
-        run.runId = payload.runId
-        const path = normalizeAgentRelativePath(payload.proposal.path)
-        if (!path) {
-          this.failAgentConversation(conversationId, 'Agent 返回了无效的文件修改路径。')
-          return
-        }
-        run.approvals[payload.approvalId] = {
-          approvalId: payload.approvalId,
-          stepId: payload.stepId,
-          path,
-          operation: payload.proposal.operation,
-          diff: compactText(payload.proposal.unified_diff, 250_000),
-          requestedAt: payload.requestedAt,
-          deadlineAt: payload.deadlineAt,
-          status: 'pending',
-        }
-        run.timeline = applyRagTimelineEvent(run.timeline, {
-          type: 'timeline',
-          stepId: payload.stepId,
-          title: `审批文件修改 · ${path}`,
-          status: 'active',
-          detail: 'Agent 已暂停，等待你审阅差异并批准或拒绝。',
-          outputs: [{ type: 'code', title: payload.proposal.operation === 'create' ? '新建文件' : '修改差异', content: compactText(payload.proposal.unified_diff, 20_000) }],
-        })
-        workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, run.assistantMessageId, run.timeline, { persist: false })
-        return
-      }
-
-      if (payload.type === 'approval_resolved') {
-        const approval = run.approvals[payload.approvalId]
-        if (approval) {
-          approval.status = payload.resolution.status
-          approval.error = payload.resolution.reason || undefined
-        }
-        const approvedAndApplied = payload.resolution.status === 'approved' && payload.resolution.applied === true
-        run.timeline = applyRagTimelineEvent(run.timeline, {
-          type: 'timeline',
-          stepId: payload.stepId,
-          title: approval ? `审批文件修改 · ${approval.path}` : '审批文件修改',
-          status: approvedAndApplied ? 'completed' : payload.resolution.status === 'cancelled' ? 'completed' : 'error',
-          detail: approvedAndApplied
-            ? '修改已批准并安全写入工作空间。'
-            : payload.resolution.reason || ({ rejected: '你已拒绝本次修改。', expired: '审批已超时。', cancelled: '审批已取消。', approved: '写入失败。' }[payload.resolution.status]),
-        })
-        workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, run.assistantMessageId, run.timeline, { persist: false })
-        return
-      }
-
-      if (payload.type === 'tool_result') {
-        if (run.toolCallStates[payload.callId] === 'completed') return
-        run.runId = payload.runId
-        if (!run.toolCallStates[payload.callId]) run.toolCallCount += 1
-        run.toolCallStates[payload.callId] = 'completed'
-        const success = payload.result.success !== false
-        const summary = compactText(payload.result.summary, 600)
-          || compactText(payload.result.error?.message ?? payload.result.error, 600)
-          || (success ? '工具执行完成。' : '工具执行失败。')
-        const technicalDetail = success ? undefined : compactText(payload.result.error?.technical_detail, 2000) || undefined
-        run.timeline = applyRagTimelineEvent(run.timeline, {
-          type: 'timeline',
-          stepId: payload.stepId,
-          title: `调用 ${compactText(payload.result.tool, 80) || '工具'}`,
-          status: success ? 'completed' : 'error',
-          detail: summary,
-          outputs: [{ type: success ? 'text' : 'error', title: success ? '结果摘要' : '错误', content: summary, technicalDetail }],
-        })
-        workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, run.assistantMessageId, run.timeline, { persist: false })
-        return
-      }
-
-      if (payload.type === 'sources') {
-        const sources = payload.sources || []
-        run.runId = payload.runId
-        run.sourceCount = sources.length
-        run.timeline = applyRagTimelineEvent(run.timeline, {
-          type: 'timeline',
-          stepId: 'agent-sources',
-          title: '引用来源',
-          status: 'completed',
-          detail: sources.length ? `保留 ${sources.length} 个来源片段。` : '没有可展示的来源。',
-          outputs: createAgentSourceOutputs(sources),
-        })
-        workspaceStore.updateAiAssistantMessageMetaInConversation(conversationId, run.assistantMessageId, {
-          agentSummary: { status: 'running', toolCallCount: run.toolCallCount, sourceCount: run.sourceCount },
-        }, { persist: false })
-        workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, run.assistantMessageId, run.timeline, { persist: false })
         return
       }
 
       if (payload.type === 'delta') {
-        run.runId = payload.runId
         run.assistantText += payload.text || payload.content || ''
         workspaceStore.updateAiAssistantMessageTextInConversation(conversationId, run.assistantMessageId, run.assistantText, { persist: false })
         return
       }
 
       if (payload.type === 'done') {
-        run.runId = payload.runId
         if (!run.assistantText.trim() && payload.answer?.trim()) run.assistantText = payload.answer.trim()
         this.completeAgentConversation(conversationId, payload.status)
         return
       }
 
       if (payload.type === 'error') {
-        run.runId = payload.runId
         this.failAgentConversation(conversationId, payload.error.message || 'Agent 运行失败。', payload.error.technical_detail || undefined)
+        return
+      }
+
+      if (payload.type === 'recovery_failed') {
+        this.failAgentConversation(conversationId, payload.message || 'Agent 恢复失败。')
       }
     },
 
@@ -714,13 +728,13 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       if (!run) return
       const finalStatus = status === 'cancelled' ? 'cancelled' : 'completed'
       const finalText = run.assistantText.trim() || (status === 'cancelled' ? '已取消本次 Agent 运行。' : 'Agent 没有返回可展示的回答。')
-      if (status === 'cancelled') run.timeline = finishCancelledTimeline(run.timeline)
+      const projection = this.syncAgentProjection(run)
       const workspaceStore = useWorkspaceStore()
       workspaceStore.updateAiAssistantMessageTextInConversation(conversationId, run.assistantMessageId, finalText, { persist: false })
-      workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, run.assistantMessageId, run.timeline, { persist: false })
       workspaceStore.updateAiAssistantMessageMetaInConversation(conversationId, run.assistantMessageId, {
         runId: run.runId,
-        agentSummary: { status: finalStatus, toolCallCount: run.toolCallCount, sourceCount: run.sourceCount },
+        taskId: run.taskId,
+        agentSummary: { status: finalStatus, toolCallCount: projection.toolCallCount, sourceCount: projection.sourceCount },
       }, { persist: true })
       delete this.agentRequestIdToConversationId[run.requestId]
       delete this.agentRunsByConversationId[conversationId]
@@ -731,15 +745,16 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       if (!run) return
       const friendlyMessage = compactText(message, 1000) || 'Agent 运行失败。'
       const compactTechnicalDetail = compactText(technicalDetail, 2000) || undefined
+      const projection = this.syncAgentProjection(run)
       const workspaceStore = useWorkspaceStore()
       workspaceStore.updateAiAssistantMessageTextInConversation(conversationId, run.assistantMessageId, friendlyMessage, { persist: false })
-      workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, run.assistantMessageId, failAiTimelineStep(run.timeline, 'agent-start', friendlyMessage, Date.now(), compactTechnicalDetail), { persist: false })
       workspaceStore.updateAiAssistantMessageMetaInConversation(conversationId, run.assistantMessageId, {
         runId: run.runId,
+        taskId: run.taskId,
         agentSummary: {
           status: 'error',
-          toolCallCount: run.toolCallCount,
-          sourceCount: run.sourceCount,
+          toolCallCount: projection.toolCallCount,
+          sourceCount: projection.sourceCount,
           error: { message: friendlyMessage, technicalDetail: compactTechnicalDetail },
         },
       }, { persist: true })
@@ -763,6 +778,15 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
           run.status = 'streaming'
           return { success: false, error: result?.error || '取消 Agent 运行失败。' }
         }
+        if (Array.isArray(result.data?.agentEvents) && result.data.agentEvents.length) {
+          this.appendCanonicalAgentFacts(run, {
+            requestId,
+            type: 'done',
+            runId: run.runId || result.data.agentEvents[0].runId,
+            status: 'cancelled',
+            agentEvents: result.data.agentEvents,
+          })
+        }
         this.completeAgentConversation(conversationId, 'cancelled')
         return { success: true }
       } catch (error: any) {
@@ -773,27 +797,24 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
 
     async resolveAgentApproval(conversationId: string, approvalId: string, approved: boolean) {
       const run = this.agentRunsByConversationId[conversationId]
-      const approval = run?.approvals[approvalId]
+      const approval = this.getConversationAgentApprovals(conversationId)
+        .find((item) => item.approvalId === approvalId)
       if (!run || !approval) return { success: false, error: '审批已失效。' }
       if (approval.status !== 'pending') return { success: false, error: '审批已经处理或正在处理中。' }
       if (Date.now() >= Date.parse(approval.deadlineAt)) {
-        approval.status = 'expired'
         return { success: false, error: '审批已过期，请让 Agent 重新生成修改提案。' }
       }
-      approval.status = 'resolving'
-      approval.error = undefined
+      run.approvalResolutionInFlight[approvalId] = true
       try {
         const result = await (window as any).electronAPI.agent.resolveApproval(approvalId, approved)
         if (!result?.success) {
-          approval.status = 'error'
-          approval.error = result?.error || '提交审批失败。'
-          return { success: false, error: approval.error }
+          delete run.approvalResolutionInFlight[approvalId]
+          return { success: false, error: result?.error || '提交审批失败。' }
         }
         return { success: true }
       } catch (error: any) {
-        approval.status = 'error'
-        approval.error = compactText(error?.message ?? String(error), 1000) || '提交审批失败。'
-        return { success: false, error: approval.error }
+        delete run.approvalResolutionInFlight[approvalId]
+        return { success: false, error: compactText(error?.message ?? String(error), 1000) || '提交审批失败。' }
       }
     },
 
@@ -803,7 +824,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       if (options.existingSummary?.trim()) {
         summaryInput.push({ role: 'system', content: `上一版对话摘要：\n${options.existingSummary.trim()}` })
       }
-      summaryInput.push(...newMessages)
+      summaryInput.push(...flattenAgentHistoryForSummary(newMessages))
       if (!summaryInput.length) return ''
 
       const result = await (window as any).electronAPI.agent.summarizeConversation(summaryInput, options.maxChars)
@@ -854,6 +875,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
         try {
           const nextSummary = await this.summarizeConversationMessagesWithLlm(messagesToSummarize, {
             existingSummary,
+
             maxChars: contextSettings.summaryMaxChars,
           })
           if (nextSummary) {

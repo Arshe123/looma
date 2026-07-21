@@ -4,13 +4,13 @@ from typing import AsyncIterator, List
 import httpx
 
 from schemas import ChatMessage, ChatModelConfig, EmbeddingModelConfig
-from providers.base import BaseChatProvider, BaseEmbeddingProvider
+from providers.base import BaseChatProvider, BaseEmbeddingProvider, StructuredChatResponse
 
 
 def _ollama_chat_messages(messages: List[ChatMessage]) -> list[dict]:
     payloads = []
     for message in messages:
-        payload = {"role": message.role, "content": message.content}
+        payload = {"role": message.role, "content": message.content or ""}
         if message.tool_calls:
             payload["tool_calls"] = [
                 {
@@ -32,14 +32,19 @@ class OllamaChatProvider(BaseChatProvider):
         self.model = config.model
         self.base_url = config.base_url or "http://localhost:11434"
         self.temperature = config.temperature
+        self.max_tokens = config.max_tokens
 
     async def chat(self, messages: List[ChatMessage]) -> str:
         return await self._chat(messages, structured=False)
 
-    async def chat_structured(self, messages: List[ChatMessage]) -> str:
+    async def chat_structured(
+        self, messages: List[ChatMessage]
+    ) -> StructuredChatResponse:
         return await self._chat(messages, structured=True)
 
-    async def _chat(self, messages: List[ChatMessage], *, structured: bool) -> str:
+    async def _chat(
+        self, messages: List[ChatMessage], *, structured: bool
+    ) -> str | StructuredChatResponse:
         url = f"{self.base_url}/api/chat"
 
         payload = {
@@ -47,18 +52,27 @@ class OllamaChatProvider(BaseChatProvider):
             "messages": _ollama_chat_messages(messages),
             "stream": False,
             "options": {
-                "temperature": self.temperature
+                "temperature": min(self.temperature, 0.2) if structured else self.temperature
             }
         }
+        if self.max_tokens is not None:
+            payload["options"]["num_predict"] = self.max_tokens
         if structured:
             payload["format"] = "json"
+            payload["think"] = False
 
         async with httpx.AsyncClient(timeout=None) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
 
-        return data["message"]["content"]
+        content = data.get("message", {}).get("content") or ""
+        if structured:
+            return StructuredChatResponse(
+                content=content,
+                finish_reason=data.get("done_reason"),
+            )
+        return content
 
     async def stream_chat(self, messages: List[ChatMessage]) -> AsyncIterator[str]:
         url = f"{self.base_url}/api/chat"

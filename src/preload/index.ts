@@ -13,15 +13,6 @@ type RagChatMessagePayload = {
   content: string;
   name?: string;
 };
-type RagRequestStatsPayload = {
-  history_messages: number;
-  history_token_estimate: number;
-  question_token_estimate: number;
-  total_token_estimate: number;
-  recent_turns?: number;
-  distant_summary_enabled?: boolean;
-  distant_summary_messages?: number;
-};
 type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read';
 type AgentRunOptionsPayload = {
   input: string;
@@ -128,6 +119,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteIndex: (workspaceId: string) => ipcRenderer.invoke('rag:index:delete', workspaceId),
   },
   agent: {
+    getRun: (workspaceId: string, runId: string) => ipcRenderer.invoke('agent:ledger:getRun', workspaceId, runId),
+    resumeRun: (requestId: string, workspaceId: string, parentRunId: string) => ipcRenderer.invoke('agent:runStream:resume', requestId, workspaceId, parentRunId),
     summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) =>
       ipcRenderer.invoke('agent:summarizeConversation', messages, maxChars),
     resolveApproval: (approvalId: string, approved: boolean) =>

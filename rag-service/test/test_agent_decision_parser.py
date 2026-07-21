@@ -302,7 +302,7 @@ class StructuredCompletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.answer, "ok")
         self.assertEqual(len(provider.calls), 1)
 
-    async def test_preserves_private_reasoning_state_without_serializing_it(self):
+    async def test_ignores_private_reasoning_state(self):
         provider = FakeChatProvider([StructuredChatResponse(
             content='{"type":"tool_call","thought_summary":"搜索",'
                     '"tool":"rag_search","arguments":{"query":"学习"}}',
@@ -313,8 +313,59 @@ class StructuredCompletionTests(unittest.IsolatedAsyncioTestCase):
             [], [{"name": "rag_search", "parameters": {"type": "object"}}]
         )
 
-        self.assertEqual(result._provider_state["reasoning_content"], "PRIVATE_REASONING")
+        self.assertNotIn("reasoning_content", result._provider_state)
         self.assertNotIn("PRIVATE_REASONING", result.model_dump_json())
+
+    async def test_repairs_whitespace_only_content_without_reusing_reasoning(self):
+        provider = FakeChatProvider([
+            StructuredChatResponse(
+                content="      ",
+                reasoning_content="PRIVATE_REASONING",
+            ),
+            StructuredChatResponse(
+                content='{"type":"final","answer":"完成"}',
+            ),
+        ])
+
+        result = await provider.complete_structured(
+            [ChatMessage(role="user", content="查看工作空间")], []
+        )
+
+        self.assertEqual(result.answer, "完成")
+        self.assertEqual(len(provider.calls), 2)
+        retry_messages = provider.calls[1]
+        self.assertEqual(retry_messages[-1].role, "user")
+        self.assertIn("content 为空", retry_messages[-1].content)
+        self.assertFalse(any(
+            message.role == "assistant"
+            for message in retry_messages
+        ))
+        self.assertNotIn(
+            "PRIVATE_REASONING",
+            "\n".join(message.content or "" for message in retry_messages),
+        )
+
+    async def test_empty_content_after_repair_raises_empty_decision_error(self):
+        from agent.decision_parser import AgentEmptyDecisionError
+
+        provider = FakeChatProvider([
+            StructuredChatResponse(content="", reasoning_content="PRIVATE_FIRST"),
+            StructuredChatResponse(content="   ", reasoning_content="PRIVATE_SECOND"),
+        ])
+
+        with self.assertRaises(AgentEmptyDecisionError):
+            await provider.complete_structured(
+                [ChatMessage(role="user", content="查看工作空间")], []
+            )
+
+        self.assertEqual(len(provider.calls), 2)
+        rendered_calls = "\n".join(
+            message.content or ""
+            for call in provider.calls
+            for message in call
+        )
+        self.assertNotIn("PRIVATE_FIRST", rendered_calls)
+        self.assertNotIn("PRIVATE_SECOND", rendered_calls)
 
     async def test_repairs_once_after_parse_failure(self):
         failed = "not json SECRET_RAW"

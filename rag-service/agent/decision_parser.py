@@ -27,16 +27,22 @@ class AgentDecisionParseError(ValueError):
         super().__init__("Invalid structured agent decision")
 
 
+class AgentEmptyDecisionError(AgentDecisionParseError):
+    """The provider completed without any public decision content."""
+
+    code = "empty_agent_decision"
+
+    def __init__(self) -> None:
+        ValueError.__init__(self, "Empty structured agent decision")
+
+
 def parse_agent_decision_text(
     text: str, allowed_tools: AbstractSet[str] | None = None
 ) -> AgentDecision:
     """Parse a complete JSON response and optionally enforce a runtime tool allowlist."""
-
-    if (
-        not isinstance(text, str)
-        or not text.strip()
-        or len(text) > _MAX_DECISION_RESPONSE_CHARS
-    ):
+    if not isinstance(text, str) or not text.strip():
+        raise AgentEmptyDecisionError()
+    if len(text) > _MAX_DECISION_RESPONSE_CHARS:
         raise AgentDecisionParseError()
 
     candidate = text.strip()
@@ -215,12 +221,37 @@ def _serialize_and_validate_tool_schemas(
     raise ValueError("Invalid tool_schemas")
 
 
+def prepare_native_tool_schemas(
+    tool_schemas: Any,
+) -> tuple[list[dict[str, Any]], frozenset[str]]:
+    """Validate Looma schemas and convert them to OpenAI function-tool envelopes."""
+
+    serialized_tools, allowed_tools = _serialize_and_validate_tool_schemas(tool_schemas)
+    decoded = json.loads(serialized_tools)
+    native_tools: list[dict[str, Any]] = []
+    for schema in decoded:
+        description = schema.get("description")
+        parameters = schema.get("parameters", {"type": "object", "properties": {}})
+        if description is not None and not isinstance(description, str):
+            raise ValueError("Invalid tool_schemas")
+        if not isinstance(parameters, dict):
+            raise ValueError("Invalid tool_schemas")
+        function = {
+            "name": schema["name"],
+            "parameters": parameters,
+        }
+        if description:
+            function["description"] = description
+        native_tools.append({"type": "function", "function": function})
+    return native_tools, allowed_tools
+
+
 def _build_messages_from_serialized_tools(
     messages: Sequence[ChatMessage], serialized_tools: str
 ) -> list[ChatMessage]:
     protocol = (
-        "你是结构化 Agent 决策器。仅输出一个 JSON object；禁止 Markdown、代码围栏、"
-        "解释性 prose 和 chain-of-thought。只允许以下两种形状，字段必须完全匹配：\n"
+        "你是结构化 Agent 决策器。仅输出一个 JSON（json）object；禁止 Markdown、代码围栏、"
+        "解释性 prose、chain-of-thought 和 DSML。只允许以下两种形状，字段必须完全匹配：\n"
         '{"type":"tool_call","thought_summary":"一条不超过500字符、可展示的简短摘要",'
         '"tool":"可用工具名","arguments":{}}\n'
         '或 {"type":"final","answer":"给用户的最终答案"}\n'

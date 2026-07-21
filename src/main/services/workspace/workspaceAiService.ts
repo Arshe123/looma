@@ -2,6 +2,7 @@ import fs from 'fs/promises'
 import path from 'path'
 import type { Result } from '../../../shared/types/Result'
 import { workspaceService } from './workspaceService'
+import { migrateLegacyAgentState } from '../agent/AgentLegacyMigration'
 
 const META_DIR_NAME = '.looma'
 const AI_DIR_NAME = 'ai-assistant'
@@ -9,6 +10,7 @@ const AI_STATE_FILE_NAME = 'state.json'
 const LEGACY_META_FILE_NAME = 'workspace.json'
 
 export interface AiAssistantState {
+  schemaVersion?: number
   conversations: {
     id: string
     title: string
@@ -43,6 +45,7 @@ interface AiAssistantMessage {
     disabled?: boolean
   }[]
   timeline?: AiAssistantTimelineStep[]
+  taskId?: string
   runId?: string
   mode?: 'rag' | 'agent'
   modelIdentity?: { provider: string; model: string; displayName: string }
@@ -80,6 +83,37 @@ interface AiAssistantTimelineStep {
   outputs: AiAssistantTimelineOutput[]
 }
 
+const TOOL_ARGUMENTS_TITLE = '调用参数'
+const MAX_PERSISTED_TOOL_ARGUMENTS = 4_000
+const SENSITIVE_TOOL_ARGUMENT_KEY = /(api[-_]?key|token|authorization|cookie|password|passwd|secret|credential|private[-_]?key|access[-_]?key)/i
+
+const sanitizePersistedToolArgumentValue = (value: unknown, depth = 0): unknown => {
+  if (depth >= 5) return '[已省略过深内容]'
+  if (value === null || typeof value === 'boolean' || typeof value === 'number') return value
+  if (typeof value === 'string') return value.slice(0, 1_000)
+  if (Array.isArray(value)) return value.slice(0, 20).map(item => sanitizePersistedToolArgumentValue(item, depth + 1))
+  if (!value || typeof value !== 'object') return String(value ?? '')
+  const result: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(0, 40)) {
+    result[key] = SENSITIVE_TOOL_ARGUMENT_KEY.test(key)
+      ? '[已脱敏]'
+      : sanitizePersistedToolArgumentValue(item, depth + 1)
+  }
+  return result
+}
+
+const normalizePersistedToolArguments = (value: string) => {
+  try {
+    const sanitized = sanitizePersistedToolArgumentValue(JSON.parse(value))
+    const pretty = JSON.stringify(sanitized, null, 2)
+    if (pretty.length <= MAX_PERSISTED_TOOL_ARGUMENTS) return pretty
+    const compact = JSON.stringify(sanitized)
+    return compact.length <= MAX_PERSISTED_TOOL_ARGUMENTS ? compact : '{"truncated":true}'
+  } catch {
+    return '{}'
+  }
+}
+
 const createConversationId = () => `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
 const getConversationTitle = (messages: AiAssistantMessage[]) => {
@@ -115,6 +149,7 @@ const createDefaultConversation = (messages?: AiAssistantMessage[], draft = '') 
 const createDefaultAiAssistantState = (): AiAssistantState => {
   const conversation = createDefaultConversation()
   return {
+    schemaVersion: 2,
     conversations: [conversation],
     activeConversationId: conversation.id,
     temporaryDraft: '',
@@ -153,7 +188,7 @@ const getLegacyMetaPath = async (workspaceId: string): Promise<string | null> =>
   return path.join(metaDirPath, LEGACY_META_FILE_NAME)
 }
 
-const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
+export const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
   if (!value || typeof value !== 'object') return createDefaultAiAssistantState()
   const raw = value as any
 
@@ -206,17 +241,26 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
           && typeof item.id === 'string'
           && (item.type === 'text' || item.type === 'source' || item.type === 'metric' || item.type === 'code' || item.type === 'json' || item.type === 'error'),
         )
-        .map((item: any) => ({
-          id: item.id,
-          type: item.type,
-          title: typeof item.title === 'string' ? item.title : undefined,
-          content: typeof item.content === 'string' ? item.content : undefined,
-          technicalDetail: typeof item.technicalDetail === 'string' ? item.technicalDetail.slice(0, 2000) : undefined,
-          value: typeof item.value === 'string' || typeof item.value === 'number' ? item.value : undefined,
-          unit: typeof item.unit === 'string' ? item.unit : undefined,
-          path: normalizeTimelinePath(item.path),
-          metadata: normalizeTimelineMetadata(item.metadata),
-        }))
+        .map((item: any) => {
+          const title = typeof item.title === 'string' ? item.title.slice(0, 200) : undefined
+          const rawContent = typeof item.content === 'string' ? item.content : undefined
+          const content = rawContent === undefined
+            ? undefined
+            : title === TOOL_ARGUMENTS_TITLE
+              ? normalizePersistedToolArguments(rawContent)
+              : rawContent.slice(0, 20_000)
+          return {
+            id: item.id,
+            type: item.type,
+            title,
+            content,
+            technicalDetail: typeof item.technicalDetail === 'string' ? item.technicalDetail.slice(0, 2000) : undefined,
+            value: typeof item.value === 'string' || typeof item.value === 'number' ? item.value : undefined,
+            unit: typeof item.unit === 'string' ? item.unit : undefined,
+            path: normalizeTimelinePath(item.path),
+            metadata: normalizeTimelineMetadata(item.metadata),
+          }
+        })
       : []
   )
 
@@ -285,6 +329,7 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
           aiName: typeof item.aiName === 'string' && item.aiName.trim() ? item.aiName.trim() : undefined,
           actions: normalizeActions(item.actions),
           timeline: normalizeTimeline(item.timeline),
+          ...(typeof item.taskId === 'string' && item.taskId.trim() ? { taskId: item.taskId.trim() } : {}),
           ...(typeof item.runId === 'string' && item.runId.trim() ? { runId: item.runId.trim() } : {}),
           ...(item.mode === 'rag' || item.mode === 'agent' ? { mode: item.mode } : {}),
           ...(normalizeModelIdentity(item.modelIdentity) ? { modelIdentity: normalizeModelIdentity(item.modelIdentity) } : {}),
@@ -331,6 +376,7 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
       ? raw.activeConversationId
       : [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)[0].id
     return {
+      schemaVersion: 2,
       conversations,
       activeConversationId,
       temporaryDraft: typeof raw.temporaryDraft === 'string' ? raw.temporaryDraft : '',
@@ -340,6 +386,7 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
 
   if (Array.isArray(raw.conversations)) {
     return {
+      schemaVersion: 2,
       conversations: [],
       activeConversationId: null,
       temporaryDraft: typeof raw.temporaryDraft === 'string' ? raw.temporaryDraft : '',
@@ -351,6 +398,7 @@ const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
   if (legacyMessages.length > 0 || typeof raw.draft === 'string') {
     const conversation = createDefaultConversation(legacyMessages.length > 0 ? legacyMessages : undefined, typeof raw.draft === 'string' ? raw.draft : '')
     return {
+      schemaVersion: 2,
       conversations: [conversation],
       activeConversationId: conversation.id,
       temporaryDraft: '',
@@ -442,13 +490,25 @@ export const workspaceAiService = {
       }
 
       if (raw) {
-        return { success: true, data: normalizeAiAssistantState(JSON.parse(raw)) }
+        const parsed = JSON.parse(raw)
+        const normalized = normalizeAiAssistantState(parsed)
+        const workspacePath = await getWorkspacePath(workspaceId)
+        if (!workspacePath) return { success: true, data: normalized }
+        const migration = await migrateLegacyAgentState(workspacePath, normalized)
+        if ((parsed as any)?.schemaVersion !== 2 || migration.migratedRunIds.length > 0) {
+          await workspaceAiService.setState(workspaceId, migration.state)
+        }
+        return { success: true, data: migration.state }
       }
 
       const migrated = await readLegacyAiAssistant(workspaceId)
       const initialState = migrated ?? createDefaultAiAssistantState()
-      await workspaceAiService.setState(workspaceId, initialState)
-      return { success: true, data: initialState }
+      const workspacePath = await getWorkspacePath(workspaceId)
+      const migratedState = workspacePath
+        ? (await migrateLegacyAgentState(workspacePath, initialState)).state
+        : initialState
+      await workspaceAiService.setState(workspaceId, migratedState)
+      return { success: true, data: migratedState }
     } catch (err) {
       if (unlock) await unlock()
       console.warn('读取 AI 助手状态失败。', err)

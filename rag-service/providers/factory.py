@@ -1,5 +1,6 @@
 from schemas import ChatModelConfig, EmbeddingModelConfig
 from providers.base import BaseChatProvider, BaseEmbeddingProvider
+from providers.deepseek_provider import DeepSeekChatProvider
 from providers.ollama_provider import OllamaChatProvider, OllamaEmbeddingProvider
 from providers.openai_provider import OpenAIChatProvider, OpenAIEmbeddingProvider
 from providers.openai_compatible_provider import (
@@ -22,6 +23,9 @@ def create_chat_provider(config: ChatModelConfig) -> BaseChatProvider:
 
     if config.provider == "openai":
         return OpenAIChatProvider(config)
+
+    if config.provider == "deepseek":
+        return DeepSeekChatProvider(config)
 
     if config.provider in OPENAI_COMPATIBLE_PROVIDERS:
         return OpenAICompatibleChatProvider(config)

@@ -1,6 +1,5 @@
 import asyncio
 import json
-import uuid
 from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
@@ -46,7 +45,7 @@ from schemas import (
     DEFAULT_AGENT_TOOLS,
 )
 
-app = FastAPI(title="Looma RAG Service")
+app = FastAPI(title="Looma Agent Service")
 approval_manager = ApprovalManager()
 
 app.add_middleware(
@@ -111,7 +110,6 @@ async def agent_summarize(request: AgentSummarizeRequest):
 
 async def build_index_result(request: IndexRequest):
     request = resolve_request_config(request)
-    require_embedding_config(request)
     return await asyncio.to_thread(build_knowledge_index, request)
 
 
@@ -197,8 +195,7 @@ def _agent_ndjson(value: dict) -> str:
 
 async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
     """Build and stream one bounded Agent run without leaking setup exceptions."""
-
-    run_id = f"run_{uuid.uuid4().hex}"
+    run_id = request.run_id
     read_tools = set(DEFAULT_AGENT_TOOLS)
     run_started_sent = False
 
@@ -242,10 +239,19 @@ async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
             config=request.agent,
             run_id=run_id,
         ):
+            runtime_event["taskId"] = request.task_id
             line = _agent_ndjson(runtime_event)
             if runtime_event.get("type") == "run_started":
                 run_started_sent = True
             yield line
+            if runtime_event.get("type") == "run_started" and request.parent_run_id:
+                yield _agent_ndjson(event(
+                    "continuation_created",
+                    run_id,
+                    taskId=request.task_id,
+                    parentRunId=request.parent_run_id,
+                    recoveryReason=request.recovery_reason,
+                ))
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -260,6 +266,7 @@ async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
 
 
 @app.post("/agent/run/stream")
+@app.post("/agent/runs/resume")
 async def agent_run_stream(request: AgentRunRequest):
     return StreamingResponse(
         agent_run_events(request),

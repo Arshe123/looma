@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { Result } from '../../../shared/types/Result'
 
 const RAG_BASE_URL = process.env.RAG_SERVICE_URL || 'http://127.0.0.1:8765'
@@ -125,8 +126,14 @@ export type RagStreamEvent =
 
 export interface RagChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool'
-  content: string
+  content: string | null
   name?: string
+  tool_calls?: Array<{
+    id: string
+    type: 'function'
+    function: { name: AgentToolName; arguments: Record<string, unknown> }
+  }>
+  tool_call_id?: string
 }
 
 export type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch'
@@ -144,6 +151,10 @@ export interface AgentFileProposalPayload {
 export interface AgentRunOptions {
   input: string
   history?: RagChatMessage[]
+  taskId?: string
+  runId?: string
+  parentRunId?: string
+  recoveryReason?: 'app_restart' | 'service_restart' | 'provider_interrupted' | 'approval_continuation' | 'manual_retry'
   enabledTools?: AgentToolName[]
   maxSteps?: number
   toolTimeoutSeconds?: number
@@ -158,10 +169,15 @@ export interface AgentErrorPayload {
 }
 
 export interface AgentToolResultPayload {
-  tool: string
+  tool: AgentToolName
   success: boolean
-  summary: string
-  data: unknown
+  status: 'completed' | 'failed' | 'cancelled'
+  uiSummary: string
+  modelContext: {
+    facts: string[]
+    structuredData: Record<string, unknown>
+  }
+  durationMs: number
   error: AgentErrorPayload | null
   truncated: boolean
 }
@@ -173,7 +189,9 @@ export type AgentStreamEvent =
   | { type: 'tool_result'; runId: string; step: number; stepId: string; callId: string; result: AgentToolResultPayload }
   | { type: 'approval_required'; runId: string; step: number; stepId: string; callId: string; approvalId: string; tool: 'file_patch'; proposal: AgentFileProposalPayload; requestedAt: string; deadlineAt: string }
   | { type: 'approval_resolved'; runId: string; step: number; stepId: string; callId: string; approvalId: string; resolution: { status: 'approved' | 'rejected' | 'expired' | 'cancelled'; reason?: string | null; resolvedAt?: string | null; applied?: boolean | null } }
-  | { type: 'sources'; runId: string; sources: Array<Record<string, unknown>> }
+  | { type: 'sources'; runId: string; callId: string; retrievalId: string; sources: Array<Record<string, unknown>> }
+  | { type: 'usage_updated'; runId: string; operationId: string; phase: 'decision' | 'repair' | 'final' | 'summary' | 'embedding' | 'rerank'; provider: string; model: string; inputTokens?: number; outputTokens?: number; totalTokens?: number; cost?: { amount: number; currency: 'USD'; estimated: boolean }; latencyMs: number }
+  | { type: 'continuation_created'; runId: string; taskId: string; parentRunId: string; recoveryReason: 'app_restart' | 'service_restart' | 'provider_interrupted' | 'approval_continuation' | 'manual_retry' }
   | { type: 'delta'; runId: string; text: string; content: string }
   | { type: 'done'; runId: string; status: 'completed' | 'cancelled'; answer?: string }
   | { type: 'error'; runId: string; error: AgentErrorPayload }
@@ -245,7 +263,7 @@ interface AIService {
   streamAgent(
     workspacePath: string,
     options: AgentRunOptions,
-    onEvent: (event: AgentStreamEvent) => void,
+    onEvent: (event: AgentStreamEvent) => unknown,
     signal?: AbortSignal,
   ): Promise<Result<void>>
 
@@ -255,8 +273,8 @@ interface AIService {
 const AGENT_TOOLS: readonly AgentToolName[] = ['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch']
 const AGENT_TOOL_SET = new Set<string>(AGENT_TOOLS)
 const MAX_AGENT_INPUT_CHARS = 32_000
-const MAX_AGENT_HISTORY_MESSAGES = 50
-const MAX_AGENT_HISTORY_CHARS = 100_000
+const MAX_AGENT_HISTORY_MESSAGES = 200
+const MAX_AGENT_HISTORY_CHARS = 300_000
 const MAX_NDJSON_LINE_CHARS = 1_000_000
 
 const clampInteger = (value: unknown, fallback: number, min: number, max: number) => {
@@ -265,10 +283,26 @@ const clampInteger = (value: unknown, fallback: number, min: number, max: number
   return Math.min(max, Math.max(min, Math.round(parsed)))
 }
 
-export const normalizeAgentRunOptions = (options: AgentRunOptions): Required<Omit<AgentRunOptions, 'history' | 'enabledTools'>> & {
+export interface NormalizedAgentRunOptions {
+  input: string
   history: RagChatMessage[]
+  taskId?: string
+  runId?: string
+  parentRunId?: string
+  recoveryReason?: AgentRunOptions['recoveryReason']
   enabledTools: AgentToolName[]
-} => {
+  maxSteps: number
+  toolTimeoutSeconds: number
+  runTimeoutSeconds: number
+}
+
+const normalizeOptionalAgentIdentifier = (value: unknown, label: string) => {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value)) throw new Error(`Invalid ${label}`)
+  return value
+}
+
+export const normalizeAgentRunOptions = (options: AgentRunOptions): NormalizedAgentRunOptions => {
   const input = typeof options?.input === 'string' ? options.input.trim() : ''
   if (!input) throw new Error('Agent input is required')
   if (input.length > MAX_AGENT_INPUT_CHARS) throw new Error('Agent input is too large')
@@ -279,21 +313,74 @@ export const normalizeAgentRunOptions = (options: AgentRunOptions): Required<Omi
   const enabledTools = [...new Set(rawTools)] as AgentToolName[]
   const rawHistory = Array.isArray(options.history) ? options.history : []
   if (rawHistory.length > MAX_AGENT_HISTORY_MESSAGES) throw new Error('Agent history has too many messages')
-  const history = rawHistory
-      .filter(item => item && ['user', 'assistant', 'system', 'tool'].includes(item.role) && typeof item.content === 'string' && item.content.trim())
-      .map(item => ({
-        role: item.role,
-        content: item.content.trim(),
-        name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : undefined,
-      }))
-  if (history.reduce((total, item) => total + item.content.length, 0) > MAX_AGENT_HISTORY_CHARS) {
+  const history = rawHistory.map((item): RagChatMessage => {
+    if (!item || !['user', 'assistant', 'system', 'tool'].includes(item.role)) throw new Error('Invalid Agent history message')
+    const normalizedContent = typeof item.content === 'string' ? item.content.trim() : null
+    if (item.role !== 'assistant' && !normalizedContent) throw new Error('Agent history message content is required')
+    const message: RagChatMessage = {
+      role: item.role,
+      content: normalizedContent || null,
+      name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : undefined,
+    }
+    if (item.role === 'assistant' && item.tool_calls !== undefined) {
+      if (!Array.isArray(item.tool_calls) || !item.tool_calls.length) throw new Error('Invalid Agent history tool calls')
+      message.tool_calls = item.tool_calls.map(call => {
+        if (!call || typeof call !== 'object'
+          || typeof call.id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(call.id)
+          || call.type !== 'function'
+          || !call.function || typeof call.function !== 'object'
+          || !AGENT_TOOL_SET.has(call.function.name)
+          || !call.function.arguments || typeof call.function.arguments !== 'object' || Array.isArray(call.function.arguments)) {
+          throw new Error('Invalid Agent history tool call')
+        }
+        return {
+          id: call.id,
+          type: 'function' as const,
+          function: {
+            name: call.function.name as AgentToolName,
+            arguments: call.function.arguments,
+          },
+        }
+      })
+    }
+    if (item.role === 'assistant' && !message.content && !message.tool_calls?.length) throw new Error('Assistant history requires content or tool calls')
+    if (item.role === 'tool') {
+      if (typeof item.tool_call_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.tool_call_id)
+        || !message.name || !AGENT_TOOL_SET.has(message.name)) {
+        throw new Error('Invalid Agent history tool result')
+      }
+      message.tool_call_id = item.tool_call_id
+    }
+    return message
+  })
+  const pendingToolCalls = new Map<string, string>()
+  for (const message of history) {
+    for (const call of message.tool_calls || []) pendingToolCalls.set(call.id, call.function.name)
+    if (message.role === 'tool') {
+      if (pendingToolCalls.get(message.tool_call_id!) !== message.name) throw new Error('Unmatched Agent history tool result')
+      pendingToolCalls.delete(message.tool_call_id!)
+    }
+  }
+  if (pendingToolCalls.size) throw new Error('Unmatched Agent history tool call')
+  const historyChars = history.reduce((total, item) => total + JSON.stringify(item).length, 0)
+  if (historyChars > MAX_AGENT_HISTORY_CHARS) {
     throw new Error('Agent history is too large')
   }
+  const taskId = normalizeOptionalAgentIdentifier(options.taskId, 'Agent task ID')
+  const runId = normalizeOptionalAgentIdentifier(options.runId, 'Agent run ID')
+  const parentRunId = normalizeOptionalAgentIdentifier(options.parentRunId, 'Agent parent run ID')
+  const recoveryReason = options.recoveryReason
+  if (Boolean(parentRunId) !== Boolean(recoveryReason)) throw new Error('Agent continuation requires parentRunId and recoveryReason')
+  if (parentRunId && parentRunId === runId) throw new Error('Agent continuation requires a new run ID')
   return {
     input,
     history,
+    ...(taskId ? { taskId } : {}),
+    ...(runId ? { runId } : {}),
+    ...(parentRunId ? { parentRunId } : {}),
+    ...(recoveryReason ? { recoveryReason } : {}),
     enabledTools,
-    maxSteps: clampInteger(options.maxSteps, 8, 1, 50),
+    maxSteps: clampInteger(options.maxSteps, 90, 1, 100),
     toolTimeoutSeconds: clampInteger(options.toolTimeoutSeconds, 30, 1, 300),
     runTimeoutSeconds: clampInteger(options.runTimeoutSeconds, 300, 1, 1800),
   }
@@ -321,9 +408,12 @@ export const isAgentStreamEvent = (value: unknown): value is AgentStreamEvent =>
     case 'tool_result': return Number.isInteger(value.step) && isNonEmptyString(value.stepId)
       && isNonEmptyString(value.callId) && isRecord(value.result)
       && AGENT_TOOL_SET.has(value.result.tool) && typeof value.result.success === 'boolean'
-      && isString(value.result.summary) && typeof value.result.truncated === 'boolean'
+      && ['completed', 'failed', 'cancelled'].includes(value.result.status)
+      && isString(value.result.uiSummary) && Number.isInteger(value.result.durationMs) && value.result.durationMs >= 0
+      && isRecord(value.result.modelContext) && Array.isArray(value.result.modelContext.facts)
+      && value.result.modelContext.facts.every(isString) && isRecord(value.result.modelContext.structuredData)
+      && typeof value.result.truncated === 'boolean'
       && (value.result.error === null || isErrorPayload(value.result.error))
-      && Object.prototype.hasOwnProperty.call(value.result, 'data')
       && (value.result.success ? value.result.error === null : isErrorPayload(value.result.error))
     case 'approval_required': return Number.isInteger(value.step) && isNonEmptyString(value.stepId)
       && isNonEmptyString(value.callId) && isNonEmptyString(value.approvalId) && value.tool === 'file_patch'
@@ -336,7 +426,19 @@ export const isAgentStreamEvent = (value: unknown): value is AgentStreamEvent =>
     case 'approval_resolved': return Number.isInteger(value.step) && isNonEmptyString(value.stepId)
       && isNonEmptyString(value.callId) && isNonEmptyString(value.approvalId) && isRecord(value.resolution)
       && ['approved', 'rejected', 'expired', 'cancelled'].includes(value.resolution.status)
-    case 'sources': return Array.isArray(value.sources) && value.sources.every(isRecord)
+    case 'sources': return isNonEmptyString(value.callId) && isNonEmptyString(value.retrievalId)
+      && Array.isArray(value.sources) && value.sources.every(source => isRecord(source)
+        && isNonEmptyString(source.sourceId) && source.retrievalId === value.retrievalId && source.runId === value.runId)
+    case 'usage_updated': return isNonEmptyString(value.operationId)
+      && ['decision', 'repair', 'final', 'summary', 'embedding', 'rerank'].includes(value.phase)
+      && isNonEmptyString(value.provider) && isNonEmptyString(value.model)
+      && Number.isInteger(value.latencyMs) && value.latencyMs >= 0
+      && (value.inputTokens === undefined || (Number.isInteger(value.inputTokens) && value.inputTokens >= 0))
+      && (value.outputTokens === undefined || (Number.isInteger(value.outputTokens) && value.outputTokens >= 0))
+      && (value.totalTokens === undefined || (Number.isInteger(value.totalTokens) && value.totalTokens >= 0))
+    case 'continuation_created': return isNonEmptyString(value.taskId) && isNonEmptyString(value.parentRunId)
+      && value.parentRunId !== value.runId
+      && ['app_restart', 'service_restart', 'provider_interrupted', 'approval_continuation', 'manual_retry'].includes(value.recoveryReason)
     case 'delta': return isString(value.text) && isString(value.content) && value.text === value.content
     case 'done': return ['completed', 'cancelled'].includes(value.status)
       && (value.answer === undefined || isString(value.answer))
@@ -347,8 +449,14 @@ export const isAgentStreamEvent = (value: unknown): value is AgentStreamEvent =>
 
 const toAgentRequestBody = (workspacePath: string, rawOptions: AgentRunOptions) => {
   const options = normalizeAgentRunOptions(rawOptions)
+  const taskId = options.taskId ?? `task_${randomUUID().replace(/-/g, '')}`
+  const runId = options.runId ?? `run_${randomUUID().replace(/-/g, '')}`
   return {
     input: options.input,
+    task_id: taskId,
+    run_id: runId,
+    parent_run_id: options.parentRunId,
+    recovery_reason: options.recoveryReason,
     workspace: { workspace_path: workspacePath },
     history: options.history,
     agent: {
@@ -405,7 +513,7 @@ const deleteJson = async <T>(path: string, body: unknown): Promise<Result<T>> =>
 const streamNdjson = async <T>(
   path: string,
   body: unknown,
-  onEvent: (event: T) => void,
+  onEvent: (event: T) => void | Promise<void>,
   signal?: AbortSignal,
 ): Promise<Result<void>> => {
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
@@ -459,7 +567,7 @@ const streamNdjson = async <T>(
         if (!line) continue
         const parsed = parseLine(line)
         if (!parsed.success) return { success: false, error: parsed.error }
-        onEvent(parsed.data)
+        await onEvent(parsed.data)
       }
       if (buffer.length > MAX_NDJSON_LINE_CHARS) {
         return { success: false, error: 'RAG 流事件超过大小限制。' }
@@ -474,7 +582,7 @@ const streamNdjson = async <T>(
     if (finalLine) {
       const parsed = parseLine(finalLine)
       if (!parsed.success) return { success: false, error: parsed.error }
-      onEvent(parsed.data)
+      await onEvent(parsed.data)
     }
 
     return { success: true }
@@ -563,9 +671,9 @@ export const aiService: AIService = {
     return streamNdjson<unknown>(
       '/agent/run/stream',
       toAgentRequestBody(workspacePath, options),
-      (event) => {
+      async (event) => {
         if (isAgentStreamEvent(event)) {
-          onEvent(event)
+          await onEvent(event)
           return
         }
         console.warn('Ignored invalid Agent stream event')

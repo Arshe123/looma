@@ -7,7 +7,7 @@ import { createHash } from 'crypto'
 const state = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => any>(),
   workspacePath: '',
-  streamEvent: null as null | ((event: any) => void),
+  streamEvent: null as null | ((event: any) => Promise<void>),
   streamAgent: vi.fn(),
   resolveAgentApproval: vi.fn().mockResolvedValue({ success: true }),
 }))
@@ -26,9 +26,9 @@ vi.mock('../workspaceIpc', () => ({
 
 vi.mock('../../services/ai/AIService', () => ({
   aiService: {
-    streamAgent: state.streamAgent.mockImplementation(async (_workspace: string, _options: unknown, onEvent: (event: any) => void) => {
+    streamAgent: state.streamAgent.mockImplementation(async (_workspace: string, _options: unknown, onEvent: (event: any) => Promise<void>) => {
       state.streamEvent = onEvent
-      return { success: true }
+      return new Promise(() => {})
     }),
     resolveAgentApproval: state.resolveAgentApproval,
     summarizeAgentConversation: vi.fn(),
@@ -36,7 +36,7 @@ vi.mock('../../services/ai/AIService', () => ({
   normalizeAgentRunOptions: vi.fn((value: any) => value),
 }))
 
-await import('../agentIpc')
+const { abortAllAgentRuns } = await import('../agentIpc')
 
 const sha = (value: string) => createHash('sha256').update(Buffer.from(value, 'utf8')).digest('hex')
 const sender = (id: number) => ({
@@ -57,18 +57,23 @@ describe('Agent approval IPC trusted boundary', () => {
   })
 
   afterEach(async () => {
+    abortAllAgentRuns()
     await fs.rm(state.workspacePath, { recursive: true, force: true })
   })
 
   it('keeps proposal content in Main, applies once, and reports applied=true', async () => {
     const owner = sender(101)
     const start = state.handlers.get('agent:runStream:start')!
-    expect(await start({ sender: owner }, 'request-1', 'workspace-1', { input: 'create note', enabledTools: ['file_patch'] })).toEqual({ success: true })
+    const started = await start({ sender: owner }, 'request-1', 'workspace-1', { input: 'create note', enabledTools: ['file_patch'] })
+    expect(started).toEqual({
+      success: true,
+      data: { taskId: expect.stringMatching(/^task_/), runId: expect.stringMatching(/^run_/) },
+    })
     await vi.waitFor(() => expect(state.streamEvent).toBeTypeOf('function'))
 
     const content = '# approved\n'
-    state.streamEvent!({
-      type: 'approval_required', runId: 'run-1', step: 1, stepId: 'step-1', callId: 'call-1',
+    await state.streamEvent!({
+      type: 'approval_required', runId: started.data.runId, step: 1, stepId: 'step-1', callId: 'call-1',
       approvalId: 'approval-1', tool: 'file_patch',
       requestedAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 60_000).toISOString(),
       proposal: {
@@ -101,17 +106,64 @@ describe('Agent approval IPC trusted boundary', () => {
       toolTimeoutSeconds: 1,
     })
     await vi.waitFor(() => expect(state.streamAgent).toHaveBeenCalled())
-    expect(state.streamAgent.mock.calls[0][1]).toEqual({ input: 'inspect tools', history: [] })
+    expect(state.streamAgent.mock.calls[0][1]).toEqual(expect.objectContaining({
+      input: 'inspect tools',
+      history: [],
+      taskId: expect.stringMatching(/^task_/),
+      runId: expect.stringMatching(/^run_/),
+    }))
+  })
+
+  it('creates a new continuation run and trims a dangling provider tool call from history', async () => {
+    const owner = sender(401)
+    const start = state.handlers.get('agent:runStream:start')!
+    const started = await start({ sender: owner }, 'request-parent', 'workspace-1', { input: 'inspect workspace' })
+    await vi.waitFor(() => expect(state.streamEvent).toBeTypeOf('function'))
+    await state.streamEvent!({
+      type: 'tool_call', runId: started.data.runId, step: 1, stepId: 'step-read', callId: 'call-pending',
+      tool: 'file_read', arguments: { path: 'notes/a.md' }, thought_summary: '读取文件',
+    })
+    await state.handlers.get('agent:runStream:cancel')!({ sender: owner }, 'request-parent')
+
+    const resumed = await state.handlers.get('agent:runStream:resume')!({ sender: owner }, 'request-child', 'workspace-1', started.data.runId)
+    expect(resumed).toEqual({
+      success: true,
+      data: {
+        taskId: started.data.taskId,
+        runId: expect.stringMatching(/^run_/),
+        parentRunId: started.data.runId,
+      },
+    })
+    await vi.waitFor(() => expect(state.streamAgent).toHaveBeenCalledTimes(2))
+    expect(state.streamAgent.mock.calls[1][1]).toEqual(expect.objectContaining({
+      taskId: started.data.taskId,
+      runId: resumed.data.runId,
+      parentRunId: started.data.runId,
+      recoveryReason: 'manual_retry',
+    }))
+    expect(state.streamAgent.mock.calls[1][1].history).toEqual([
+      expect.objectContaining({ role: 'user', content: 'inspect workspace' }),
+    ])
+
+    const { AgentLedgerStore } = await import('../../services/agent/AgentLedgerStore')
+    const ledger = new AgentLedgerStore(path.join(state.workspacePath, '.looma', 'agent-ledger'))
+    const view = await ledger.materialize()
+    expect(view.runs[resumed.data.runId]).toMatchObject({
+      taskId: started.data.taskId,
+      parentRunId: started.data.runId,
+      recoveryReason: 'manual_retry',
+    })
+    expect(view.tasks[started.data.taskId].runIds).toEqual([started.data.runId, resumed.data.runId])
   })
 
   it('rejects cross-window approval without touching disk', async () => {
     const owner = sender(201)
     const attacker = sender(202)
-    await state.handlers.get('agent:runStream:start')!({ sender: owner }, 'request-2', 'workspace-1', { input: 'create note', enabledTools: ['file_patch'] })
+    const started = await state.handlers.get('agent:runStream:start')!({ sender: owner }, 'request-2', 'workspace-1', { input: 'create note', enabledTools: ['file_patch'] })
     await vi.waitFor(() => expect(state.streamEvent).toBeTypeOf('function'))
     const content = 'secret\n'
-    state.streamEvent!({
-      type: 'approval_required', runId: 'run-2', step: 1, stepId: 'step-2', callId: 'call-2',
+    await state.streamEvent!({
+      type: 'approval_required', runId: started.data.runId, step: 1, stepId: 'step-2', callId: 'call-2',
       approvalId: 'approval-2', tool: 'file_patch', requestedAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 60_000).toISOString(),
       proposal: { requiresApproval: true, path: 'notes/blocked.md', operation: 'create', unified_diff: '+secret', expected_sha256: null, proposed_sha256: sha(content), proposed_content: content },
     })

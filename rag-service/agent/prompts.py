@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agent.events import model_dump
+from agent.events import tool_result_model_context
 from agent.models import AgentToolCall, ToolResult
 
 MAX_OBSERVATION_CHARS = 12_000
@@ -30,8 +30,7 @@ def observation_prompt(result: ToolResult, max_chars: int = MAX_OBSERVATION_CHAR
     base: dict[str, Any] = {
         "tool": result.tool,
         "success": result.success,
-        "summary": result.summary,
-        "data": result.data,
+        "modelContext": tool_result_model_context(result),
         "error": error,
         "truncated": result.truncated,
     }
@@ -39,18 +38,12 @@ def observation_prompt(result: ToolResult, max_chars: int = MAX_OBSERVATION_CHAR
     if len(rendered) <= max_chars:
         return rendered
 
-    data_json = json.dumps(result.data, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    base.pop("data")
-    base["data_excerpt"] = ""
+    base["modelContext"] = {"facts": [], "structuredData": {"truncated": True}}
     base["truncated"] = True
-    overhead = len(json.dumps(base, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
-    excerpt_budget = max(0, max_chars - overhead - 8)
-    base["data_excerpt"] = data_json[:excerpt_budget]
-    rendered = json.dumps(base, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    while len(rendered) > max_chars and base["data_excerpt"]:
-        base["data_excerpt"] = base["data_excerpt"][:-100]
-        rendered = json.dumps(base, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    return rendered
+    compact = json.dumps(base, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    if len(compact) <= max_chars:
+        return compact
+    return '{"truncated":true}'
 
 
 def final_only_prompt() -> str:

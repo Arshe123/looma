@@ -93,6 +93,7 @@ export interface AiAssistantMessage {
   aiName?: string
   actions?: AiAssistantMessageAction[]
   timeline?: AiAssistantTimelineStep[]
+  taskId?: string
   runId?: string
   mode?: 'rag' | 'agent'
   modelIdentity?: AiAssistantModelIdentity
@@ -116,6 +117,7 @@ export interface AiAssistantConversation {
 }
 
 export interface AiAssistantState {
+  schemaVersion?: number
   conversations: AiAssistantConversation[]
   activeConversationId: string | null
   temporaryDraft?: string
@@ -123,8 +125,18 @@ export interface AiAssistantState {
 }
 
 export type SidebarPanelId = 'files' | 'outline' | 'ai'
-export type SystemPageId = 'settings' | 'rag-index' | 'ai-history'
+export type SystemPageId = 'settings' | 'rag-index' | 'ai-history' | 'agent-diff'
 export type SettingsSectionId = 'appearance' | 'editor' | 'ai'
+
+export interface AgentDiffViewState {
+  conversationId: string
+  approvalId: string
+  path: string
+  operation: 'create' | 'update'
+  diff: string
+  additions: number
+  deletions: number
+}
 
 export type WorkspaceTabKind = 'file' | 'system'
 

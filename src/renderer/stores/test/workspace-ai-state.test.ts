@@ -101,13 +101,9 @@ describe('workspace ai assistant temporary conversation state', () => {
       conversationId: conversationAId,
       assistantMessageId: assistantMessageId!,
       assistantText: '',
-      timeline: [],
       status: 'streaming',
       startedAt: Date.now(),
-      toolCallCount: 0,
-      sourceCount: 0,
-      toolCallStates: {},
-      approvals: {},
+      approvalResolutionInFlight: {},
     }
     aiAssistStore.agentRequestIdToConversationId['req-a'] = conversationAId
 
@@ -245,7 +241,7 @@ describe('workspace ai assistant temporary conversation state', () => {
     )
   })
 
-  it('marks persisted running Agent messages as interrupted after reload', async () => {
+  it('does not invent interruption facts when a legacy running message has not been hydrated from the ledger', async () => {
     const store = useWorkspaceStore()
     ;(window.electronAPI.workspaceAi.get as any).mockResolvedValue({
       success: true,
@@ -265,10 +261,10 @@ describe('workspace ai assistant temporary conversation state', () => {
     await store.loadAiAssistantState('workspace-1')
 
     const message = store.aiAssistant.conversations[0].messages[0]
-    expect(message.agentSummary).toMatchObject({ status: 'cancelled', toolCallCount: 1 })
-    expect(message.text).toBe('应用退出，本次 Agent 运行已中断。')
-    expect(message.timeline?.[0]).toMatchObject({ status: 'completed', detail: '应用退出，本次 Agent 运行已中断。' })
-    expect(message.timeline?.[0].endedAt).toEqual(expect.any(Number))
+    expect(message.agentSummary).toMatchObject({ status: 'running', toolCallCount: 1 })
+    expect(message.text).toBe('')
+    expect(message.timeline?.[0]).toMatchObject({ status: 'active' })
+    expect(message.timeline?.[0].endedAt).toBeUndefined()
   })
 
 })

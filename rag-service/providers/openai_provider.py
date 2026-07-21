@@ -52,19 +52,9 @@ class OpenAIChatProvider(BaseChatProvider):
             max_tokens=self.max_tokens,
         )
         message = response.choices[0].message
-        reasoning_content = getattr(message, "reasoning_content", None)
-        if not isinstance(reasoning_content, str):
-            model_extra = getattr(message, "model_extra", None)
-            reasoning_content = (
-                model_extra.get("reasoning_content")
-                if isinstance(model_extra, dict)
-                else None
-            )
         return StructuredChatResponse(
             content=message.content or "",
-            reasoning_content=(
-                reasoning_content if isinstance(reasoning_content, str) else None
-            ),
+            finish_reason=getattr(response.choices[0], "finish_reason", None),
         )
 
     async def stream_chat(self, messages: List[ChatMessage]) -> AsyncIterator[str]:

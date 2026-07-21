@@ -1,6 +1,6 @@
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator, validator
 
 
 ProviderType = Literal[
@@ -65,11 +65,25 @@ class ChatToolCall(BaseModel):
 
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
-    content: str = Field(..., min_length=1)
+    content: Optional[str] = None
     name: Optional[str] = None
     tool_calls: Optional[list[ChatToolCall]] = None
     tool_call_id: Optional[str] = None
     reasoning_content: Optional[str] = None
+
+    @root_validator(skip_on_failure=True)
+    def validate_role_shape(cls, values: dict[str, Any]) -> dict[str, Any]:
+        role = values.get("role")
+        content = values.get("content")
+        tool_calls = values.get("tool_calls")
+        if role == "assistant":
+            if not ((isinstance(content, str) and content.strip()) or tool_calls):
+                raise ValueError("assistant message requires content or tool_calls")
+        elif not isinstance(content, str) or not content.strip():
+            raise ValueError(f"{role} message requires content")
+        if role == "tool" and not values.get("tool_call_id"):
+            raise ValueError("tool message requires tool_call_id")
+        return values
 
 
 class RequestStats(BaseModel):
@@ -154,19 +168,47 @@ class ToolConfig(StrictAgentModel):
 
 class AgentConfig(StrictAgentModel):
     enabled_tools: list[ToolName] = Field(default_factory=lambda: list(DEFAULT_AGENT_TOOLS))
-    max_steps: int = Field(default=8, gt=0, le=50)
+    max_steps: int = Field(default=90, gt=0, le=100)
     tool_timeout_seconds: int = Field(default=30, gt=0, le=300)
     run_timeout_seconds: int = Field(default=300, gt=0, le=1800)
     allow_write: bool = False
 
 
-class AgentRunRequest(BaseModel):
+class AgentRunRequest(StrictAgentModel):
     input: str = Field(..., min_length=1)
+    task_id: str = Field(..., min_length=1, max_length=128)
+    run_id: str = Field(..., min_length=1, max_length=128)
+    parent_run_id: Optional[str] = Field(default=None, max_length=128)
+    recovery_reason: Optional[Literal[
+        "app_restart",
+        "service_restart",
+        "provider_interrupted",
+        "approval_continuation",
+        "manual_retry",
+    ]] = None
     workspace: Optional[WorkspaceContext] = None
     knowledge: Optional[KnowledgeConfig] = None
     ai_config: Optional[AIConfig] = None
     agent: AgentConfig = Field(default_factory=AgentConfig)
     history: list[ChatMessage] = Field(default_factory=list)
+
+    @validator("task_id", "run_id", "parent_run_id")
+    def validate_agent_identifier(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        if not value.replace("_", "").replace("-", "").isalnum():
+            raise ValueError("invalid Agent identifier")
+        return value
+
+    @root_validator(skip_on_failure=True)
+    def validate_continuation(cls, values: dict[str, Any]) -> dict[str, Any]:
+        parent_run_id = values.get("parent_run_id")
+        recovery_reason = values.get("recovery_reason")
+        if bool(parent_run_id) != bool(recovery_reason):
+            raise ValueError("parent_run_id and recovery_reason must be provided together")
+        if parent_run_id and parent_run_id == values.get("run_id"):
+            raise ValueError("continuation run_id must differ from parent_run_id")
+        return values
 
 
 class AgentApprovalResolveRequest(StrictAgentModel):

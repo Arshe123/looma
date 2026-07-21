@@ -33,9 +33,9 @@ import {
   remapFileTabsByMoves,
   removeFileTabsByPaths,
 } from './workspace-tab-utils'
-import type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantState, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceTab } from './workspace-types'
-import { getAiAssistantConversationTitle, sortAiAssistantConversations } from './workspace-ai-utils'
-export type { AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, AiAssistantTimelineOutput, AiAssistantTimelineOutputType, AiAssistantTimelineStep, AiAssistantTimelineStepStatus, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceMeta, WorkspaceTab } from './workspace-types'
+import type { AgentDiffViewState, AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantState, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceTab } from './workspace-types'
+import { getAiAssistantConversationTitle, normalizeAiAssistantSourcePath, sortAiAssistantConversations } from './workspace-ai-utils'
+export type { AgentDiffViewState, AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, AiAssistantTimelineOutput, AiAssistantTimelineOutputType, AiAssistantTimelineStep, AiAssistantTimelineStepStatus, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceMeta, WorkspaceTab } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
 let systemThemeCleanup: (() => void) | null = null
@@ -83,6 +83,7 @@ const createBlankAiConversation = (): AiAssistantConversation => {
 const createDefaultAiAssistantState = (): AiAssistantState => {
   const conversation = createAiConversation()
   return {
+    schemaVersion: 2,
     conversations: [conversation],
     activeConversationId: conversation.id,
     temporaryDraft: '',
@@ -218,25 +219,19 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
           && typeof message.text === 'string',
         ),
       ).map((message) => {
-        const wasRunning = (message as any).agentSummary?.status === 'running'
-        const interruptedAt = Date.now()
-        const timeline = normalizeTimeline(message.timeline)?.map(step => (
-          wasRunning && (step.status === 'active' || step.status === 'pending')
-            ? { ...step, status: 'completed' as const, detail: '应用退出，本次 Agent 运行已中断。', endedAt: interruptedAt }
-            : step
-        ))
+        const timeline = normalizeTimeline(message.timeline)
         const agentSummary = normalizeAgentSummary((message as any).agentSummary)
-        if (wasRunning && agentSummary) agentSummary.status = 'cancelled'
         return {
           id: message.id,
           role: message.role,
-          text: wasRunning && !message.text.trim() ? '应用退出，本次 Agent 运行已中断。' : message.text,
+          text: message.text,
           createdAt: typeof message.createdAt === 'number' ? message.createdAt : message.id,
           aiName: typeof (message as any).aiName === 'string' && (message as any).aiName.trim()
             ? (message as any).aiName.trim()
             : undefined,
           actions: normalizeActions(message.actions),
           timeline,
+          ...(typeof (message as any).taskId === 'string' && (message as any).taskId.trim() ? { taskId: (message as any).taskId.trim() } : {}),
           ...(typeof (message as any).runId === 'string' && (message as any).runId.trim() ? { runId: (message as any).runId.trim() } : {}),
           ...((message as any).mode === 'rag' || (message as any).mode === 'agent' ? { mode: (message as any).mode } : {}),
           ...(normalizeModelIdentity((message as any).modelIdentity) ? { modelIdentity: normalizeModelIdentity((message as any).modelIdentity) } : {}),
@@ -285,6 +280,7 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
       ? rawState.activeConversationId
       : [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)[0].id
     return {
+      schemaVersion: 2,
       conversations,
       activeConversationId,
       temporaryDraft: typeof rawState.temporaryDraft === 'string' ? rawState.temporaryDraft : '',
@@ -294,6 +290,7 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
 
   if (Array.isArray(rawState.conversations)) {
     return {
+      schemaVersion: 2,
       conversations: [],
       activeConversationId: null,
       temporaryDraft: typeof rawState.temporaryDraft === 'string' ? rawState.temporaryDraft : '',
@@ -305,6 +302,7 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
   if (legacyMessages.length > 0 || typeof rawState.draft === 'string') {
     const conversation = createAiConversation(legacyMessages.length > 0 ? legacyMessages : undefined, typeof rawState.draft === 'string' ? rawState.draft : '')
     return {
+      schemaVersion: 2,
       conversations: [conversation],
       activeConversationId: conversation.id,
       temporaryDraft: '',
@@ -347,6 +345,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeTabId: '' as string,
     activeSystemPage: null as SystemPageId | null,
     activeSettingsSection: 'editor' as SettingsSectionId,
+    activeAgentDiff: null as AgentDiffViewState | null,
     activeSidebarPanel: DEFAULT_ACTIVE_SIDEBAR_PANEL as SidebarPanelId | null,
     aiAssistant: createDefaultAiAssistantState() as AiAssistantState,
     fileSessions: {} as Record<string, EditorSession>,
@@ -600,7 +599,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       role: AiAssistantMessage['role'],
       text: string,
       actions?: AiAssistantMessageAction[],
-      meta?: Pick<AiAssistantMessage, 'aiName' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>,
+      meta?: Pick<AiAssistantMessage, 'aiName' | 'taskId' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>,
     ) {
       const conversation = this.getAiAssistantConversationById(conversationId)
       if (!conversation) return null
@@ -623,7 +622,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       return id
     },
 
-    appendAiAssistantMessage(role: AiAssistantMessage['role'], text: string, actions?: AiAssistantMessageAction[], meta?: Pick<AiAssistantMessage, 'aiName' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>) {
+    appendAiAssistantMessage(role: AiAssistantMessage['role'], text: string, actions?: AiAssistantMessageAction[], meta?: Pick<AiAssistantMessage, 'aiName' | 'taskId' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>) {
       const conversation = this.materializeAiAssistantConversationIfNeeded()
       return this.appendAiAssistantMessageToConversation(conversation.id, role, text, actions, meta)
     },
@@ -660,7 +659,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.updateAiAssistantMessageTimelineInConversation(conversation.id, id, timeline, options)
     },
 
-    updateAiAssistantMessageMetaInConversation(conversationId: string, id: number, meta: Partial<Pick<AiAssistantMessage, 'aiName' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>>, options?: { persist?: boolean }) {
+    updateAiAssistantMessageMetaInConversation(conversationId: string, id: number, meta: Partial<Pick<AiAssistantMessage, 'aiName' | 'taskId' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>>, options?: { persist?: boolean }) {
       const conversation = this.getAiAssistantConversationById(conversationId)
       if (!conversation) return
       const message = conversation.messages.find((item) => item.id === id)
@@ -677,7 +676,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.saveAiAssistantState()
     },
 
-    updateAiAssistantMessageMeta(id: number, meta: Partial<Pick<AiAssistantMessage, 'aiName' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>>, options?: { persist?: boolean }) {
+    updateAiAssistantMessageMeta(id: number, meta: Partial<Pick<AiAssistantMessage, 'aiName' | 'taskId' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>>, options?: { persist?: boolean }) {
       const conversation = this.ensureActiveAiAssistantConversation()
       this.updateAiAssistantMessageMetaInConversation(conversation.id, id, meta, options)
     },
@@ -922,6 +921,22 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.openSystemTab('ai-history')
     },
 
+    openAgentDiffPage(payload: AgentDiffViewState) {
+      const path = normalizeAiAssistantSourcePath(payload.path)
+      if (!path || !payload.approvalId || !payload.conversationId) return false
+      this.activeAgentDiff = {
+        conversationId: payload.conversationId,
+        approvalId: payload.approvalId,
+        path,
+        operation: payload.operation,
+        diff: payload.diff.slice(0, 250_000),
+        additions: Math.max(0, Math.round(payload.additions)),
+        deletions: Math.max(0, Math.round(payload.deletions)),
+      }
+      this.openSystemTab('agent-diff')
+      return true
+    },
+
     closeSystemPage(page: SystemPageId) {
       this.closeTab(getSystemTabId(page)).catch(() => {})
     },
@@ -983,6 +998,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     cleanupTabState(tab: WorkspaceTab) {
       if (tab.kind === 'file') {
         this.removeOpenedTextFileStates([tab.relativePath])
+      } else if (tab.page === 'agent-diff') {
+        this.activeAgentDiff = null
       }
     },
 
@@ -1543,6 +1560,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         return
       }
       this.aiAssistant = normalizeAiAssistantState(aiResult.data)
+      const { useAiAssistantStore } = await import('./ai-assistant')
+      await useAiAssistantStore().hydrateAgentHistory(id, this.aiAssistant.conversations)
     },
 
     async saveWorkspaceMeta() {

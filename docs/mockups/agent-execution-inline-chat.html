@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Looma Agent 执行过程内嵌对话 — 三方案</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",sans-serif}html[data-theme=light]{--bg:#f4f5f7;--panel:#fff;--soft:#f8fafc;--surface:#fff;--text:#1f2937;--muted:#5f6b7a;--subtle:#9aa4b2;--border:#dbe1e8;--accent:#3b82f6;--accent2:#2563eb;--accentSoft:#dbeafe;--success:#16a34a;--danger:#dc2626;--warning:#d97706;--code:#f1f5f9;--shadow:0 12px 36px rgba(15,23,42,.10)}html[data-theme=dark]{--bg:#202225;--panel:#2a2d31;--soft:#32363b;--surface:#2a2d31;--text:#e7e9ed;--muted:#b5bdc8;--subtle:#7f8895;--border:#3d424a;--accent:#6ea8ff;--accent2:#8bbcff;--accentSoft:rgba(110,168,255,.18);--success:#63c174;--danger:#ff7373;--warning:#f3b35d;--code:#222529;--shadow:0 16px 42px rgba(0,0,0,.28)}body{background:var(--bg);color:var(--text);overflow:hidden}.topbar{height:56px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 18px}.brand{font-size:14px;font-weight:700;margin-right:auto}.controls{display:flex;gap:7px;align-items:center}.btn,.seg button{border:1px solid var(--border);background:var(--panel);color:var(--muted);height:32px;border-radius:8px;padding:0 10px;cursor:pointer}.btn:hover,.seg button:hover{background:var(--soft);color:var(--text)}.seg{display:flex;border:1px solid var(--border);border-radius:9px;padding:2px;background:var(--soft)}.seg button{border:0;height:27px;background:transparent}.seg button.active{background:var(--panel);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.08)}.layout{height:calc(100% - 56px);display:grid;grid-template-columns:220px minmax(520px,1fr) 470px}.rail,.editor,.assistant{min-height:0;background:var(--panel)}.rail{border-right:1px solid var(--border);padding:14px}.logo{font-weight:800;font-size:16px;margin:5px 6px 18px}.nav{padding:9px 10px;border-radius:8px;color:var(--muted);font-size:12px;margin:3px 0}.nav.active{background:var(--accentSoft);color:var(--accent)}.editor{background:var(--soft);display:flex;flex-direction:column}.tabs{height:42px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:end;padding-left:10px}.tab{height:34px;border:1px solid transparent;border-bottom:0;border-radius:8px 8px 0 0;padding:8px 12px;font-size:11px;color:var(--muted);cursor:pointer}.tab.active{background:var(--soft);border-color:var(--border);color:var(--text)}.doc{padding:38px;max-width:850px;overflow:auto}.doc h1{font-size:26px}.doc p{color:var(--muted);line-height:1.8}.assistant{border-left:1px solid var(--border);display:flex;flex-direction:column;min-width:0}.a-head{height:64px;padding:11px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}.ai-icon{width:34px;height:34px;border-radius:9px;background:var(--accentSoft);color:var(--accent);display:grid;place-items:center}.a-title{font-size:13px;font-weight:650}.a-sub{font-size:10px;color:var(--subtle);margin-top:2px}.messages{flex:1;min-height:0;overflow:auto;background:var(--soft);padding:16px}.msg{margin-bottom:16px}.who{font-size:10px;color:var(--subtle);margin-bottom:6px}.msg.user{text-align:right}.bubble{display:inline-block;text-align:left;max-width:88%;font-size:12px;line-height:1.65}.user .bubble{background:var(--accent);color:#fff;border-radius:14px 4px 14px 14px;padding:10px 12px}.assistant-msg .bubble{display:block;max-width:100%}.answer{margin-top:12px;padding:12px 13px;background:var(--panel);border:1px solid var(--border);border-radius:10px}.answer b{font-size:12px}.composer{padding:10px;border-top:1px solid var(--border);background:var(--panel)}.input{height:60px;background:var(--soft);border:1px solid var(--border);border-radius:12px;padding:11px;color:var(--subtle);font-size:11px}.variant{display:none}.variant.active{display:block}.run-head{display:flex;justify-content:space-between;align-items:center;margin:2px 0 9px}.run-title{font-size:11px;font-weight:650}.badge{font-size:9px;padding:3px 7px;border-radius:999px;background:var(--accentSoft);color:var(--accent)}.summary{font-size:10px;color:var(--muted)}.timeline{position:relative;margin-left:5px;padding-left:17px}.timeline:before{content:"";position:absolute;left:3px;top:8px;bottom:10px;width:1px;background:var(--border)}.step{position:relative;margin-bottom:8px}.dot{position:absolute;left:-18px;top:10px;width:9px;height:9px;border-radius:50%;background:var(--panel);border:2px solid var(--success)}.dot.active{border-color:var(--accent);box-shadow:0 0 0 3px var(--accentSoft)}.step-card{background:var(--panel);border:1px solid var(--border);border-radius:9px;overflow:hidden}.step-card button,.event button,.compact button{width:100%;border:0;background:transparent;color:inherit;padding:9px 10px;display:flex;gap:8px;align-items:center;text-align:left;cursor:pointer}.step-card button:hover,.event button:hover,.compact button:hover{background:var(--soft)}.step-icon{font-size:12px}.step-main{min-width:0;flex:1}.step-name{font-size:11px;font-weight:600}.step-meta{font-size:9px;color:var(--subtle);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chev{font-size:11px;color:var(--subtle)}.detail{display:none;border-top:1px solid var(--border);padding:9px 10px;font-size:9px;color:var(--muted)}.open .detail{display:block}.kv{display:grid;grid-template-columns:48px 1fr;gap:6px;margin:4px 0}.kv span:first-child{color:var(--subtle)}pre{white-space:pre-wrap;margin:5px 0 0;background:var(--code);border-radius:6px;padding:7px;font-size:9px;line-height:1.5;color:var(--text);max-height:120px;overflow:auto}.file-card{display:flex;align-items:center;gap:9px;padding:9px 10px;background:var(--panel);border:1px solid var(--border);border-radius:9px;cursor:pointer}.file-card:hover{border-color:var(--accent)}.file-icon{width:27px;height:27px;border-radius:7px;background:var(--soft);display:grid;place-items:center}.file-info{min-width:0;flex:1}.file-name{font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.file-path{font-size:8px;color:var(--subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.plus{color:var(--success);font-size:10px}.minus{color:var(--danger);font-size:10px}.event{border-left:2px solid var(--border);margin:8px 0;background:var(--panel);border-radius:0 8px 8px 0}.event.think{border-left-color:var(--accent)}.event.tool{border-left-color:var(--warning)}.event.file{border-left-color:var(--success)}.event .detail{margin-left:0}.compact-group{background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden}.compact{border-bottom:1px solid var(--border)}.compact:last-child{border:0}.compact .detail{background:var(--soft)}.progress{height:3px;background:var(--border);margin-top:8px;border-radius:5px;overflow:hidden}.progress i{display:block;height:100%;width:76%;background:var(--accent)}.hint{font-size:9px;color:var(--subtle);margin:8px 0}.process-summary{border:1px solid var(--border);border-radius:10px;background:var(--panel);padding:10px}.process-summary .top{display:flex;align-items:center;gap:7px}.process-summary strong{font-size:11px}.chips{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap}.chip{font-size:9px;color:var(--muted);background:var(--soft);border:1px solid var(--border);padding:3px 6px;border-radius:5px}.diff-view{display:none;height:100%;flex-direction:column}.diff-view.active{display:flex}.diff-toolbar{height:46px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 14px;gap:8px}.diff-title{font-size:11px;font-weight:650;flex:1}.diff-stats{font-size:10px}.diff{display:grid;grid-template-columns:1fr 1fr;min-height:0;flex:1;overflow:auto;background:var(--code)}.diff-pane{padding:18px;border-right:1px solid var(--border);font:10px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre}.del{background:rgba(220,38,38,.12)}.add{background:rgba(22,163,74,.12)}.mobile .layout{display:block}.mobile .rail,.mobile .editor{display:none}.mobile .assistant{width:390px;height:calc(100vh - 76px);margin:10px auto;border:1px solid var(--border);border-radius:18px;overflow:hidden;box-shadow:var(--shadow)}.mobile .messages{padding:13px}.mobile .bubble{max-width:94%}.mobile .step-meta{max-width:240px}.mobile .topbar{padding:0 10px}.mobile .brand{font-size:12px}.mobile .seg:first-of-type{display:none}@media(max-width:900px){.layout{grid-template-columns:0 minmax(350px,1fr) 440px}.rail{display:none}}@media(max-width:620px){.topbar{height:auto;min-height:58px;flex-wrap:wrap;padding:8px}.controls{width:100%;overflow:auto}.layout{height:calc(100% - 94px)}.editor{display:none}.layout{display:block}.assistant{height:100%;border-left:0}.brand{display:none}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">Looma · Agent 执行过程内嵌对话设计</div>
+  <div class="controls">
+    <div class="seg" id="variants"><button class="active" data-v="a">A 时间线卡片</button><button data-v="b">B 事件流</button><button data-v="c">C 紧凑折叠</button></div>
+    <div class="seg" id="devices"><button class="active" data-d="desktop">桌面</button><button data-d="mobile">手机</button></div>
+    <button class="btn" id="theme">深色</button>
+  </div>
+</div>
+<div id="stage">
+<div class="layout">
+  <aside class="rail"><div class="logo">LOOMA</div><div class="nav active">▣ 工作空间</div><div class="nav">⌕ 全局搜索</div><div class="nav">◇ 索引库</div><div class="nav">⚙ 设置</div></aside>
+  <main class="editor" id="editor">
+    <div class="tabs"><div class="tab active">产品需求.md</div></div>
+    <article class="doc"><h1>Agent 执行过程设计</h1><p>目标：让执行步骤自然地出现在对话中，同时保留工具审计能力。文件变更只显示摘要卡片，点击后在工作区新标签页中打开前后对比。</p><p>这里模拟 Looma 的主编辑区。点击右侧任意文件变更卡片，可查看 Diff 标签页交互。</p></article>
+    <section class="diff-view" id="diffView"><div class="diff-toolbar"><button class="btn" id="backDoc">← 返回</button><div class="diff-title">AiAssistant.vue · 前后对比</div><div class="diff-stats"><span class="plus">+48</span> <span class="minus">−17</span></div></div><div class="diff"><div class="diff-pane">修改前
+
+&lt;AgentTimelineDrawer
+  :open="drawerOpen"
+  :state="drawerState"
+/&gt;
+
+<span class="del">- &lt;button @click="openProcessDrawer"&gt;</span>
+<span class="del">-   查看执行过程</span>
+<span class="del">- &lt;/button&gt;</span></div><div class="diff-pane">修改后
+
+<span class="add">+ &lt;AgentExecutionInline</span>
+<span class="add">+   :timeline="message.timeline"</span>
+<span class="add">+   :summary="message.agentSummary"</span>
+<span class="add">+ /&gt;</span>
+
+保留最终回答独立展示</div></div></section>
+  </main>
+  <aside class="assistant">
+    <div class="a-head"><div class="ai-icon">✦</div><div><div class="a-title">OpenAI · gpt-5.6</div><div class="a-sub">Agent 执行过程嵌入对话</div></div></div>
+    <div class="messages">
+      <div class="msg user"><div class="bubble">请审查 AI 对话组件，并把 Agent 执行过程嵌入到对话里。</div></div>
+      <div class="msg assistant-msg"><div class="who">✦ Looma AI</div><div class="bubble">
+        <section class="variant active" data-variant="a">
+          <div class="run-head"><div><div class="run-title">执行过程</div><div class="summary">按实际发生顺序 · 5 步 · 3 次工具调用</div></div><span class="badge">已完成 · 8.4s</span></div>
+          <div class="timeline">
+            <div class="step"><i class="dot"></i><div class="step-card"><button><span class="step-icon">◌</span><span class="step-main"><span class="step-name">理解任务并制定执行路径</span><span class="step-meta">思考摘要 · 先检查现有对话与执行抽屉，再设计内嵌结构</span></span><span class="chev">⌄</span></button><div class="detail"><div class="kv"><span>摘要</span><span>需要保留最终回答的可读性，同时让工具调用可审计。</span></div><div class="kv"><span>决策</span><span>过程置于回答前，逐步折叠；不展示模型私有逐字推理。</span></div></div></div></div>
+            <div class="step"><i class="dot"></i><div class="step-card"><button><span class="step-icon">⌕</span><span class="step-main"><span class="step-name">调用工具 · workspace_search</span><span class="step-meta">搜索 AI 对话组件与 timeline 数据结构 · 6 个匹配</span></span><span class="chev">⌄</span></button><div class="detail"><div class="kv"><span>工具</span><code>workspace_search</code></div><div class="kv"><span>参数</span><pre>{
+  "query": "timeline|AgentTimelineDrawer",
+  "path": "src/renderer"
+}</pre></div><div class="kv"><span>结果</span><pre>找到 6 个匹配：
+AiAssistant.vue:10
+AgentTimelineDrawer.vue:26
+agentUiState.ts:41 …</pre></div><div class="kv"><span>耗时</span><span>182ms</span></div></div></div></div>
+            <div class="step"><i class="dot"></i><div class="step-card"><button><span class="step-icon">▤</span><span class="step-main"><span class="step-name">调用工具 · file_read</span><span class="step-meta">读取 AiAssistant.vue · 789 行</span></span><span class="chev">⌄</span></button><div class="detail"><div class="kv"><span>参数</span><pre>{ "path": "src/renderer/components/ai/AiAssistant.vue" }</pre></div><div class="kv"><span>结果</span><span>读取成功，识别到右侧执行抽屉与消息级“查看过程”按钮。</span></div></div></div></div>
+            <div class="step"><i class="dot"></i><div class="step-card"><button><span class="step-icon">✎</span><span class="step-main"><span class="step-name">生成文件修改提案</span><span class="step-meta">file_patch · 等待用户逐项批准后才会写入</span></span><span class="chev">⌄</span></button><div class="detail"><div class="kv"><span>工具</span><code>file_patch</code></div><div class="kv"><span>参数</span><span>目标文件 2 个，基于已验证的 workspaceId 与文件 hash。</span></div><div class="kv"><span>结果</span><span>提案生成成功，未写入磁盘。</span></div></div></div></div>
+            <div class="step"><i class="dot"></i><div class="file-card" title="点击打开 Diff 标签页"><div class="file-icon">V</div><div class="file-info"><div class="file-name">AiAssistant.vue</div><div class="file-path">src/renderer/components/ai/AiAssistant.vue</div></div><span class="plus">+48</span><span class="minus">−17</span><span class="chev">›</span></div></div>
+          </div>
+          <div class="answer"><b>审查完成</b><br>建议将执行过程作为回答前的内嵌时间线，默认展示步骤摘要，点击后查看工具参数与返回结果；文件修改单独使用轻量统计卡片。</div>
+        </section>
+        <section class="variant" data-variant="b">
+          <div class="run-head"><div><div class="run-title">Agent 正在执行</div><div class="summary">事件按发生顺序直接插入消息流</div></div><span class="badge">5 / 5</span></div>
+          <div class="event think"><button><span>◌</span><span class="step-main"><span class="step-name">思考摘要</span><span class="step-meta">先确认现有执行抽屉和消息结构</span></span><span>⌄</span></button><div class="detail">决策依据：工具审计信息要完整，但最终回答不能被日志淹没。</div></div>
+          <div class="event tool"><button><span>⌕</span><span class="step-main"><span class="step-name">workspace_search</span><span class="step-meta">参数：timeline|AgentTimelineDrawer · 结果：6 个匹配</span></span><span>⌄</span></button><div class="detail"><pre>参数 {"query":"timeline|AgentTimelineDrawer"}
+结果 6 matches · 182ms</pre></div></div>
+          <div class="event tool"><button><span>▤</span><span class="step-main"><span class="step-name">file_read</span><span class="step-meta">AiAssistant.vue · 读取 789 行</span></span><span>⌄</span></button><div class="detail"><pre>识别：右侧 drawer + 消息级过程按钮</pre></div></div>
+          <div class="event tool"><button><span>✎</span><span class="step-main"><span class="step-name">file_patch</span><span class="step-meta">生成提案，尚未写入</span></span><span>⌄</span></button><div class="detail">等待 Electron 逐项审批。</div></div>
+          <div class="event file"><div class="file-card"><div class="file-icon">V</div><div class="file-info"><div class="file-name">AiAssistant.vue</div><div class="file-path">点击查看前后对比</div></div><span class="plus">+48</span><span class="minus">−17</span><span>›</span></div></div>
+          <div class="answer"><b>已完成组件审查。</b><br>推荐采用对话内事件流，并将工具详情按需展开。</div>
+        </section>
+        <section class="variant" data-variant="c">
+          <div class="process-summary"><div class="top"><span>✓</span><strong>执行完成</strong><span class="badge" style="margin-left:auto">8.4s</span></div><div class="chips"><span class="chip">5 步</span><span class="chip">3 次工具</span><span class="chip">1 个文件提案</span></div><div class="progress"><i></i></div></div>
+          <div class="hint">过程默认紧凑展示，点击任一步查看完整参数和结果</div>
+          <div class="compact-group">
+            <div class="compact"><button><span>◌</span><span class="step-main"><span class="step-name">1. 分析任务</span><span class="step-meta">确定“摘要可见、私有推理不展示”</span></span><span>⌄</span></button><div class="detail">思考摘要：审计透明与回答可读性需要分层。</div></div>
+            <div class="compact"><button><span>⌕</span><span class="step-main"><span class="step-name">2. workspace_search</span><span class="step-meta">6 个匹配 · 182ms</span></span><span>⌄</span></button><div class="detail"><pre>{"query":"timeline|AgentTimelineDrawer"}
+→ 6 matches</pre></div></div>
+            <div class="compact"><button><span>▤</span><span class="step-main"><span class="step-name">3. file_read</span><span class="step-meta">AiAssistant.vue · 789 行</span></span><span>⌄</span></button><div class="detail"><pre>{"path":"src/renderer/components/ai/AiAssistant.vue"}</pre></div></div>
+            <div class="compact"><button><span>✎</span><span class="step-main"><span class="step-name">4. file_patch 提案</span><span class="step-meta">等待审批 · 未写入</span></span><span>⌄</span></button><div class="detail">Electron 绑定 workspace + path + hash 后审批。</div></div>
+            <div class="compact"><div class="file-card"><div class="file-icon">V</div><div class="file-info"><div class="file-name">5. AiAssistant.vue</div><div class="file-path">文件审查卡片</div></div><span class="plus">+48</span><span class="minus">−17</span><span>›</span></div></div>
+          </div>
+          <div class="answer"><b>审查完成</b><br>紧凑折叠方案适合窄侧栏，过程不抢占最终回答。</div>
+        </section>
+      </div></div>
+    </div>
+    <div class="composer"><div class="input">让 Agent 读取、检索并处理当前工作空间</div></div>
+  </aside>
+</div>
+</div>
+<script>
+const root=document.documentElement,stage=document.getElementById('stage');
+document.getElementById('theme').onclick=e=>{const dark=root.dataset.theme==='dark';root.dataset.theme=dark?'light':'dark';e.target.textContent=dark?'深色':'浅色'};
+document.querySelectorAll('#variants button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#variants button').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.variant').forEach(x=>x.classList.toggle('active',x.dataset.variant===b.dataset.v))});
+document.querySelectorAll('#devices button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#devices button').forEach(x=>x.classList.remove('active'));b.classList.add('active');stage.classList.toggle('mobile',b.dataset.d==='mobile')});
+document.querySelectorAll('.step-card button,.event button,.compact button').forEach(b=>b.onclick=()=>b.parentElement.classList.toggle('open'));
+document.querySelectorAll('.file-card').forEach(c=>c.onclick=()=>{if(stage.classList.contains('mobile')){alert('实际产品中：打开工作区 Diff 标签页；手机/窄栏下自动聚焦主工作区。');return}document.querySelector('.doc').style.display='none';document.getElementById('diffView').classList.add('active');document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelector('.tabs').insertAdjacentHTML('beforeend','<div class="tab active" id="tempDiffTab">AiAssistant.vue · Diff</div>')});
+document.getElementById('backDoc').onclick=()=>{document.querySelector('.doc').style.display='block';document.getElementById('diffView').classList.remove('active');document.getElementById('tempDiffTab')?.remove();document.querySelector('.tab').classList.add('active')};
+</script>
+</body></html>

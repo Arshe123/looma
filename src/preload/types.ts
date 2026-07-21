@@ -1,4 +1,6 @@
 import type { Result } from '../shared/types/Result'
+import type { AgentEvent, AgentSource } from '../shared/types/agent-events'
+import type { AgentRun, AgentTask } from '../shared/types/agent-state'
 import type { AppSettings as AppSettingsPayload } from '../shared/utils/app-settings'
 
 type SidebarPanelId = 'files' | 'outline' | 'ai';
@@ -18,6 +20,7 @@ interface AiAssistantMessagePayload {
   aiName?: string;
   actions?: AiAssistantMessageActionPayload[];
   timeline?: AiAssistantTimelineStepPayload[];
+  taskId?: string;
   runId?: string;
   mode?: 'rag' | 'agent';
   modelIdentity?: { provider: string; model: string; displayName: string };
@@ -64,6 +67,7 @@ interface AiAssistantTimelineStepPayload {
 }
 
 interface AiAssistantStatePayload {
+  schemaVersion?: number;
   conversations: AiAssistantConversationPayload[];
   activeConversationId: string | null;
   temporaryDraft?: string;
@@ -97,7 +101,7 @@ interface FileWorkspaceTabPayload extends WorkspaceTabPayloadBase {
 
 interface SystemWorkspaceTabPayload extends WorkspaceTabPayloadBase {
   kind: 'system';
-  page: 'settings' | 'rag-index' | 'ai-history';
+  page: 'settings' | 'rag-index' | 'ai-history' | 'agent-diff';
 }
 
 type WorkspaceTabPayload = FileWorkspaceTabPayload | SystemWorkspaceTabPayload;
@@ -232,7 +236,7 @@ interface AgentErrorPayload {
   technical_detail?: string | null;
   retryable: boolean;
 }
-type AgentStreamEventPayload =
+type AgentStreamEventData =
   | { requestId: string; type: 'run_started'; runId: string; startedAt: string }
   | { requestId: string; type: 'timeline'; runId: string; step: number; stepId: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; summary: string }
   | { requestId: string; type: 'tool_call'; runId: string; step: number; stepId: string; callId: string; tool: AgentToolNamePayload; arguments: Record<string, unknown>; thought_summary: string }
@@ -242,7 +246,10 @@ type AgentStreamEventPayload =
   | { requestId: string; type: 'sources'; runId: string; sources: Array<Record<string, unknown>> }
   | { requestId: string; type: 'delta'; runId: string; text: string; content: string }
   | { requestId: string; type: 'done'; runId: string; status: 'completed' | 'cancelled'; answer?: string }
+  | { requestId: string; type: 'usage_updated'; runId: string; operationId: string; phase: 'decision' | 'tool' | 'finalization' | 'continuation'; provider?: string | null; model?: string | null; inputTokens?: number | null; outputTokens?: number | null; totalTokens?: number | null; latencyMs: number; cost?: { amount: number; currency: 'USD'; estimated: boolean } | null }
+  | { requestId: string; type: 'continuation_created' | 'run_interrupted' | 'recovery_failed'; runId: string; parentRunId?: string; reason?: string; message?: string }
   | { requestId: string; type: 'error'; runId: string; error: AgentErrorPayload };
+type AgentStreamEventPayload = AgentStreamEventData & { agentEvents?: AgentEvent[]; agentSources?: AgentSource[] };
 
 interface OllamaDownloadProgressPayload {
   status: 'downloading' | 'completed' | 'error' | 'cancelled';
@@ -326,11 +333,20 @@ interface ElectronAPI {
     deleteIndex: (workspaceId: string) => Promise<Result<void>>;
   };
   agent: {
+    getRun: (workspaceId: string, runId: string) => Promise<Result<{
+      task: AgentTask | null
+      run: AgentRun
+      events: AgentEvent[]
+      sources: AgentSource[]
+      auditIssues: Array<{ code: string; runId?: string; callId?: string; detail: string }>
+      recovery: { recoverable: boolean; checkpointAvailable: boolean; reason: string }
+    }>>;
+    resumeRun: (requestId: string, workspaceId: string, parentRunId: string) => Promise<Result<{ taskId: string; runId: string; parentRunId: string }>>;
     summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) => Promise<Result<{ answer: string }>>;
     resolveApproval: (approvalId: string, approved: boolean) => Promise<Result<{ applied: boolean }>>;
     runStream: {
-      start: (requestId: string, workspaceId: string, options: AgentRunOptionsPayload) => Promise<Result<void>>;
-      cancel: (requestId: string) => Promise<Result<void>>;
+      start: (requestId: string, workspaceId: string, options: AgentRunOptionsPayload) => Promise<Result<{ taskId: string; runId: string }>>;
+      cancel: (requestId: string) => Promise<Result<{ agentEvents: AgentEvent[] }>>;
       onEvent: (listener: (payload: AgentStreamEventPayload) => void) => () => void;
     };
   };

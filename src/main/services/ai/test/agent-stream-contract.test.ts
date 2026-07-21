@@ -24,8 +24,9 @@ const validEvents: AgentStreamEvent[] = [
   { type: 'run_started', runId: 'run_1', startedAt: '2026-07-14T10:00:00Z' },
   { type: 'timeline', runId: 'run_1', step: 1, stepId: 'step_1', status: 'running', summary: '检索文档' },
   { type: 'tool_call', runId: 'run_1', step: 1, stepId: 'step_1', callId: 'call_1', tool: 'rag_search', arguments: { query: '发布' }, thought_summary: '检索文档' },
-  { type: 'tool_result', runId: 'run_1', step: 1, stepId: 'step_1', callId: 'call_1', result: { tool: 'rag_search', success: true, summary: '找到结果', data: [], error: null, truncated: false } },
-  { type: 'sources', runId: 'run_1', sources: [{ path: 'docs/release.md', score: 0.9, text: '发布' }] },
+  { type: 'tool_result', runId: 'run_1', step: 1, stepId: 'step_1', callId: 'call_1', result: { tool: 'rag_search', success: true, status: 'completed', uiSummary: '找到结果', modelContext: { facts: ['找到结果'], structuredData: {} }, durationMs: 12, error: null, truncated: false } },
+  { type: 'sources', runId: 'run_1', callId: 'call_1', retrievalId: 'ret_1', sources: [{ sourceId: 'src_1', retrievalId: 'ret_1', runId: 'run_1', path: 'docs/release.md', score: 0.9, text: '发布' }] },
+  { type: 'usage_updated', runId: 'run_1', operationId: 'usage_1', phase: 'decision', provider: 'openai', model: 'gpt-test', inputTokens: 10, outputTokens: 5, totalTokens: 15, latencyMs: 120 },
   { type: 'delta', runId: 'run_1', text: '完成', content: '完成' },
   { type: 'done', runId: 'run_1', status: 'completed', answer: '完成' },
   { type: 'error', runId: 'run_1', error: { code: 'agent_failed', message: '失败', technical_detail: 'Error', retryable: true } },
@@ -53,7 +54,8 @@ describe('Agent stream contract', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     }))
-    expect(JSON.parse(init.body)).toEqual({
+    const postedBody = JSON.parse(init.body)
+    expect(postedBody).toEqual(expect.objectContaining({
       input: '总结发布流程',
       workspace: { workspace_path: 'D:/work/demo' },
       history: [],
@@ -64,15 +66,43 @@ describe('Agent stream contract', () => {
         run_timeout_seconds: 300,
         allow_write: true,
       },
-    })
+    }))
+    expect(postedBody.task_id).toMatch(/^task_[a-f0-9]{32}$/)
+    expect(postedBody.run_id).toMatch(/^run_[a-f0-9]{32}$/)
     expect(init.body).not.toContain('apiKey')
     expect(init.body).not.toContain('api_key')
+  })
+
+  it('awaits each Agent event handler before forwarding the next event', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ndjsonResponse(validEvents.slice(0, 2))))
+    const received: string[] = []
+    let releaseFirst: (() => void) | undefined
+    const firstEventGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+
+    const streamPromise = aiService.streamAgent('D:/work/demo', { input: 'task' }, async (event) => {
+      received.push(`start:${event.type}`)
+      if (event.type === 'run_started') await firstEventGate
+      received.push(`end:${event.type}`)
+    })
+
+    await Promise.resolve()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(received).toEqual(['start:run_started'])
+
+    releaseFirst?.()
+    await expect(streamPromise).resolves.toEqual({ success: true })
+    expect(received).toEqual([
+      'start:run_started',
+      'end:run_started',
+      'start:timeline',
+      'end:timeline',
+    ])
   })
 
   it('normalizes supported options and clamps numeric limits', () => {
     expect(normalizeAgentRunOptions({
       input: '  task  ',
-      history: [{ role: 'user', content: '  hello  ' }, { role: 'assistant', content: '   ' }],
+      history: [{ role: 'user', content: '  hello  ' }],
       enabledTools: ['file_read', 'rag_search', 'file_read'],
       maxSteps: 999,
       toolTimeoutSeconds: -5,
@@ -87,6 +117,31 @@ describe('Agent stream contract', () => {
     })
   })
 
+  it('preserves complete native tool history and rejects unmatched results', () => {
+    const history = [
+      {
+        role: 'assistant' as const,
+        content: '此前调用工具。',
+        tool_calls: [{
+          id: 'history_7_1',
+          type: 'function' as const,
+          function: { name: 'file_read' as const, arguments: { path: 'docs/config.md' } },
+        }],
+      },
+      {
+        role: 'tool' as const,
+        name: 'file_read',
+        tool_call_id: 'history_7_1',
+        content: '读取完成。',
+      },
+    ]
+    expect(normalizeAgentRunOptions({ input: '继续', history }).history).toEqual(history)
+    expect(() => normalizeAgentRunOptions({
+      input: '继续',
+      history: [{ role: 'tool', name: 'file_read', tool_call_id: 'missing', content: '读取完成。' }],
+    })).toThrow('Unmatched Agent history tool result')
+  })
+
   it('rejects empty input and unsupported tools', () => {
     expect(() => normalizeAgentRunOptions({ input: ' ' })).toThrow('Agent input is required')
     expect(() => normalizeAgentRunOptions({ input: 'task', enabledTools: ['terminal' as never] })).toThrow('Unsupported Agent tool')
@@ -96,7 +151,7 @@ describe('Agent stream contract', () => {
     expect(() => normalizeAgentRunOptions({ input: 'x'.repeat(32_001) })).toThrow('Agent input is too large')
     expect(() => normalizeAgentRunOptions({
       input: 'task',
-      history: Array.from({ length: 51 }, () => ({ role: 'user' as const, content: 'x' })),
+      history: Array.from({ length: 201 }, () => ({ role: 'user' as const, content: 'x' })),
     })).toThrow('Agent history has too many messages')
   })
 

@@ -35,6 +35,7 @@ const cleanupSessionsForOpenedFiles = (openedFiles: string[], fileSessions: Reco
 export const buildWorkspaceMetaPayload = (input: BuildWorkspaceMetaInput) => {
   const noteOrderPlain = cloneNoteOrder(input.noteOrder)
   const normalizedTabs = normalizeWorkspaceTabs(input.tabs)
+    .filter((tab) => !(tab.kind === 'system' && tab.page === 'agent-diff'))
   const openedFiles = normalizedTabs.length > 0
     ? getFilePathsFromTabs(normalizedTabs)
     : input.openedFiles.map(normalizeDir)

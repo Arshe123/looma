@@ -13,6 +13,7 @@ import json
 import os
 import tempfile
 import urllib.request
+from uuid import uuid4
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,8 @@ BASE_URL = os.environ.get("LOOMA_RAG_URL", "http://127.0.0.1:8767").rstrip("/")
 def run_agent(workspace: Path, prompt: str, tools: list[str], max_steps: int = 4) -> list[dict[str, Any]]:
     payload = {
         "input": prompt,
+        "task_id": f"task_e2e_{uuid4().hex}",
+        "run_id": f"run_e2e_{uuid4().hex}",
         "workspace": {"workspace_path": str(workspace)},
         "agent": {
             "enabled_tools": tools,

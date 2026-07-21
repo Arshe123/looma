@@ -30,6 +30,24 @@ describe('buildWorkspaceMetaPayload tab persistence', () => {
     })
   })
 
+  it('does not persist the ephemeral Agent diff tab or its active id', () => {
+    const { meta } = buildWorkspaceMetaPayload({
+      expandedDirs: [],
+      selectedPaths: [],
+      noteOrder: {},
+      openedFiles: [],
+      activeFileRelativePath: '',
+      tabs: [createFileTab('docs/a.md'), createSystemTab('agent-diff')],
+      activeTabId: 'system:agent-diff',
+      fileSessions: {},
+      activeSidebarPanel: 'ai',
+    })
+
+    expect(meta.tabs).toEqual([createFileTab('docs/a.md')])
+    expect(meta.activeTabId).toBeUndefined()
+    expect(JSON.stringify(meta)).not.toContain('agent-diff')
+  })
+
   it('falls back to legacy openedFiles when unified tabs are absent', () => {
     const { meta } = buildWorkspaceMetaPayload({
       expandedDirs: [],

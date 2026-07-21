@@ -16,6 +16,7 @@ describe('workspace tab utils', () => {
     expect(getFileTabId('docs\\note.md')).toBe('file:docs/note.md')
     expect(getSystemTabId('settings')).toBe('system:settings')
     expect(getSystemTabId('ai-history')).toBe('system:ai-history')
+    expect(getSystemTabId('agent-diff')).toBe('system:agent-diff')
     expect(createFileTab('docs/note.md')).toEqual({
       id: 'file:docs/note.md',
       kind: 'file',
@@ -39,12 +40,14 @@ describe('workspace tab utils', () => {
       { id: 'duplicate', kind: 'file', relativePath: 'docs/a.md' },
       { id: 'settings', kind: 'system', page: 'settings' },
       { id: 'ai-history', kind: 'system', page: 'ai-history' },
+      { id: 'agent-diff', kind: 'system', page: 'agent-diff' },
       { id: 'unknown', kind: 'system', page: 'unknown' },
       null,
     ])).toEqual([
       { id: 'file:docs/a.md', kind: 'file', relativePath: 'docs/a.md' },
       { id: 'system:settings', kind: 'system', page: 'settings' },
       { id: 'system:ai-history', kind: 'system', page: 'ai-history' },
+      { id: 'system:agent-diff', kind: 'system', page: 'agent-diff' },
     ])
   })
 

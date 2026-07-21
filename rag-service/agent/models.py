@@ -30,13 +30,31 @@ class AgentToolCall(StrictAgentModel):
         return value
 
 
+class AgentInvalidToolCall(StrictAgentModel):
+    """A native call that must receive a correlated error without execution."""
+
+    type: Literal["invalid_tool_call"]
+    thought_summary: str = Field(..., min_length=1, max_length=500)
+    tool: str = Field(..., min_length=1, max_length=128)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    error_code: Literal["invalid_tool_call", "unknown_tool", "invalid_arguments"]
+
+
+AgentBatchCall = Union[AgentToolCall, AgentInvalidToolCall]
+
+
+class AgentToolBatch(StrictAgentModel):
+    type: Literal["tool_calls"]
+    calls: list[AgentBatchCall] = Field(..., min_items=1, max_items=16)
+
+
 class AgentFinalAnswer(StrictAgentModel):
     type: Literal["final"]
     answer: str = Field(..., min_length=1)
 
 
 AgentDecision = Annotated[
-    Union[AgentToolCall, AgentFinalAnswer],
+    Union[AgentToolCall, AgentToolBatch, AgentFinalAnswer],
     Field(discriminator="type"),
 ]
 

@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Bot, Clipboard, Copy, Database, History, Loader2, MessageSquare, Plus, Send, Settings, Sparkles, Square, Workflow } from 'lucide-vue-next'
+import { Bot, Clipboard, Copy, Database, History, Loader2, MessageSquare, Plus, Send, Settings, Sparkles, Square } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import { useAiAssistantStore } from '@/renderer/stores/ai-assistant'
 import { normalizeAiAssistantSourcePath } from '@/renderer/stores/workspace-ai-utils'
-import type { AiAssistantMessage, AiAssistantMessageAction, AiAssistantTimelineOutput } from '@/renderer/stores/workspace'
+import type { AiAssistantMessage, AiAssistantMessageAction } from '@/renderer/stores/workspace'
 import AiMarkdown from './AiMarkdown.vue'
-import AgentTimelineDrawer from './AgentTimelineDrawer.vue'
-import { deriveAgentUiState } from './agentUiState'
+import AgentConversationFlow from './AgentConversationFlow.vue'
+import AgentRecoveryCard from './AgentRecoveryCard.vue'
+import AgentRagSources from './AgentRagSources.vue'
+import type { AgentFileReviewDisplayData } from './agentConversationDisplay'
+import type { AgentRagSourceDisplayItem } from './agentRagSources'
 
 const workspaceStore = useWorkspaceStore()
 const settingsStore = useSettingsStore()
@@ -21,8 +24,6 @@ const messagesRef = ref<HTMLElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 const contextMenuRef = ref<HTMLElement | null>(null)
 const copiedMessageId = ref<number | null>(null)
-const drawerOpen = ref(false)
-const drawerMessageId = ref<number | undefined>()
 const aiContextMenu = ref({
   visible: false,
   top: 0,
@@ -76,24 +77,38 @@ const aiDisplayName = computed(() => {
   return `${provider} · ${model}`
 })
 const getMessageAiName = (message: AiAssistantMessage) => message.modelIdentity?.displayName || message.aiName?.trim() || 'Looma AI'
-const drawerState = computed(() => deriveAgentUiState(messages.value, drawerMessageId.value))
-const drawerApprovals = computed(() => {
-  const run = aiAssistStore.getConversationAgentRun(activeConversationId.value)
-  if (!run || (drawerMessageId.value !== undefined && drawerMessageId.value !== run.assistantMessageId)) return []
-  return aiAssistStore.getConversationAgentApprovals(activeConversationId.value)
-})
-const getMessageProcessState = (message: AiAssistantMessage) => deriveAgentUiState([message], message.id)
-
-const openProcessDrawer = (message: AiAssistantMessage) => {
-  drawerMessageId.value = message.id
-  drawerOpen.value = true
-}
-
-const resolveApproval = async (approvalId: string, approved: boolean) => {
+const getMessageDisplayEvents = (message: AiAssistantMessage) => (
+  aiAssistStore.getMessageAgentDisplayEvents(activeConversationId.value, message.id)
+)
+const getMessageRecovery = (message: AiAssistantMessage) => (
+  aiAssistStore.getMessageAgentRecovery(activeConversationId.value, message.id, message.runId)
+)
+const continueAgentRun = async (message: AiAssistantMessage) => {
   const conversationId = activeConversationId.value
   if (!conversationId) return
-  const result = await aiAssistStore.resolveAgentApproval(conversationId, approvalId, approved)
-  if (!result?.success && result?.error) appendMessage('system', result.error)
+  await aiAssistStore.resumeAgentRun(conversationId, message)
+  scrollToBottom()
+}
+const getMessageApprovals = (message: AiAssistantMessage) => {
+  const run = aiAssistStore.getConversationAgentRun(activeConversationId.value)
+  if (!run || run.assistantMessageId !== message.id) return []
+  return aiAssistStore.getConversationAgentApprovals(activeConversationId.value)
+}
+
+const openAgentDiff = (review: AgentFileReviewDisplayData) => {
+  const conversationId = activeConversationId.value
+  if (!conversationId) return
+  const opened = workspaceStore.openAgentDiffPage({ conversationId, ...review })
+  if (!opened) appendMessage('system', '无法打开文件对比：文件路径或审批信息无效。')
+}
+
+const openAgentRagSource = (source: AgentRagSourceDisplayItem) => {
+  const path = normalizeAiAssistantSourcePath(source.path)
+  if (!path) {
+    appendMessage('system', '无法打开检索来源：来源路径无效。')
+    return
+  }
+  workspaceStore.openFileTab(path)
 }
 
 const scrollToBottom = () => {
@@ -230,21 +245,6 @@ const handleDocumentClick = (event: MouseEvent) => {
   closeAiContextMenu()
 }
 
-const getTimelineSourcePath = (output: AiAssistantTimelineOutput) => {
-  const metadata = output.metadata || {}
-  const path = output.path
-    || (typeof metadata.source === 'string' ? metadata.source : '')
-    || (typeof metadata.file_path === 'string' ? metadata.file_path : '')
-    || (typeof metadata.path === 'string' ? metadata.path : '')
-  return normalizeAiAssistantSourcePath(path)
-}
-
-const openTimelineSource = (output: AiAssistantTimelineOutput) => {
-  const path = getTimelineSourcePath(output)
-  if (!path) return
-  workspaceStore.setActiveFileRelative(path)
-}
-
 const getActiveWorkspaceId = () => {
   const workspaceId = workspaceStore.activeWorkspaceId
   if (!workspaceId) {
@@ -329,8 +329,6 @@ const askQuestion = async () => {
   const text = question.value.trim()
   if (!workspaceId || !text || isGenerating.value) return
   const conversationId = workspaceStore.ensureAiAssistantConversationForRequest()
-  drawerMessageId.value = undefined
-  drawerOpen.value = true
   const result = await aiAssistStore.startAgentInConversation({
     workspaceId,
     conversationId,
@@ -425,18 +423,10 @@ watch(() => workspaceStore.activeWorkspaceId, (_nextWorkspaceId, oldWorkspaceId)
 })
 watch(activeConversationId, () => {
   closeAiContextMenu()
-  drawerMessageId.value = undefined
-  drawerOpen.value = Boolean(isAgentRunning.value)
   backfillLegacyAiNames()
   scrollToBottom()
 })
 watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
-watch(isAgentRunning, (running) => {
-  if (!running) return
-  const run = aiAssistStore.getConversationAgentRun(activeConversationId.value)
-  drawerMessageId.value = run?.assistantMessageId
-  drawerOpen.value = true
-})
 </script>
 
 <template>
@@ -491,18 +481,6 @@ watch(isAgentRunning, (running) => {
             <Plus :size="16" />
           </button>
         </div>
-      </div>
-      <div class="mt-2.5 flex items-center justify-end gap-2">
-        <button
-          type="button"
-          class="inline-flex h-7 items-center gap-1.5 rounded-md border border-border-soft bg-panel px-2 text-[10px] text-text-muted transition-colors hover:bg-panel-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-50"
-          :disabled="!drawerState.message"
-          :aria-expanded="drawerOpen"
-          @click="drawerOpen = !drawerOpen"
-        >
-          <Workflow :size="12" />
-          过程 {{ drawerState.timeline.length || '' }}
-        </button>
       </div>
     </header>
 
@@ -575,6 +553,20 @@ watch(isAgentRunning, (running) => {
                     : '',
               ]"
             >
+              <AgentConversationFlow
+                v-if="message.role === 'assistant'"
+                :message="message"
+                :events="getMessageDisplayEvents(message)"
+                :approvals="getMessageApprovals(message)"
+                @open-diff="openAgentDiff"
+                @open-source="openAgentRagSource"
+              />
+              <AgentRecoveryCard
+                v-if="message.role === 'assistant' && getMessageRecovery(message)"
+                :recovery="getMessageRecovery(message)!"
+                :disabled="isAnyConversationRunning"
+                @continue="continueAgentRun(message)"
+              />
               <AiMarkdown
                 v-if="message.role === 'assistant'"
                 :content="message.text"
@@ -591,6 +583,11 @@ watch(isAgentRunning, (running) => {
                 {{ message.text }}
               </template>
 
+              <AgentRagSources
+                v-if="message.role === 'assistant' && !isMessageStreaming(message)"
+                :message="message"
+                @open-source="openAgentRagSource"
+              />
               <div
                 v-if="message.role === 'assistant' && isMessageStreaming(message)"
                 class="mt-2 inline-flex items-center gap-1.5 text-[11px] text-text-muted"
@@ -598,18 +595,6 @@ watch(isAgentRunning, (running) => {
                 <Loader2 :size="12" class="animate-spin" />
                 正在生成
               </div>
-
-              <button
-                v-if="message.role === 'assistant' && (message.timeline?.length || message.agentSummary)"
-                type="button"
-                class="mx-auto mt-3 flex h-7 items-center gap-1.5 rounded-md border border-border-soft bg-panel px-2.5 text-[10px] text-text-muted transition-colors hover:border-accent/40 hover:bg-accent-soft hover:text-text-main"
-                @click="openProcessDrawer(message)"
-              >
-                <Workflow :size="12" />
-                <span>{{ getMessageProcessState(message).statusLabel }}</span>
-                <span v-if="getMessageProcessState(message).toolCallCount">· {{ getMessageProcessState(message).toolCallCount }} 次工具</span>
-                <span v-if="getMessageProcessState(message).sourceCount">· {{ getMessageProcessState(message).sourceCount }} 个来源</span>
-              </button>
 
               <div
                 v-if="message.role === 'assistant' && !isMessageStreaming(message) && !(message.actions && message.actions.length)"
@@ -731,15 +716,6 @@ watch(isAgentRunning, (running) => {
         </div>
       </form>
     </footer>
-
-    <AgentTimelineDrawer
-      :open="drawerOpen"
-      :state="drawerState"
-      :approvals="drawerApprovals"
-      @close="drawerOpen = false"
-      @open-source="openTimelineSource"
-      @resolve-approval="resolveApproval"
-    />
 
     <div
       v-if="aiContextMenu.visible"

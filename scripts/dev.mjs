@@ -114,46 +114,57 @@ const resolveNpmRunner = () => {
   }
 }
 
-const ragPort = await findAvailablePort(parsePreferredRagPort())
-const ragServiceUrl = `http://127.0.0.1:${ragPort}`
+const useExternalRagService = process.env.RAG_SERVICE_EXTERNAL === '1'
+const preferredRagPort = parsePreferredRagPort()
+const ragPort = useExternalRagService
+  ? preferredRagPort
+  : await findAvailablePort(preferredRagPort)
+const ragServiceUrl = useExternalRagService && process.env.RAG_SERVICE_URL
+  ? process.env.RAG_SERVICE_URL
+  : `http://127.0.0.1:${ragPort}`
 const loomaSettingsPath = process.env.LOOMA_SETTINGS_PATH
   || (process.env.APPDATA ? path.join(process.env.APPDATA, 'workspace-meta', 'looma', 'settings.json') : '')
-process.stdout.write(`[rag] starting on ${ragServiceUrl}\n`)
 
-ragService = spawn(pythonBinary, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(ragPort)], {
-  cwd: path.join(process.cwd(), 'rag-service'),
-  stdio: ['ignore', 'pipe', 'pipe'],
-  env: {
-    ...process.env,
-    RAG_SERVICE_URL: ragServiceUrl,
-    RAG_SERVICE_PORT: String(ragPort),
-    ...(loomaSettingsPath ? { LOOMA_SETTINGS_PATH: loomaSettingsPath } : {}),
-  },
-  windowsHide: true,
-})
+if (useExternalRagService) {
+  process.stdout.write(`[rag] using external service ${ragServiceUrl}\n`)
+} else {
+  process.stdout.write(`[rag] starting on ${ragServiceUrl}\n`)
 
-ragService.stdout.on('data', (buf) => {
-  process.stdout.write(`[rag] ${buf.toString()}`)
-})
-
-ragService.stderr.on('data', (buf) => {
-  process.stderr.write(`[rag] ${buf.toString()}`)
-})
-
-ragService.on('exit', (code) => {
-  if (shuttingDown || code === 0) return
-  process.stderr.write(`[rag] exited with code ${code}. Check Python dependencies in rag-service/requirements.txt.\n`)
-  shutdown(code ?? 1).catch((err) => {
-    process.stderr.write(String(err) + '\n')
-    process.exit(code ?? 1)
+  ragService = spawn(pythonBinary, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(ragPort)], {
+    cwd: path.join(process.cwd(), 'rag-service'),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      RAG_SERVICE_URL: ragServiceUrl,
+      RAG_SERVICE_PORT: String(ragPort),
+      ...(loomaSettingsPath ? { LOOMA_SETTINGS_PATH: loomaSettingsPath } : {}),
+    },
+    windowsHide: true,
   })
-})
 
-ragService.on('error', (err) => {
-  if (shuttingDown) return
-  process.stderr.write(`[rag] failed to start: ${err.message}\n`)
-  shutdown(1).catch(() => process.exit(1))
-})
+  ragService.stdout.on('data', (buf) => {
+    process.stdout.write(`[rag] ${buf.toString()}`)
+  })
+
+  ragService.stderr.on('data', (buf) => {
+    process.stderr.write(`[rag] ${buf.toString()}`)
+  })
+
+  ragService.on('exit', (code) => {
+    if (shuttingDown || code === 0) return
+    process.stderr.write(`[rag] exited with code ${code}. Check Python dependencies in rag-service/requirements.txt.\n`)
+    shutdown(code ?? 1).catch((err) => {
+      process.stderr.write(String(err) + '\n')
+      process.exit(code ?? 1)
+    })
+  })
+
+  ragService.on('error', (err) => {
+    if (shuttingDown) return
+    process.stderr.write(`[rag] failed to start: ${err.message}\n`)
+    shutdown(1).catch(() => process.exit(1))
+  })
+}
 
 try {
   const npmRunner = resolveNpmRunner()

@@ -7,7 +7,12 @@ from unittest.mock import patch
 
 from pydantic import Field
 
-from agent.models import AgentFinalAnswer, AgentToolCall
+from agent.models import (
+    AgentFinalAnswer,
+    AgentInvalidToolCall,
+    AgentToolBatch,
+    AgentToolCall,
+)
 from agent.runtime import AgentRuntime
 from agent.tools.base import AgentTool, AgentToolContext, StrictToolArgs
 from agent.tools.registry import ToolRegistry
@@ -104,11 +109,14 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             run_id="run-fixed",
         )
 
-        self.assertEqual([e["type"] for e in events], ["run_started", "delta", "done"])
+        self.assertEqual([e["type"] for e in events], ["run_started", "usage_updated", "delta", "done"])
         self.assertTrue(all(e["runId"] == "run-fixed" for e in events))
-        self.assertEqual(events[1]["text"], "完成")
-        self.assertEqual(events[1]["content"], "完成")
-        self.assertEqual(events[2], {"type": "done", "runId": "run-fixed", "status": "completed", "answer": "完成"})
+        usage = events[1]
+        self.assertEqual(usage["phase"], "final")
+        self.assertGreaterEqual(usage["latencyMs"], 0)
+        self.assertEqual(events[2]["text"], "完成")
+        self.assertEqual(events[2]["content"], "完成")
+        self.assertEqual(events[3], {"type": "done", "runId": "run-fixed", "status": "completed", "answer": "完成"})
         self.assertTrue(events[0]["startedAt"].endswith("Z"))
         json.dumps(events, ensure_ascii=False)
         self.assertEqual(history, [ChatMessage(role="assistant", content="旧消息")])
@@ -125,7 +133,6 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             tool="rag_search",
             arguments={"value": "q"},
         )
-        tool_decision._provider_state["reasoning_content"] = "PRIVATE_REASONING"
         provider = FakeProvider([
             tool_decision,
             AgentFinalAnswer(type="final", answer="答案"),
@@ -138,8 +145,11 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
 
         types = [e["type"] for e in events]
-        self.assertEqual(types, ["run_started", "timeline", "tool_call", "tool_result", "sources", "timeline", "delta", "done"])
-        running, call, result, completed = events[1], events[2], events[3], events[5]
+        self.assertEqual(types, ["run_started", "usage_updated", "timeline", "tool_call", "tool_result", "sources", "timeline", "usage_updated", "delta", "done"])
+        running = next(e for e in events if e["type"] == "timeline" and e["status"] == "running")
+        call = next(e for e in events if e["type"] == "tool_call")
+        result = next(e for e in events if e["type"] == "tool_result")
+        completed = next(e for e in events if e["type"] == "timeline" and e["status"] == "completed")
         self.assertEqual((running["step"], call["step"], result["step"]), (1, 1, 1))
         self.assertEqual(running["stepId"], completed["stepId"])
         self.assertEqual(call["callId"], result["callId"])
@@ -154,16 +164,231 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_result.role, "tool")
         self.assertEqual(tool_result.name, "rag_search")
         self.assertEqual(tool_result.tool_call_id, assistant_call.tool_calls[0].id)
-        self.assertEqual(assistant_call.reasoning_content, "PRIVATE_REASONING")
+        self.assertIsNone(assistant_call.reasoning_content)
         self.assertEqual(assistant_call.tool_calls[0].function.name, "rag_search")
         self.assertEqual(assistant_call.tool_calls[0].function.arguments, {"value": "q"})
         self.assertNotIn("technical_detail", json.dumps(parsed))
         self.assertNotIn(secret, observation)
-        self.assertTrue(parsed["truncated"])
-        assistant_decision = json.loads(provider.calls[1][0][-2].content)
-        self.assertEqual(set(assistant_decision), {"type", "thought_summary", "tool", "arguments"})
-        self.assertEqual(events[4]["sources"], sources)
+        self.assertIsInstance(parsed["truncated"], bool)
+        self.assertIn("modelContext", parsed)
+        self.assertNotIn("data", parsed)
+        self.assertNotIn("summary", parsed)
+        self.assertEqual(set(parsed), {"tool", "success", "modelContext", "error", "truncated"})
+        self.assertIsNone(assistant_call.content)
+        self.assertNotIn("thought_summary", json.dumps(parsed, ensure_ascii=False))
+        source_event = next(e for e in events if e["type"] == "sources")
+        self.assertTrue(source_event["retrievalId"].startswith("ret_"))
+        self.assertEqual(source_event["callId"], call["callId"])
+        self.assertEqual(source_event["sources"][0]["path"], "docs/a.md")
+        self.assertEqual(source_event["sources"][0]["retrievalId"], source_event["retrievalId"])
+        self.assertEqual(source_event["sources"][0]["runId"], call["runId"])
+        self.assertTrue(source_event["sources"][0]["sourceId"].startswith("src_"))
+
+    async def test_tool_batch_executes_read_tools_concurrently_and_echoes_all_results(self):
+        first = FakeTool(delay=0.2)
+        second = FakeRagTool(delay=0.2)
+        call_a = AgentToolCall(
+            type="tool_call", thought_summary="搜索代码",
+            tool="workspace_search", arguments={"value": "a"},
+        )
+        call_b = AgentToolCall(
+            type="tool_call", thought_summary="检索知识库",
+            tool="rag_search", arguments={"value": "b"},
+        )
+        call_a._provider_state["tool_call_id"] = "call_a"
+        call_b._provider_state["tool_call_id"] = "call_b"
+        batch = AgentToolBatch(type="tool_calls", calls=[call_a, call_b])
+        batch._provider_state.update({
+            "reasoning_content": "PRIVATE_BATCH_REASONING",
+            "requires_reasoning_echo": True,
+        })
+        provider = FakeProvider([
+            batch,
+            AgentFinalAnswer(type="final", answer="并发完成"),
+        ])
+
+        started = asyncio.get_running_loop().time()
+        events = await collect(
+            build_runtime(provider, first, second),
+            input="同时查询",
+            history=[],
+            config=AgentConfig(
+                enabled_tools=["workspace_search", "rag_search"],
+                max_steps=4,
+            ),
+        )
+        elapsed = asyncio.get_running_loop().time() - started
+
+        self.assertLess(elapsed, 0.35)
+        self.assertEqual((first.calls, second.calls), (1, 1))
+        calls = [event for event in events if event["type"] == "tool_call"]
+        results = [event for event in events if event["type"] == "tool_result"]
+        self.assertEqual([event["callId"] for event in calls], ["call_a", "call_b"])
+        self.assertEqual([event["callId"] for event in results], ["call_a", "call_b"])
+        self.assertLess(
+            max(index for index, item in enumerate(events) if item["type"] == "tool_call"),
+            min(index for index, item in enumerate(events) if item["type"] == "tool_result"),
+        )
+        followup = provider.calls[1][0]
+        assistant = followup[-3]
+        tool_messages = followup[-2:]
+        self.assertEqual(
+            [call.id for call in assistant.tool_calls], ["call_a", "call_b"]
+        )
+        self.assertEqual(
+            [message.tool_call_id for message in tool_messages],
+            ["call_a", "call_b"],
+        )
+        self.assertEqual(assistant.reasoning_content, "PRIVATE_BATCH_REASONING")
+        self.assertNotIn("PRIVATE_BATCH_REASONING", json.dumps(events, ensure_ascii=False))
+
+    async def test_invalid_call_in_batch_does_not_cancel_valid_sibling(self):
+        valid_tool = FakeTool()
+        invalid = AgentInvalidToolCall(
+            type="invalid_tool_call",
+            thought_summary="工具参数无效",
+            tool="workspace_search",
+            arguments={},
+            error_code="invalid_arguments",
+        )
+        valid = AgentToolCall(
+            type="tool_call", thought_summary="正常搜索",
+            tool="workspace_search", arguments={"value": "ok"},
+        )
+        invalid._provider_state["tool_call_id"] = "call_bad"
+        valid._provider_state["tool_call_id"] = "call_good"
+        provider = FakeProvider([
+            AgentToolBatch(type="tool_calls", calls=[invalid, valid]),
+            AgentFinalAnswer(type="final", answer="已处理"),
+        ])
+
+        events = await collect(
+            build_runtime(provider, valid_tool),
+            input="执行",
+            history=[],
+            config=AgentConfig(enabled_tools=["workspace_search"]),
+        )
+
+        self.assertEqual(valid_tool.calls, 1)
+        results = [event for event in events if event["type"] == "tool_result"]
+        self.assertEqual([event["callId"] for event in results], ["call_bad", "call_good"])
+        self.assertEqual(results[0]["result"]["error"]["code"], "invalid_arguments")
+        self.assertTrue(results[1]["result"]["success"])
+        followup = provider.calls[1][0]
+        self.assertEqual(len(followup[-3].tool_calls), 2)
+        self.assertEqual([message.role for message in followup[-2:]], ["tool", "tool"])
+
+    async def test_deepseek_provider_state_is_echoed_only_in_model_history(self):
+        tool = FakeTool()
+        tool_decision = AgentToolCall(
+            type="tool_call",
+            thought_summary="读取资料",
+            tool="workspace_search",
+            arguments={"value": "q"},
+        )
+        tool_decision._provider_state.update({
+            "tool_call_id": "call_deepseek_native",
+            "reasoning_content": "PRIVATE_REASONING",
+            "requires_reasoning_echo": True,
+        })
+        provider = FakeProvider([
+            tool_decision,
+            AgentFinalAnswer(type="final", answer="完成"),
+        ])
+
+        events = await collect(
+            build_runtime(provider, tool),
+            input="问",
+            history=[],
+            config=AgentConfig(enabled_tools=["workspace_search"]),
+        )
+
+        call_event = next(item for item in events if item["type"] == "tool_call")
+        result_event = next(item for item in events if item["type"] == "tool_result")
+        self.assertEqual(call_event["callId"], "call_deepseek_native")
+        self.assertEqual(result_event["callId"], "call_deepseek_native")
+        assistant_call, tool_result = provider.calls[1][0][-2:]
+        self.assertEqual(assistant_call.reasoning_content, "PRIVATE_REASONING")
+        self.assertEqual(assistant_call.tool_calls[0].id, "call_deepseek_native")
+        self.assertEqual(tool_result.role, "tool")
+        self.assertEqual(tool_result.tool_call_id, "call_deepseek_native")
         self.assertNotIn("PRIVATE_REASONING", json.dumps(events, ensure_ascii=False))
+
+    async def test_missing_deepseek_reasoning_uses_nonempty_space_pad(self):
+        tool = FakeTool()
+        tool_decision = AgentToolCall(
+            type="tool_call",
+            thought_summary="读取资料",
+            tool="workspace_search",
+            arguments={"value": "q"},
+        )
+        tool_decision._provider_state["requires_reasoning_echo"] = True
+        provider = FakeProvider([
+            tool_decision,
+            AgentFinalAnswer(type="final", answer="完成"),
+        ])
+
+        await collect(
+            build_runtime(provider, tool),
+            input="问",
+            history=[],
+            config=AgentConfig(enabled_tools=["workspace_search"]),
+        )
+
+        assistant_call = provider.calls[1][0][-2]
+        self.assertEqual(assistant_call.reasoning_content, " ")
+
+    async def test_duplicate_provider_call_id_falls_back_to_new_canonical_id(self):
+        tool = FakeTool()
+        first = AgentToolCall(
+            type="tool_call",
+            thought_summary="第一次",
+            tool="workspace_search",
+            arguments={"value": "one"},
+        )
+        second = AgentToolCall(
+            type="tool_call",
+            thought_summary="第二次",
+            tool="workspace_search",
+            arguments={"value": "two"},
+        )
+        first._provider_state["tool_call_id"] = "call_reused"
+        second._provider_state["tool_call_id"] = "call_reused"
+        provider = FakeProvider([
+            first,
+            second,
+            AgentFinalAnswer(type="final", answer="完成"),
+        ])
+
+        events = await collect(
+            build_runtime(provider, tool),
+            input="问",
+            history=[],
+            config=AgentConfig(enabled_tools=["workspace_search"]),
+        )
+
+        call_ids = [item["callId"] for item in events if item["type"] == "tool_call"]
+        self.assertEqual(call_ids[0], "call_reused")
+        self.assertNotEqual(call_ids[1], "call_reused")
+        self.assertNotEqual(call_ids[0], call_ids[1])
+
+    async def test_empty_decision_after_repair_is_friendly_retryable_error(self):
+        from agent.decision_parser import AgentEmptyDecisionError
+
+        provider = FakeProvider([AgentEmptyDecisionError()])
+        events = await collect(
+            build_runtime(provider),
+            input="问",
+            history=[],
+            config=AgentConfig(enabled_tools=[]),
+        )
+
+        self.assertEqual([event["type"] for event in events], ["run_started", "error"])
+        error = events[-1]["error"]
+        self.assertEqual(error["code"], "decision_empty")
+        self.assertEqual(error["message"], "模型本次未生成有效回答，请重试或切换模型。")
+        self.assertEqual(error["technical_detail"], "AgentEmptyDecisionError")
+        self.assertTrue(error["retryable"])
 
     async def test_tool_timeout_cancels_tool_and_model_can_recover(self):
         tool = FakeTool(delay=1)
@@ -239,10 +464,14 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             await task
         self.assertTrue(provider.cancelled)
 
-    async def test_duplicate_tool_call_is_blocked_without_second_execution(self):
+    async def test_duplicate_successful_tool_call_is_reported_and_agent_continues(self):
         tool = FakeTool()
         repeated = AgentToolCall(type="tool_call", thought_summary="重复", tool="workspace_search", arguments={"value": "same"})
-        provider = FakeProvider([repeated, repeated])
+        provider = FakeProvider([
+            repeated,
+            repeated,
+            AgentFinalAnswer(type="final", answer="使用已有结果完成"),
+        ])
         events = await collect(
             build_runtime(provider, tool), input="问", history=[],
             config=AgentConfig(enabled_tools=["workspace_search"]),
@@ -250,10 +479,111 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool.calls, 1)
         duplicate_result = [e["result"] for e in events if e["type"] == "tool_result"][-1]
         self.assertEqual(duplicate_result["error"]["code"], "repeated_tool_call")
-        self.assertEqual(events[-2]["type"], "timeline")
-        self.assertEqual(events[-2]["status"], "failed")
-        self.assertEqual(events[-1]["type"], "error")
-        self.assertEqual(events[-1]["error"]["code"], "repeated_tool_call")
+        self.assertFalse(duplicate_result["error"]["retryable"])
+        self.assertEqual(events[-1]["type"], "done")
+        self.assertEqual(events[-1]["status"], "completed")
+        self.assertEqual(events[-1]["answer"], "使用已有结果完成")
+        self.assertIn("已经成功执行", provider.calls[2][0][-1].content)
+
+    async def test_failed_tool_call_with_same_arguments_can_retry(self):
+        class FlakyTool(FakeTool):
+            async def execute(self, context, args):
+                self.calls += 1
+                if self.calls == 1:
+                    raise asyncio.TimeoutError()
+                return self.result
+
+        tool = FlakyTool()
+        repeated = AgentToolCall(type="tool_call", thought_summary="重试", tool="workspace_search", arguments={"value": "same"})
+        provider = FakeProvider([
+            repeated,
+            repeated,
+            AgentFinalAnswer(type="final", answer="重试成功"),
+        ])
+
+        events = await collect(
+            build_runtime(provider, tool), input="问", history=[],
+            config=AgentConfig(enabled_tools=["workspace_search"]),
+        )
+
+        self.assertEqual(tool.calls, 2)
+        results = [e["result"] for e in events if e["type"] == "tool_result"]
+        self.assertEqual(results[0]["error"]["code"], "tool_timeout")
+        self.assertTrue(results[0]["error"]["retryable"])
+        self.assertTrue(results[1]["success"])
+        self.assertEqual(events[-1]["answer"], "重试成功")
+
+    async def test_non_retryable_failure_is_not_executed_twice(self):
+        tool = FailingFakeTool()
+        repeated = AgentToolCall(type="tool_call", thought_summary="重试", tool="workspace_search", arguments={"value": "same"})
+        provider = FakeProvider([
+            repeated,
+            repeated,
+            AgentFinalAnswer(type="final", answer="改用其他方案"),
+        ])
+
+        events = await collect(
+            build_runtime(provider, tool), input="问", history=[],
+            config=AgentConfig(enabled_tools=["workspace_search"]),
+        )
+
+        self.assertEqual(tool.calls, 1)
+        results = [e["result"] for e in events if e["type"] == "tool_result"]
+        self.assertEqual(results[0]["error"]["code"], "tool_execution_failed")
+        self.assertEqual(results[1]["error"]["code"], "repeated_tool_call")
+        self.assertIn("不可重试", provider.calls[2][0][-1].content)
+        self.assertEqual(events[-1]["answer"], "改用其他方案")
+
+    async def test_successful_write_invalidates_previous_read_signature(self):
+        read_tool = FakeTool()
+        write_tool = FakeWriteTool()
+        read = AgentToolCall(type="tool_call", thought_summary="读取", tool="workspace_search", arguments={"value": "same"})
+        write = AgentToolCall(type="tool_call", thought_summary="修改", tool="file_patch", arguments={"value": "change"})
+        provider = FakeProvider([
+            read,
+            write,
+            read,
+            AgentFinalAnswer(type="final", answer="重新读取完成"),
+        ])
+
+        events = await collect(
+            build_runtime(provider, read_tool, write_tool), input="问", history=[],
+            config=AgentConfig(
+                enabled_tools=["workspace_search", "file_patch"],
+                allow_write=True,
+            ),
+        )
+
+        self.assertEqual(read_tool.calls, 2)
+        self.assertEqual(write_tool.calls, 1)
+        self.assertNotIn(
+            "repeated_tool_call",
+            [
+                result.get("error", {}).get("code")
+                for result in (e["result"] for e in events if e["type"] == "tool_result")
+                if result.get("error")
+            ],
+        )
+        self.assertEqual(events[-1]["answer"], "重新读取完成")
+
+    async def test_duplicate_successful_write_is_not_executed_twice(self):
+        tool = FakeWriteTool()
+        repeated = AgentToolCall(type="tool_call", thought_summary="修改", tool="file_patch", arguments={"value": "same"})
+        provider = FakeProvider([
+            repeated,
+            repeated,
+            AgentFinalAnswer(type="final", answer="没有重复写入"),
+        ])
+
+        events = await collect(
+            build_runtime(provider, tool), input="问", history=[],
+            config=AgentConfig(enabled_tools=["file_patch"], allow_write=True),
+        )
+
+        self.assertEqual(tool.calls, 1)
+        duplicate_result = [e["result"] for e in events if e["type"] == "tool_result"][-1]
+        self.assertEqual(duplicate_result["error"]["code"], "repeated_tool_call")
+        self.assertEqual(events[-1]["answer"], "没有重复写入")
 
     async def test_max_steps_forces_final_without_tools(self):
         tool = FakeTool()
@@ -349,7 +679,7 @@ class AgentMainStreamTest(unittest.IsolatedAsyncioTestCase):
     async def test_agent_run_events_returns_complete_ndjson_lines_with_run_ids(self):
         import main
 
-        request = AgentRunRequest(input="直接回答", agent=AgentConfig(enabled_tools=[]))
+        request = AgentRunRequest(task_id="task_test", run_id="run_test", input="直接回答", agent=AgentConfig(enabled_tools=[]))
 
         class RuntimeStub:
             async def run(self, **kwargs):
@@ -371,7 +701,7 @@ class AgentMainStreamTest(unittest.IsolatedAsyncioTestCase):
     async def test_missing_workspace_is_structured_error_after_run_started(self):
         import main
 
-        request = AgentRunRequest(input="搜索", agent=AgentConfig(enabled_tools=["file_read"]))
+        request = AgentRunRequest(task_id="task_test", run_id="run_test", input="搜索", agent=AgentConfig(enabled_tools=["file_read"]))
         with patch.object(main, "resolve_request_config", side_effect=lambda value: value):
             lines = [line async for line in main.agent_run_events(request)]
         events = [json.loads(line) for line in lines]
@@ -382,7 +712,7 @@ class AgentMainStreamTest(unittest.IsolatedAsyncioTestCase):
     async def test_setup_failure_is_sanitized_and_keeps_one_run_id(self):
         import main
 
-        request = AgentRunRequest(input="直接回答", agent=AgentConfig(enabled_tools=[]))
+        request = AgentRunRequest(task_id="task_test", run_id="run_test", input="直接回答", agent=AgentConfig(enabled_tools=[]))
         with patch.object(
             main,
             "resolve_request_config",
@@ -399,7 +729,7 @@ class AgentMainStreamTest(unittest.IsolatedAsyncioTestCase):
     async def test_runtime_stream_failure_does_not_repeat_run_started(self):
         import main
 
-        request = AgentRunRequest(input="直接回答", agent=AgentConfig(enabled_tools=[]))
+        request = AgentRunRequest(task_id="task_test", run_id="run_test", input="直接回答", agent=AgentConfig(enabled_tools=[]))
 
         class RuntimeStub:
             async def run(self, **kwargs):
@@ -439,6 +769,8 @@ class AgentMainStreamTest(unittest.IsolatedAsyncioTestCase):
             return RuntimeStub()
 
         request = AgentRunRequest(
+            task_id="task_test",
+            run_id="run_test",
             input="列出工具",
             workspace=WorkspaceContext(workspace_path="."),
             agent=AgentConfig(allow_write=True),

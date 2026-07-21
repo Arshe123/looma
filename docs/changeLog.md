@@ -1,3 +1,19 @@
+## 1.0.0 2026-7-21
+
+### 重大更新
+
+- 从 RAG 系统转型为 Agent，RAG 变为可选工具。
+- 支持工具有：
+  - rag_search：搜索当前工作空间知识索引以获取相关上下文。
+  - workspace_list：列出当前工作空间内的文件和目录。
+  - workspace_search：使用纯子字符串搜索工作空间文件名和 UTF-8 文本。
+  - file_read：读取工作空间内 UTF-8 文本文件的指定范围内容。
+  - file_patch：准备 UTF-8 文本文件创建或更新的提案，而不直接写入磁盘。
+
+### 优化
+
+- DeepSeek Providers 走 OpenAI 兼容的 Chat Completions 协议。但增加单独的输出解析和修复。
+
 ## 0.11.1 2026-7-8
 
 ### 修复

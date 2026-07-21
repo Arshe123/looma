@@ -15,6 +15,8 @@ from schemas import AgentConfig, AgentRunRequest, WorkspaceContext
 class AgentRequestContractTest(unittest.TestCase):
     def test_canonical_agent_run_request_uses_global_ai_and_knowledge_defaults(self):
         request = AgentRunRequest(
+            task_id="task_test",
+            run_id="run_test",
             input="总结当前工作区",
             workspace=WorkspaceContext(workspace_path="/workspace"),
         )

@@ -18,6 +18,7 @@ _MAX_REPAIR_RESPONSE_CHARS = 20_000
 class StructuredChatResponse:
     content: str
     reasoning_content: str | None = None
+    finish_reason: str | None = None
 
 
 def _structured_content(response: str | StructuredChatResponse) -> str:
@@ -28,8 +29,8 @@ def _attach_provider_state(
     decision: AgentDecision,
     response: str | StructuredChatResponse,
 ) -> AgentDecision:
-    if isinstance(response, StructuredChatResponse) and response.reasoning_content:
-        decision._provider_state["reasoning_content"] = response.reasoning_content
+    if isinstance(response, StructuredChatResponse) and response.finish_reason:
+        decision._provider_state["finish_reason"] = response.finish_reason
     return decision
 
 
@@ -56,22 +57,19 @@ class BaseChatProvider(ABC):
             decision = parse_agent_decision_text(first_content, allowed_tools=allowed_tools)
             return _attach_provider_state(decision, first_response)
         except AgentDecisionParseError:
-            failed_content = (
-                first_content[:_MAX_REPAIR_RESPONSE_CHARS]
-                if isinstance(first_content, str) and first_content.strip()
-                else "[invalid or empty response]"
-            )
-            repair_messages = [
-                *prompted_messages,
-                ChatMessage(role="assistant", content=failed_content),
-                ChatMessage(
-                    role="user",
-                    content=(
-                        "上一个响应不符合约定。请修复格式，并严格按同一 schema "
-                        "仅输出一个 JSON object；不要输出 Markdown、代码围栏或解释。"
-                    ),
+            repair_messages = [*prompted_messages]
+            if isinstance(first_content, str) and first_content.strip():
+                repair_messages.append(ChatMessage(
+                    role="assistant",
+                    content=first_content[:_MAX_REPAIR_RESPONSE_CHARS],
+                ))
+            repair_messages.append(ChatMessage(
+                role="user",
+                content=(
+                    "上一个响应的 content 为空或不符合约定。请重新生成，并严格按同一 schema "
+                    "仅输出一个 JSON（json）object；不要输出 Markdown、代码围栏、DSML 或解释。"
                 ),
-            ]
+            ))
             second_response = await self.chat_structured(repair_messages)
             decision = parse_agent_decision_text(
                 _structured_content(second_response), allowed_tools=allowed_tools

@@ -288,6 +288,7 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         tool_decision._provider_state.update({
             "tool_call_id": "call_deepseek_native",
+            "content": "先读取工作区信息。",
             "reasoning_content": "PRIVATE_REASONING",
             "requires_reasoning_echo": True,
         })
@@ -308,6 +309,7 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_event["callId"], "call_deepseek_native")
         self.assertEqual(result_event["callId"], "call_deepseek_native")
         assistant_call, tool_result = provider.calls[1][0][-2:]
+        self.assertEqual(assistant_call.content, "先读取工作区信息。")
         self.assertEqual(assistant_call.reasoning_content, "PRIVATE_REASONING")
         self.assertEqual(assistant_call.tool_calls[0].id, "call_deepseek_native")
         self.assertEqual(tool_result.role, "tool")

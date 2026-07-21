@@ -177,11 +177,12 @@ class DeepSeekProviderTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(decision, AgentToolCall)
         self.assertEqual(decision.tool, "workspace_list")
         self.assertEqual(decision.arguments, {"path": ".", "depth": 2})
-        self.assertEqual(decision.thought_summary, "调用工具：workspace_list")
+        self.assertEqual(decision.thought_summary, "PRIVATE_REASONING")
         self.assertEqual(decision._provider_state["tool_call_id"], "call_deepseek_1")
+        self.assertEqual(decision._provider_state["content"], "")
         self.assertEqual(decision._provider_state["reasoning_content"], "PRIVATE_REASONING")
         self.assertTrue(decision._provider_state["requires_reasoning_echo"])
-        self.assertNotIn("PRIVATE_REASONING", decision.model_dump_json())
+        self.assertIn("PRIVATE_REASONING", decision.model_dump_json())
 
     async def test_reasoning_content_falls_back_to_model_extra(self):
         provider = self.create_provider()
@@ -194,6 +195,29 @@ class DeepSeekProviderTest(unittest.IsolatedAsyncioTestCase):
             [ChatMessage(role="user", content="列目录")], TOOLS
         )
         self.assertEqual(decision._provider_state["reasoning_content"], "EXTRA_REASONING")
+        self.assertEqual(decision.thought_summary, "EXTRA_REASONING")
+
+    async def test_tool_call_display_prefers_content_over_reasoning_then_falls_back_to_label(self):
+        provider = self.create_provider()
+        provider.client.chat.completions.create.side_effect = [
+            _response(
+                "先读取目录中的配置。",
+                reasoning_content="不应优先展示的 reasoning",
+                tool_calls=[_tool_call()],
+            ),
+            _response(None, reasoning_content=None, tool_calls=[_tool_call(call_id="call_2")]),
+        ]
+
+        with_content = await provider.complete_structured(
+            [ChatMessage(role="user", content="列目录")], TOOLS
+        )
+        fallback_label = await provider.complete_structured(
+            [ChatMessage(role="user", content="再列一次")], TOOLS
+        )
+
+        self.assertEqual(with_content.thought_summary, "先读取目录中的配置。")
+        self.assertEqual(with_content._provider_state["content"], "先读取目录中的配置。")
+        self.assertEqual(fallback_label.thought_summary, "调用工具：workspace_list")
 
     async def test_common_argument_damage_is_repaired_without_second_model_call(self):
         provider = self.create_provider()

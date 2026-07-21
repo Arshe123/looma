@@ -233,6 +233,9 @@ class AgentRuntime:
                     else [decision]
                 )
                 batch_state = getattr(decision, "_provider_state", {})
+                assistant_content = batch_state.get("content")
+                if not isinstance(assistant_content, str) or not assistant_content:
+                    assistant_content = None
                 reasoning_content = batch_state.get("reasoning_content")
                 if not isinstance(reasoning_content, str) or not reasoning_content:
                     reasoning_content = (
@@ -517,7 +520,7 @@ class AgentRuntime:
                     active_steps.pop(plan.call_id, None)
 
                 messages.append(ChatMessage(
-                    role="assistant", content=None,
+                    role="assistant", content=assistant_content,
                     reasoning_content=reasoning_content,
                     tool_calls=assistant_calls,
                 ))

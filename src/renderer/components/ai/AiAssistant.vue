@@ -558,6 +558,7 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
                 :message="message"
                 :events="getMessageDisplayEvents(message)"
                 :approvals="getMessageApprovals(message)"
+                :completed="!isMessageStreaming(message)"
                 @open-diff="openAgentDiff"
                 @open-source="openAgentRagSource"
               />

@@ -1,6 +1,6 @@
 # Agent 执行过程内嵌对话：前端事件与接口需求
 
-> 状态：方案 A 已应用到生产 renderer。当前后端流式事件继续使用既有 `timeline/tool_call/tool_result/approval_required/approval_resolved` 协议；renderer 将其投影成只在本次应用运行内存中保存的对话展示事件。
+> 状态：已应用到生产 renderer。当前后端流式事件继续使用既有 `timeline/tool_call/tool_result/approval_required/approval_resolved` 协议；renderer 将其投影成对话内展示事件。
 
 ## 1. 页面与入口
 
@@ -14,11 +14,11 @@
 ## 2. 展示原则
 
 1. 不使用独立的“执行过程”面板或一整块汇总时间线；过程内容直接位于 assistant 消息内部。
-2. 按实际发生顺序展示：可选思考摘要 → 实际工具调用 → 可选文件审查卡片 → 最终回答。
-3. 思考摘要去除图标、标题和小字样式，直接使用与普通 AI 回答一致的 Markdown 渲染。
+2. 按实际发生顺序展示：模型随工具调用返回的展示文本 → 实际工具调用 → 可选文件审查卡片 → 最终回答。
+3. DeepSeek 原生工具调用的展示文本优先级固定为：非空 `content` → 非空 `reasoning_content` → `调用工具：<tool>`；选中的文本使用与普通 AI 回答一致的 Markdown 渲染。
 4. 不展示 `timeline.summary` 产生的“接下来要执行”，也不展示独立工具返回结果卡片；工具结果只更新对应调用的完成/失败状态与耗时。
-5. 工具操作默认只渲染一行小字：工具图标 + 操作名 + 执行耗时（运行中显示“执行中”）；不使用外层卡片。点击该行后才展开状态、说明和脱敏参数。
-6. “思考过程”只展示后端明确提供的可审计 `thought_summary`，不传输或展示模型私有逐字推理。
+5. 单个工具操作默认只渲染一行小字：工具图标 + 操作名 + 执行耗时（运行中显示“执行中”）；不使用外层卡片。点击该行后才展开状态、说明和脱敏参数。
+6. Agent 运行时只展开最近一次工具调用及其展示文本，更早调用收进“较早的 N 次工具调用”；最终回答产生后，最终回答前的全部工具信息统一收进“已完成 N 次工具调用”，默认关闭，用户可点击展开。
 7. 敏感字段（API Key、Token、Cookie、Authorization、密码、私钥）必须在可信边界内脱敏后再到 renderer。
 8. `file_patch` 仍只代表修改提案；实际写入必须保持 Electron Main 的 workspace/path/hash 复验与逐项审批。
 9. 文件审查默认只显示文件名、相对路径、增加行数、删除行数；点击后打开前后 Diff 标签页。
@@ -54,7 +54,7 @@ type AgentConversationDisplayEvent = {
 
 这些事件保存在 `aiAssistStore.agentDisplayEventsByMessageKey`，key 为 `conversationId:assistantMessageId`。它们不会进入工作空间 AI state 的序列化数据：
 
-- `thought_summary` 只用于本次运行中的普通 AI Markdown 内容，不显示标题或图标。
+- `thought_summary` 承载 Provider 已按展示优先级选出的文本，以普通 AI Markdown 内容显示，不添加标题或图标。
 - 工具参数在 renderer 再次按敏感 key 脱敏并限制深度、数组长度和总字符数。
 - 后端 `tool_result` 只更新对应工具调用的状态与耗时，不创建可见结果事件，也不复制 `summary/data/observation`。
 - 应用重启后使用已经持久化的 compact timeline 降级展示，只显示工具调用/审批步骤，不显示 timeline 结果内容。
@@ -64,7 +64,7 @@ type AgentConversationDisplayEvent = {
 当前 Agent 流应继续经 Electron preload 暴露给 renderer；前端按以下规则适配：
 
 - `timeline(running/pending)`：继续更新 compact timeline，但不生成“接下来要执行”展示事件。
-- `tool_call`：先插入可选 `thought_summary`，随后插入工具名和脱敏参数；`callId` 用于幂等和结果关联。
+- `tool_call`：先插入 Provider 按 `content → reasoning_content → 调用工具` 规则选出的 `thought_summary`，随后插入工具名和脱敏参数；`callId` 用于幂等和结果关联。
 - `tool_result`：不生成可见结果卡片；仅更新工具调用的完成/失败状态和耗时，完整 `summary/data/observation` 不进入展示事件。
 - `approval_required`：生成文件审查卡片，统计 unified diff 的增加/删除行，并保持 Agent 暂停。
 - `approval_resolved`：更新文件卡片和工具卡片状态；批准后仍由 Electron Main 复验并写入。
@@ -155,9 +155,10 @@ type AgentDiffViewState = {
 - Agent 运行时，步骤在对应 assistant 消息中按顺序实时出现。
 - 对话切换后，事件按 `requestId -> conversationId` 写回正确消息。
 - 折叠/展开不会阻断流式更新或导致自动滚动跳动。
-- 思考摘要以普通 AI Markdown 文本展示，没有标题、图标或小字样式。
+- DeepSeek 工具调用有非空 `content` 时显示 `content`；否则显示非空 `reasoning_content`；两者都为空才显示“调用工具：xxx”。
 - `timeline.summary` 不生成“接下来要执行”内容。
 - 工具操作默认是“图标 + 操作名 + 耗时”的单行小字，不显示外层卡片；点击后展示脱敏参数与状态。
+- 运行中只直显最近一次工具调用，更早调用默认折叠；最终回答出现后全部工具信息默认折叠且可手动展开。
 - 切换对话或重启应用后，工具操作、状态、耗时和最多 4,000 字符的脱敏参数仍可恢复。
 - 工具返回正文、结果摘要和独立结果卡片均不可见。
 - RAG 来源只在最终回答正文之后显示为引用标签；点击后展开路径和片段，安全路径可在工作区打开。

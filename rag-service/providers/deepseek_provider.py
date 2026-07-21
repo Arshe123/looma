@@ -158,8 +158,13 @@ class DeepSeekChatProvider(OpenAIChatProvider):
                     reasoning_content=reasoning_content,
                 )
             calls = [self._parse_native_tool_call(value, allowed_tools) for value in tool_calls]
+            display_content = self._tool_call_display_content(content, reasoning_content)
+            if display_content:
+                for call in calls:
+                    call.thought_summary = display_content
             common_state = {
                 "finish_reason": finish_reason,
+                "content": content,
                 "reasoning_content": reasoning_content,
                 "requires_reasoning_echo": self._thinking_enabled(),
             }
@@ -284,6 +289,21 @@ class DeepSeekChatProvider(OpenAIChatProvider):
             extra = model_extra.get("reasoning_content")
             if isinstance(extra, str) and extra:
                 return extra
+        return None
+
+    @staticmethod
+    def _tool_call_display_content(content: Any, reasoning_content: Any) -> str | None:
+        """Choose bounded user-visible text for a native tool-call response.
+
+        DeepSeek can return ordinary ``content`` alongside ``tool_calls`` and,
+        for thinking models, may only return ``reasoning_content``. The UI uses
+        content first, then reasoning, and keeps the generated tool label only
+        when both are blank.
+        """
+
+        for value in (content, reasoning_content):
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:500]
         return None
 
     @staticmethod

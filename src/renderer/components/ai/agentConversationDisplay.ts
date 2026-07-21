@@ -38,6 +38,37 @@ export interface AgentConversationDisplayEvent {
   fileReview?: AgentFileReviewDisplayData
 }
 
+export interface AgentConversationEventPartition {
+  collapsed: AgentConversationDisplayEvent[]
+  visible: AgentConversationDisplayEvent[]
+}
+
+export const partitionAgentConversationEvents = (
+  events: AgentConversationDisplayEvent[],
+  completed: boolean,
+  visibleToolCallLimit = 1,
+): AgentConversationEventPartition => {
+  if (!events.length) return { collapsed: [], visible: [] }
+  if (completed) return { collapsed: events, visible: [] }
+
+  const toolCalls = events.filter((event) => event.kind === 'tool_call')
+  if (toolCalls.length <= visibleToolCallLimit) return { collapsed: [], visible: events }
+
+  const firstVisibleCall = toolCalls[toolCalls.length - visibleToolCallLimit]
+  let splitIndex = events.findIndex((event) => event.id === firstVisibleCall.id)
+  while (
+    splitIndex > 0
+    && events[splitIndex - 1]?.kind === 'thought'
+    && events[splitIndex - 1]?.callId === firstVisibleCall.callId
+  ) {
+    splitIndex -= 1
+  }
+  return {
+    collapsed: events.slice(0, splitIndex),
+    visible: events.slice(splitIndex),
+  }
+}
+
 const SENSITIVE_KEY = /(api[-_]?key|token|authorization|cookie|password|passwd|secret|credential|private[-_]?key|access[-_]?key)/i
 const MAX_ARGUMENT_PREVIEW = 4_000
 

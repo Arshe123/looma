@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises'
+import { mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { AgentEvent } from '../../../shared/types/agent-events'
 import type { AgentMessage } from '../../../shared/types/agent-message'
@@ -15,6 +15,20 @@ import type {
 
 const TRANSACTION_FILE = /^(\d{16})-([A-Za-z0-9_-]{1,80})\.json$/
 const MAX_TRANSACTION_BYTES = 2 * 1024 * 1024
+const STALE_TEMP_FILE_MS = 60 * 60 * 1000
+
+interface SharedLedgerState {
+  queue: Promise<unknown>
+  nextSequence: number
+  initialization: Promise<void> | null
+}
+
+const sharedLedgerStates = new Map<string, SharedLedgerState>()
+
+const ledgerStateKey = (rootDir: string) => {
+  const resolved = path.resolve(rootDir)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
 
 const emptyView = (): AgentLedgerView => ({
   tasks: {},
@@ -95,46 +109,64 @@ export class AgentLedgerStore {
   private readonly temporaryDir: string
   private readonly snapshotsDir: string
   private readonly checkpointsDir: string
-  private queue: Promise<unknown> = Promise.resolve()
-  private nextSequence = 1
-  private initialized = false
+  private readonly shared: SharedLedgerState
 
   constructor(private readonly rootDir: string) {
     this.transactionsDir = path.join(rootDir, 'transactions')
     this.temporaryDir = path.join(rootDir, 'tmp')
     this.snapshotsDir = path.join(rootDir, 'snapshots')
     this.checkpointsDir = path.join(rootDir, 'checkpoints')
+    const key = ledgerStateKey(rootDir)
+    let shared = sharedLedgerStates.get(key)
+    if (!shared) {
+      shared = { queue: Promise.resolve(), nextSequence: 1, initialization: null }
+      sharedLedgerStates.set(key, shared)
+    }
+    this.shared = shared
   }
 
   async init() {
-    if (this.initialized) return
-    await Promise.all([
-      mkdir(this.transactionsDir, { recursive: true }),
-      mkdir(this.temporaryDir, { recursive: true }),
-      mkdir(this.snapshotsDir, { recursive: true }),
-      mkdir(this.checkpointsDir, { recursive: true }),
-    ])
-    const files = await readdir(this.temporaryDir)
-    await Promise.all(files.filter(file => file.endsWith('.tmp')).map(file => rm(path.join(this.temporaryDir, file), { force: true })))
-    const sequences = (await readdir(this.transactionsDir))
-      .map(file => TRANSACTION_FILE.exec(file))
-      .filter((match): match is RegExpExecArray => Boolean(match))
-      .map(match => Number(match[1]))
-      .filter(Number.isSafeInteger)
-    this.nextSequence = (sequences.length ? Math.max(...sequences) : 0) + 1
-    this.initialized = true
+    if (!this.shared.initialization) {
+      this.shared.initialization = (async () => {
+        await Promise.all([
+          mkdir(this.transactionsDir, { recursive: true }),
+          mkdir(this.temporaryDir, { recursive: true }),
+          mkdir(this.snapshotsDir, { recursive: true }),
+          mkdir(this.checkpointsDir, { recursive: true }),
+        ])
+        const now = Date.now()
+        const temporaryFiles = await readdir(this.temporaryDir)
+        await Promise.all(temporaryFiles.filter(file => file.endsWith('.tmp')).map(async (file) => {
+          const filePath = path.join(this.temporaryDir, file)
+          const details = await stat(filePath).catch(() => null)
+          if (details && now - details.mtimeMs >= STALE_TEMP_FILE_MS) {
+            await rm(filePath, { force: true })
+          }
+        }))
+        const sequences = (await readdir(this.transactionsDir))
+          .map(file => TRANSACTION_FILE.exec(file))
+          .filter((match): match is RegExpExecArray => Boolean(match))
+          .map(match => Number(match[1]))
+          .filter(Number.isSafeInteger)
+        this.shared.nextSequence = (sequences.length ? Math.max(...sequences) : 0) + 1
+      })().catch((error) => {
+        this.shared.initialization = null
+        throw error
+      })
+    }
+    await this.shared.initialization
   }
 
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.queue.then(operation, operation)
-    this.queue = result.then(() => undefined, () => undefined)
+    const result = this.shared.queue.then(operation, operation)
+    this.shared.queue = result.then(() => undefined, () => undefined)
     return result
   }
 
   async commit(input: LedgerCommitInput): Promise<AgentLedgerTransaction> {
     await this.init()
     return this.serialize(async () => {
-      const ledgerSequence = this.nextSequence++
+      const ledgerSequence = this.shared.nextSequence++
       const txId = `tx_${randomUUID().replace(/-/g, '')}`
       const transaction: AgentLedgerTransaction = {
         schemaVersion: 1,

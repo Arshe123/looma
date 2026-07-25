@@ -27,7 +27,7 @@ class AgentRequestContractTest(unittest.TestCase):
             request.agent.enabled_tools,
             ["rag_search", "workspace_list", "workspace_search", "file_read", "file_patch"],
         )
-        self.assertEqual(request.agent.max_steps, 8)
+        self.assertEqual(request.agent.max_steps, 90)
         self.assertEqual(request.agent.tool_timeout_seconds, 30)
         self.assertEqual(request.agent.run_timeout_seconds, 300)
         self.assertFalse(request.agent.allow_write)
@@ -45,7 +45,7 @@ class AgentRequestContractTest(unittest.TestCase):
         self.assertNotIn("terminal", enabled)
 
     def test_agent_config_rejects_max_steps_outside_bounds(self):
-        for value in (0, 51):
+        for value in (0, 101):
             with self.subTest(value=value), self.assertRaises(ValidationError):
                 AgentConfig(max_steps=value)
 

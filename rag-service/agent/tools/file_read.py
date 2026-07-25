@@ -10,6 +10,7 @@ from pydantic import Field, root_validator
 
 from agent.security import resolve_workspace_path
 from agent.tools.base import AgentTool, AgentToolContext, StrictToolArgs
+from agent.tools.staging import AgentStagingArea
 from agent.tools.workspace_common import (
     observation_path,
     open_regular_no_follow,
@@ -42,7 +43,10 @@ class FileReadArgs(StrictToolArgs):
 
 class FileReadTool(AgentTool):
     name = "file_read"
-    description = "Read a bounded range from a UTF-8 text file inside the workspace."
+    description = (
+        "Read a bounded range from the current Agent run's staged UTF-8 file view, "
+        "falling back to the workspace file when no staged copy exists."
+    )
     risk_level = "read"
     args_model = FileReadArgs
 
@@ -54,7 +58,10 @@ class FileReadTool(AgentTool):
             raise TypeError("args must be FileReadArgs")
 
         workspace = resolve_workspace_path(context.workspace_path, ".", must_exist=True)
-        target = resolve_no_follow_workspace_path(context.workspace_path, args.path)
+        workspace_target = resolve_no_follow_workspace_path(context.workspace_path, args.path)
+        staged = AgentStagingArea(context.workspace_path, context.run_id).load(args.path)
+        target = staged.staged_path if staged is not None else workspace_target
+        source = "staging" if staged is not None else "workspace"
         result_path = observation_path(args.path)
         try:
             target_stat = target.stat(follow_symlinks=False)
@@ -63,8 +70,12 @@ class FileReadTool(AgentTool):
         except OSError:
             return self._observation("inaccessible", result_path, args.start_line)
         if not stat.S_ISREG(target_stat.st_mode):
-            return self._observation("not_file", relative_posix(workspace, target), args.start_line)
-        result_path = relative_posix(workspace, target)
+            return self._observation(
+                "not_file",
+                staged.path if staged is not None else relative_posix(workspace, target),
+                args.start_line,
+            )
+        result_path = staged.path if staged is not None else relative_posix(workspace, target)
 
         descriptor = open_regular_no_follow(target)
         if descriptor is None:
@@ -142,6 +153,7 @@ class FileReadTool(AgentTool):
         return {
             "status": "ok",
             "path": result_path,
+            "source": source,
             "content": "".join(content_parts),
             "startLine": args.start_line,
             "endLine": last_returned_line,
@@ -154,6 +166,7 @@ class FileReadTool(AgentTool):
         return {
             "status": status,
             "path": path,
+            "source": "workspace",
             "content": "",
             "startLine": start_line,
             "endLine": 0,

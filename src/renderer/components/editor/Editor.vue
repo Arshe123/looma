@@ -290,6 +290,10 @@ watch(
     if (!editor) return;
     const current = editor.state.doc.toString();
     if (current === nextContent) return;
+    if (saveTimeout) {
+      clearTimeout(saveTimeout);
+      saveTimeout = null;
+    }
     applyingExternalUpdate = true;
     editor.dispatch({
       changes: { from: 0, to: editor.state.doc.length, insert: nextContent },

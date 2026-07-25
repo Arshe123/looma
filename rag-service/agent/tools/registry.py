@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import math
 from collections.abc import Iterable
@@ -20,10 +21,15 @@ DEFAULT_MAX_OUTPUT_CHARS = 20_000
 MAX_OUTPUT_NODES = 10_000
 MAX_OUTPUT_DEPTH = 64
 MAX_OUTPUT_STRING_CHARS = 100_000
+MAX_APPROVAL_OUTPUT_STRING_CHARS = 1_000_000
 VALID_TOOL_RISK_LEVELS = frozenset({"read", "write", "network", "terminal"})
 
 
-def _validate_json_output(value: Any) -> None:
+def _validate_json_output(
+    value: Any,
+    *,
+    max_string_chars: int = MAX_OUTPUT_STRING_CHARS,
+) -> None:
     """Validate an untrusted tool result with bounded, non-recursive traversal."""
 
     stack: list[tuple[Any, int, bool]] = [(value, 0, False)]
@@ -50,7 +56,7 @@ def _validate_json_output(value: Any) -> None:
             if len(current) > MAX_OUTPUT_NODES - nodes:
                 raise ValueError("tool output exceeds node budget")
             for key, item in current.items():
-                if not isinstance(key, str) or len(key) > MAX_OUTPUT_STRING_CHARS:
+                if not isinstance(key, str) or len(key) > max_string_chars:
                     raise ValueError("tool output contains an invalid key")
                 stack.append((item, depth + 1, False))
         elif isinstance(current, list):
@@ -63,7 +69,7 @@ def _validate_json_output(value: Any) -> None:
                 raise ValueError("tool output exceeds node budget")
             stack.extend((item, depth + 1, False) for item in current)
         elif isinstance(current, str):
-            if len(current) > MAX_OUTPUT_STRING_CHARS:
+            if len(current) > max_string_chars:
                 raise ValueError("tool output string exceeds budget")
         elif current is None or isinstance(current, bool):
             continue
@@ -80,8 +86,13 @@ def _validate_json_output(value: Any) -> None:
             raise ValueError("tool output exceeds traversal budget")
 
 
-def _serialize_json_output(value: Any, max_chars: int) -> tuple[str, bool]:
-    _validate_json_output(value)
+def _serialize_json_output(
+    value: Any,
+    max_chars: int,
+    *,
+    max_string_chars: int = MAX_OUTPUT_STRING_CHARS,
+) -> tuple[str, bool]:
+    _validate_json_output(value, max_string_chars=max_string_chars)
     encoder = json.JSONEncoder(
         ensure_ascii=False,
         separators=(",", ":"),
@@ -251,8 +262,23 @@ class ToolRegistry:
                 technical_detail=type(exc).__name__,
             )
 
+        approval_payload = (
+            data
+            if tool_name == "file_patch"
+            and isinstance(data, dict)
+            and data.get("requiresApproval") is True
+            else None
+        )
         try:
-            serialized, truncated = _serialize_json_output(data, self._max_output_chars)
+            serialized, truncated = _serialize_json_output(
+                data,
+                self._max_output_chars,
+                max_string_chars=(
+                    MAX_APPROVAL_OUTPUT_STRING_CHARS
+                    if approval_payload is not None
+                    else MAX_OUTPUT_STRING_CHARS
+                ),
+            )
         except Exception as exc:
             return self._failure(
                 tool_name,
@@ -262,7 +288,7 @@ class ToolRegistry:
                 technical_detail=type(exc).__name__,
             )
         if truncated:
-            return ToolResult(
+            result = ToolResult(
                 tool=tool_name,
                 success=True,
                 summary=(
@@ -272,12 +298,17 @@ class ToolRegistry:
                 data=serialized,
                 truncated=True,
             )
-        return ToolResult(
-            tool=tool_name,
-            success=True,
-            summary="Tool execution completed successfully.",
-            data=data,
+        else:
+            result = ToolResult(
+                tool=tool_name,
+                success=True,
+                summary="Tool execution completed successfully.",
+                data=data,
+            )
+        result._approval_payload = (
+            copy.deepcopy(approval_payload) if approval_payload is not None else None
         )
+        return result
 
     def _policy_allows(self, tool: AgentTool) -> bool:
         if tool.name not in self._allowed_tools:

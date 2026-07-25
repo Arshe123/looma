@@ -1,31 +1,85 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Check, FileDiff, Loader2, ShieldCheck, X } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { useAiAssistantStore } from '@/renderer/stores/ai-assistant'
-import { buildSideBySideDiffRows } from './agentConversationDisplay'
+import {
+  buildSideBySideDiffRows,
+  getSyncedDiffScrollLeft,
+  shouldUseInlineDiff,
+} from './agentConversationDisplay'
 
 const workspaceStore = useWorkspaceStore()
 const aiStore = useAiAssistantStore()
 const actionError = ref('')
+const resolvedStatus = ref<'approved' | 'rejected' | null>(null)
+const diffRoot = ref<HTMLElement | null>(null)
+const beforeScroller = ref<HTMLElement | null>(null)
+const afterScroller = ref<HTMLElement | null>(null)
+const compactDiff = ref(false)
+let resizeObserver: ResizeObserver | null = null
+let scrollSyncFrame: number | null = null
+
+const updateDiffMode = (width: number) => {
+  compactDiff.value = shouldUseInlineDiff(width)
+}
+
+const syncDiffScroll = (source: HTMLElement, target: HTMLElement | null) => {
+  if (!target || scrollSyncFrame !== null) return
+
+  target.scrollTop = source.scrollTop
+  target.scrollLeft = getSyncedDiffScrollLeft(
+    source.scrollLeft,
+    source.scrollWidth,
+    source.clientWidth,
+    target.scrollWidth,
+    target.clientWidth,
+  )
+
+  scrollSyncFrame = window.requestAnimationFrame(() => {
+    scrollSyncFrame = null
+  })
+}
+
+const handleBeforeScroll = () => {
+  if (beforeScroller.value) syncDiffScroll(beforeScroller.value, afterScroller.value)
+}
+
+const handleAfterScroll = () => {
+  if (afterScroller.value) syncDiffScroll(afterScroller.value, beforeScroller.value)
+}
+
+onMounted(() => {
+  if (!diffRoot.value) return
+  updateDiffMode(diffRoot.value.clientWidth)
+  resizeObserver = new ResizeObserver(([entry]) => {
+    if (entry) updateDiffMode(entry.contentRect.width)
+  })
+  resizeObserver.observe(diffRoot.value)
+})
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  if (scrollSyncFrame !== null) window.cancelAnimationFrame(scrollSyncFrame)
+})
 
 const view = computed(() => workspaceStore.activeAgentDiff)
 const rows = computed(() => buildSideBySideDiffRows(view.value?.diff || ''))
 const approval = computed(() => {
   const current = view.value
   if (!current) return undefined
-  return aiStore.getConversationAgentApprovals(current.conversationId)
-    .find((item) => item.approvalId === current.approvalId)
+  return aiStore.getPendingFileReview(current.approvalId) || undefined
 })
-const approvalStatus = computed(() => approval.value?.status || 'unavailable')
+const approvalStatus = computed(() => approval.value?.status || resolvedStatus.value || 'unavailable')
 const canResolve = computed(() => approvalStatus.value === 'pending' || approvalStatus.value === 'error')
 
 const resolveApproval = async (approved: boolean) => {
   const current = view.value
   if (!current || !canResolve.value) return
   actionError.value = ''
-  const result = await aiStore.resolveAgentApproval(current.conversationId, current.approvalId, approved)
+  const result = await aiStore.resolvePendingFileReview(current.workspaceId, current.approvalId, approved)
   if (!result?.success) actionError.value = result?.error || '提交审批失败，请重试。'
+  else resolvedStatus.value = approved ? 'approved' : 'rejected'
 }
 
 const statusLabel = computed(() => ({
@@ -41,7 +95,7 @@ const statusLabel = computed(() => ({
 </script>
 
 <template>
-  <section class="flex h-full min-h-0 flex-col bg-panel text-text-main">
+  <section ref="diffRoot" class="flex h-full min-h-0 flex-col bg-panel text-text-main">
     <header class="flex shrink-0 items-center gap-3 border-b border-border-soft px-4 py-3">
       <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-soft text-accent">
         <FileDiff :size="16" />
@@ -49,7 +103,7 @@ const statusLabel = computed(() => ({
       <div class="min-w-0 flex-1">
         <h1 class="truncate text-sm font-semibold">{{ view?.path || '文件对比' }}</h1>
         <p class="mt-0.5 text-[10px] text-text-muted">
-          {{ view?.operation === 'create' ? '新建文件提案' : '文件修改提案' }} · Electron 主进程将在批准后重新校验路径与文件 hash
+          {{ view?.operation === 'create' ? '新建文件提案' : '文件修改提案' }}
         </p>
       </div>
       <span v-if="view" class="text-[10px] text-success">+{{ view.additions }}</span>
@@ -62,31 +116,68 @@ const statusLabel = computed(() => ({
     </div>
 
     <template v-else>
-      <div class="grid shrink-0 grid-cols-2 border-b border-border-soft bg-panel-soft text-[10px] font-medium text-text-muted">
-        <div class="border-r border-border-soft px-4 py-2">修改前</div>
-        <div class="px-4 py-2">修改后</div>
+      <div v-if="compactDiff" class="min-h-0 flex-1 overflow-auto bg-panel-soft font-mono text-[10px] leading-5">
+        <div class="inline-block w-max min-w-full align-top">
+          <div
+            v-for="row in rows"
+            :key="row.id"
+            class="grid grid-cols-[44px_minmax(0,1fr)]"
+            :class="{
+              'border-y border-border-soft bg-accent-soft/40 text-accent': row.kind === 'hunk',
+              'bg-red-500/10 text-red-700 dark:text-red-300': row.kind === 'deletion',
+              'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300': row.kind === 'addition',
+            }"
+          >
+            <span class="select-none border-r border-border-soft px-2 text-right text-text-subtle">
+              {{ row.kind === 'deletion' ? (row.beforeLine || '') : (row.afterLine || '') }}
+            </span>
+            <span class="whitespace-pre px-3">{{ row.kind === 'deletion' ? (row.before || ' ') : (row.after || ' ') }}</span>
+          </div>
+        </div>
       </div>
 
-      <div class="min-h-0 flex-1 overflow-auto bg-panel-soft font-mono text-[10px] leading-5">
+      <div v-else class="grid min-h-0 flex-1 grid-cols-2 bg-panel-soft font-mono text-[10px] leading-5">
         <div
-          v-for="row in rows"
-          :key="row.id"
-          class="grid min-w-[760px] grid-cols-2"
-          :class="row.kind === 'hunk' ? 'border-y border-border-soft bg-accent-soft/40 text-accent' : ''"
+          ref="beforeScroller"
+          class="min-w-0 overflow-scroll border-r border-border-soft"
+          aria-label="修改前内容"
+          @scroll="handleBeforeScroll"
         >
-          <div
-            class="grid grid-cols-[44px_minmax(0,1fr)] border-r border-border-soft"
-            :class="row.kind === 'deletion' ? 'bg-red-500/10 text-red-700 dark:text-red-300' : ''"
-          >
-            <span class="select-none border-r border-border-soft px-2 text-right text-text-subtle">{{ row.beforeLine || '' }}</span>
-            <span class="whitespace-pre px-3">{{ row.before || ' ' }}</span>
+          <div class="inline-block w-max min-w-full align-top">
+            <div
+              v-for="row in rows"
+              :key="row.id"
+              class="grid grid-cols-[44px_minmax(0,1fr)]"
+              :class="{
+                'border-y border-border-soft bg-accent-soft/40 text-accent': row.kind === 'hunk',
+                'bg-red-500/10 text-red-700 dark:text-red-300': row.kind === 'deletion',
+              }"
+            >
+              <span class="select-none border-r border-border-soft px-2 text-right text-text-subtle">{{ row.beforeLine || '' }}</span>
+              <span class="whitespace-pre px-3">{{ row.before || ' ' }}</span>
+            </div>
           </div>
-          <div
-            class="grid grid-cols-[44px_minmax(0,1fr)]"
-            :class="row.kind === 'addition' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : ''"
-          >
-            <span class="select-none border-r border-border-soft px-2 text-right text-text-subtle">{{ row.afterLine || '' }}</span>
-            <span class="whitespace-pre px-3">{{ row.after || ' ' }}</span>
+        </div>
+
+        <div
+          ref="afterScroller"
+          class="min-w-0 overflow-scroll"
+          aria-label="修改后内容"
+          @scroll="handleAfterScroll"
+        >
+          <div class="inline-block w-max min-w-full align-top">
+            <div
+              v-for="row in rows"
+              :key="row.id"
+              class="grid grid-cols-[44px_minmax(0,1fr)]"
+              :class="{
+                'border-y border-border-soft bg-accent-soft/40 text-accent': row.kind === 'hunk',
+                'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300': row.kind === 'addition',
+              }"
+            >
+              <span class="select-none border-r border-border-soft px-2 text-right text-text-subtle">{{ row.afterLine || '' }}</span>
+              <span class="whitespace-pre px-3">{{ row.after || ' ' }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -96,10 +187,6 @@ const statusLabel = computed(() => ({
       </p>
 
       <footer class="flex shrink-0 items-center justify-between gap-3 border-t border-border-soft px-4 py-3">
-        <span class="inline-flex items-center gap-1.5 text-[10px] text-text-muted">
-          <ShieldCheck :size="13" class="text-success" />
-          未批准不会写入；此页面本身没有文件写入能力
-        </span>
         <div v-if="canResolve" class="flex items-center gap-2">
           <button type="button" class="inline-flex h-8 items-center gap-1 rounded-md border border-border-soft px-3 text-[10px] text-text-muted hover:bg-panel-soft" @click="resolveApproval(false)">
             <X :size="12" />拒绝

@@ -234,3 +234,19 @@ export interface FilePatchArtifact {
   createdAt: number
   expiresAt: number
 }
+
+export interface AgentPendingFileReview {
+  approvalId: string
+  artifactId: string
+  taskId: string
+  runId: string
+  workspaceId: string
+  callId: string
+  path: string
+  operation: 'create' | 'update'
+  diff: string
+  additions: number
+  deletions: number
+  createdAt: number
+  deadlineAt: number
+}

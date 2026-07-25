@@ -67,6 +67,8 @@ class AgentError(StrictAgentModel):
 
 
 class ToolResult(StrictAgentModel):
+    _approval_payload: Optional[dict[str, Any]] = PrivateAttr(default=None)
+
     tool: str = Field(..., min_length=1)
     success: bool
     summary: str = Field(..., min_length=1)

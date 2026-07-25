@@ -129,6 +129,7 @@ export type SystemPageId = 'settings' | 'rag-index' | 'ai-history' | 'agent-diff
 export type SettingsSectionId = 'appearance' | 'editor' | 'ai'
 
 export interface AgentDiffViewState {
+  workspaceId: string
   conversationId: string
   approvalId: string
   path: string

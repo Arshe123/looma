@@ -14,6 +14,6 @@ ipcMain.handle('file:getFileStats', async (_, filePath: string) => {
   return await fileService.getFileStats(filePath);
 });
 
-ipcMain.handle('file:writeMarkdown', async (_, filePath: string, content: string) => {
-  return await fileService.writeMarkdown(filePath, content);
+ipcMain.handle('file:writeMarkdown', async (_, filePath: string, content: string, expectedContent?: string) => {
+  return await fileService.writeMarkdown(filePath, content, expectedContent);
 });

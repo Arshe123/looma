@@ -2,24 +2,21 @@
 import { X } from 'lucide-vue-next'
 import type { AiAssistantTimelineOutput } from '@/renderer/stores/workspace'
 import type { AgentUiState } from './agentUiState'
-import type { AgentApprovalState } from '@/renderer/stores/ai-assistant'
-import AgentApprovalCard from './AgentApprovalCard.vue'
+
 import AgentErrorDetails from './AgentErrorDetails.vue'
 import AgentToolStep from './AgentToolStep.vue'
 
 withDefaults(defineProps<{
   open: boolean
   state: AgentUiState
-  approvals?: AgentApprovalState[]
 }>(), {
   open: false,
-  approvals: () => [],
 })
 
 const emit = defineEmits<{
   close: []
   openSource: [output: AiAssistantTimelineOutput]
-  resolveApproval: [approvalId: string, approved: boolean]
+
 }>()
 </script>
 
@@ -62,14 +59,7 @@ const emit = defineEmits<{
         :message="state.errorMessage"
         :technical-detail="state.technicalDetail"
       />
-      <div v-if="approvals.length" class="mt-3 space-y-3">
-        <AgentApprovalCard
-          v-for="approval in approvals"
-          :key="approval.approvalId"
-          :approval="approval"
-          @resolve="(approvalId, approved) => emit('resolveApproval', approvalId, approved)"
-        />
-      </div>
+
       <div
         v-if="state.timeline.length"
         class="relative mt-3 space-y-4 before:absolute before:bottom-2 before:left-[5px] before:top-2 before:w-px before:bg-border-soft"

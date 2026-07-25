@@ -263,11 +263,10 @@ interface AIService {
   streamAgent(
     workspacePath: string,
     options: AgentRunOptions,
-    onEvent: (event: AgentStreamEvent) => unknown,
+    onEvent: (event: AgentStreamEvent) => unknown | Promise<unknown>,
     signal?: AbortSignal,
   ): Promise<Result<void>>
 
-  resolveAgentApproval(approvalId: string, status: 'approved' | 'rejected', reason?: string, applied?: boolean): Promise<Result<{ approvalId: string; runId: string; status: string }>>
 }
 
 const AGENT_TOOLS: readonly AgentToolName[] = ['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch']
@@ -320,7 +319,7 @@ export const normalizeAgentRunOptions = (options: AgentRunOptions): NormalizedAg
     const message: RagChatMessage = {
       role: item.role,
       content: normalizedContent || null,
-      name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : undefined,
+      ...(typeof item.name === 'string' && item.name.trim() ? { name: item.name.trim() } : {}),
     }
     if (item.role === 'assistant' && item.tool_calls !== undefined) {
       if (!Array.isArray(item.tool_calls) || !item.tool_calls.length) throw new Error('Invalid Agent history tool calls')
@@ -665,7 +664,7 @@ export const aiService: AIService = {
   async streamAgent(
     workspacePath: string,
     options: AgentRunOptions,
-    onEvent: (event: AgentStreamEvent) => void,
+    onEvent: (event: AgentStreamEvent) => unknown | Promise<unknown>,
     signal?: AbortSignal,
   ): Promise<Result<void>> {
     return streamNdjson<unknown>(
@@ -680,14 +679,5 @@ export const aiService: AIService = {
       },
       signal,
     )
-  },
-
-  async resolveAgentApproval(approvalId, status, reason, applied) {
-    return postJson('/agent/approvals/resolve', {
-      approval_id: approvalId,
-      status,
-      reason,
-      applied,
-    })
   },
 }

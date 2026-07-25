@@ -1,25 +1,6 @@
 import fs from 'fs/promises';
 import type { Result } from '../../../shared/types/Result';
-
-/**
- * Simple file-level lock to prevent concurrent write operations on the same file.
- */
-class FileLock {
-  private locks: Set<string> = new Set();
-
-  async acquire(filePath: string): Promise<void> {
-    while (this.locks.has(filePath)) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    this.locks.add(filePath);
-  }
-
-  release(filePath: string): void {
-    this.locks.delete(filePath);
-  }
-}
-
-const fileLock = new FileLock();
+import { withFileWriteLock } from './fileWriteLock';
 
 export const fileService = {
   async readMarkdown(filePath: string): Promise<Result<string>> {
@@ -67,15 +48,24 @@ export const fileService = {
     }
   },
 
-  async writeMarkdown(filePath: string, content: string): Promise<Result<void>> {
-    try {
-      await fileLock.acquire(filePath);
-      await fs.writeFile(filePath, content, 'utf-8');
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: `Failed to write file: ${error.message}` };
-    } finally {
-      fileLock.release(filePath);
-    }
+  async writeMarkdown(filePath: string, content: string, expectedContent?: string): Promise<Result<void>> {
+    return withFileWriteLock(filePath, async () => {
+      try {
+        if (expectedContent !== undefined) {
+          const current = await fs.readFile(filePath, 'utf-8');
+          if (current !== expectedContent) {
+            return {
+              success: false,
+              error: '文件已被 Agent 或其他程序修改，已阻止旧编辑器内容覆盖磁盘。',
+              errorCode: 'FILE_CHANGED_ON_DISK',
+            };
+          }
+        }
+        await fs.writeFile(filePath, content, 'utf-8');
+        return { success: true };
+      } catch (error: any) {
+        return { success: false, error: `Failed to write file: ${error.message}` };
+      }
+    });
   }
 };

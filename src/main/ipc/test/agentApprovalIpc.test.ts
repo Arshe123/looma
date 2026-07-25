@@ -9,7 +9,6 @@ const state = vi.hoisted(() => ({
   workspacePath: '',
   streamEvent: null as null | ((event: any) => Promise<void>),
   streamAgent: vi.fn(),
-  resolveAgentApproval: vi.fn().mockResolvedValue({ success: true }),
 }))
 
 vi.mock('electron', () => ({
@@ -30,7 +29,6 @@ vi.mock('../../services/ai/AIService', () => ({
       state.streamEvent = onEvent
       return new Promise(() => {})
     }),
-    resolveAgentApproval: state.resolveAgentApproval,
     summarizeAgentConversation: vi.fn(),
   },
   normalizeAgentRunOptions: vi.fn((value: any) => value),
@@ -53,7 +51,6 @@ describe('Agent approval IPC trusted boundary', () => {
     await fs.mkdir(path.join(state.workspacePath, 'notes'))
     state.streamEvent = null
     state.streamAgent.mockClear()
-    state.resolveAgentApproval.mockClear()
   })
 
   afterEach(async () => {
@@ -72,6 +69,20 @@ describe('Agent approval IPC trusted boundary', () => {
     await vi.waitFor(() => expect(state.streamEvent).toBeTypeOf('function'))
 
     const content = '# approved\n'
+    const stagingRoot = path.join(state.workspacePath, '.looma', 'agent-staging', started.data.runId)
+    const stagedPath = path.join(stagingRoot, 'files', 'notes', 'approved.md')
+    const basePath = path.join(stagingRoot, 'base', 'notes', 'approved.md')
+    const metaPath = path.join(stagingRoot, 'meta', `${sha('notes/approved.md')}.json`)
+    await Promise.all([
+      fs.mkdir(path.dirname(stagedPath), { recursive: true }),
+      fs.mkdir(path.dirname(basePath), { recursive: true }),
+      fs.mkdir(path.dirname(metaPath), { recursive: true }),
+    ])
+    await Promise.all([
+      fs.writeFile(stagedPath, content, 'utf8'),
+      fs.writeFile(basePath, '', 'utf8'),
+      fs.writeFile(metaPath, '{}', 'utf8'),
+    ])
     await state.streamEvent!({
       type: 'approval_required', runId: started.data.runId, step: 1, stepId: 'step-1', callId: 'call-1',
       approvalId: 'approval-1', tool: 'file_patch',
@@ -85,15 +96,81 @@ describe('Agent approval IPC trusted boundary', () => {
 
     expect(owner.send).toHaveBeenCalledWith('agent:runStream:event', expect.objectContaining({
       requestId: 'request-1',
-      proposal: expect.objectContaining({ proposed_content: '' }),
+      proposal: {
+        path: 'notes/approved.md',
+        operation: 'create',
+        unified_diff: '--- /dev/null\n+++ notes/approved.md\n+# approved',
+      },
     }))
+    const forwardedProposal = owner.send.mock.calls.at(-1)?.[1]?.proposal
+    expect(forwardedProposal).not.toHaveProperty('proposed_content')
+    expect(forwardedProposal).not.toHaveProperty('proposed_sha256')
 
+    const list = state.handlers.get('agent:approvals:list')!
+    expect(await list({ sender: owner }, 'workspace-1')).toEqual({
+      success: true,
+      data: [expect.objectContaining({ approvalId: 'approval-1', path: 'notes/approved.md' })],
+    })
+    abortAllAgentRuns()
     const resolve = state.handlers.get('agent:approval:resolve')!
-    expect(await resolve({ sender: owner }, 'approval-1', true)).toEqual({ success: true, data: { applied: true } })
+    expect(await resolve({ sender: owner }, 'workspace-1', 'approval-1', true)).toEqual({ success: true, data: { applied: true } })
     expect(await fs.readFile(path.join(state.workspacePath, 'notes/approved.md'), 'utf8')).toBe(content)
-    expect(state.resolveAgentApproval).toHaveBeenCalledWith('approval-1', 'approved', undefined, true)
+    await expect(fs.stat(stagedPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(fs.stat(basePath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(fs.stat(metaPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(fs.stat(stagingRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await resolve({ sender: owner }, 'workspace-1', 'approval-1', true)).success).toBe(false)
+  })
 
-    expect((await resolve({ sender: owner }, 'approval-1', true)).success).toBe(false)
+  it('supersedes an earlier pending proposal when the same run patches the same path again', async () => {
+    const owner = sender(151)
+    const started = await state.handlers.get('agent:runStream:start')!({ sender: owner }, 'request-supersede', 'workspace-1', { input: 'patch twice' })
+    await vi.waitFor(() => expect(state.streamEvent).toBeTypeOf('function'))
+    const emitProposal = async (approvalId: string, callId: string, content: string) => state.streamEvent!({
+      type: 'approval_required', runId: started.data.runId, step: 1, stepId: callId, callId,
+      approvalId, tool: 'file_patch', requestedAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+      proposal: {
+        requiresApproval: true,
+        path: 'notes/revised.md', operation: 'create', unified_diff: `+${content.trim()}`,
+        expected_sha256: null, proposed_sha256: sha(content), proposed_content: content,
+      },
+    })
+
+    await emitProposal('approval-old', 'call-old', 'first\n')
+    await emitProposal('approval-latest', 'call-latest', 'second\n')
+
+    const listed = await state.handlers.get('agent:approvals:list')!({ sender: owner }, 'workspace-1')
+    expect(listed).toEqual({
+      success: true,
+      data: [expect.objectContaining({ approvalId: 'approval-latest', path: 'notes/revised.md' })],
+    })
+    const oldResult = await state.handlers.get('agent:approval:resolve')!({ sender: owner }, 'workspace-1', 'approval-old', true)
+    expect(oldResult).toEqual({ success: false, error: '审批已完成或不存在' })
+  })
+
+  it('expires overdue proposals during pending-list hydration', async () => {
+    const owner = sender(201)
+    const started = await state.handlers.get('agent:runStream:start')!({ sender: owner }, 'request-expired', 'workspace-1', { input: 'create expired note' })
+    await vi.waitFor(() => expect(state.streamEvent).toBeTypeOf('function'))
+
+    const content = '# expired\n'
+    await state.streamEvent!({
+      type: 'approval_required', runId: started.data.runId, step: 1, stepId: 'step-expired', callId: 'call-expired',
+      approvalId: 'approval-expired', tool: 'file_patch',
+      requestedAt: new Date(Date.now() - 120_000).toISOString(), deadlineAt: new Date(Date.now() - 60_000).toISOString(),
+      proposal: {
+        requiresApproval: true,
+        path: 'notes/expired.md', operation: 'create', unified_diff: '--- /dev/null\n+++ notes/expired.md\n+# expired',
+        expected_sha256: null, proposed_sha256: sha(content), proposed_content: content,
+      },
+    })
+
+    const listed = await state.handlers.get('agent:approvals:list')!({ sender: owner }, 'workspace-1')
+    expect(listed).toEqual({ success: true, data: [] })
+    const persisted = await state.handlers.get('agent:ledger:getRun')!({ sender: owner }, 'workspace-1', started.data.runId)
+    expect(persisted.data.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'approval_resolved', payload: expect.objectContaining({ approvalId: 'approval-expired', status: 'expired' }) }),
+    ]))
   })
 
   it('ignores renderer attempts to disable tools or change execution limits', async () => {
@@ -168,7 +245,7 @@ describe('Agent approval IPC trusted boundary', () => {
       proposal: { requiresApproval: true, path: 'notes/blocked.md', operation: 'create', unified_diff: '+secret', expected_sha256: null, proposed_sha256: sha(content), proposed_content: content },
     })
 
-    expect((await state.handlers.get('agent:approval:resolve')!({ sender: attacker }, 'approval-2', true)).success).toBe(false)
+    expect((await state.handlers.get('agent:approval:resolve')!({ sender: attacker }, 'workspace-1', 'approval-2', true)).success).toBe(false)
     await expect(fs.stat(path.join(state.workspacePath, 'notes/blocked.md'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

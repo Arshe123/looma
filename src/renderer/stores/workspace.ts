@@ -923,8 +923,9 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     openAgentDiffPage(payload: AgentDiffViewState) {
       const path = normalizeAiAssistantSourcePath(payload.path)
-      if (!path || !payload.approvalId || !payload.conversationId) return false
+      if (!path || !payload.approvalId || !payload.conversationId || !payload.workspaceId) return false
       this.activeAgentDiff = {
+        workspaceId: payload.workspaceId,
         conversationId: payload.conversationId,
         approvalId: payload.approvalId,
         path,
@@ -1786,6 +1787,23 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.mirrorActiveTextFileState(rel)
     },
 
+    async refreshOpenTextFileContentFromDisk(relativePath: string) {
+      const rel = normalizeDir(relativePath)
+      if (!rel || !this.openedTextFileContents[rel]) return { success: true as const }
+      const absPath = this.resolveAbsolutePath(rel)
+      if (!absPath || !isEditableTextPath(absPath)) return { success: true as const }
+      const result = await window.electronAPI.file.readMarkdown(absPath)
+      if (!result.success || result.data === undefined) return result
+      this.openedTextFileContents[rel] = {
+        content: result.data,
+        loadedContent: result.data,
+        isSaving: false,
+        saveError: '',
+      }
+      this.mirrorActiveTextFileState(rel)
+      return result
+    },
+
     async saveActiveFileContent(content?: string, relativePath?: string) {
       const rel = normalizeDir(relativePath ?? this.activeFileRelativePath)
       const absPath = this.resolveAbsolutePath(rel)
@@ -1802,7 +1820,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         saveError: '',
       }
       this.mirrorActiveTextFileState(rel)
-      const r = await window.electronAPI.file.writeMarkdown(absPath, next)
+      const expectedContent = currentState?.loadedContent
+      const r = await window.electronAPI.file.writeMarkdown(absPath, next, expectedContent)
       const latestState = this.openedTextFileContents[rel]
       if (!r.success) {
         this.openedTextFileContents[rel] = {

@@ -41,7 +41,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readMarkdown: (filePath: string) => ipcRenderer.invoke('file:readMarkdown', filePath),
     readFileBase64: (filePath: string) => ipcRenderer.invoke('file:readFileBase64', filePath),
     getFileStats: (filePath: string) => ipcRenderer.invoke('file:getFileStats', filePath),
-    writeMarkdown: (filePath: string, content: string) => ipcRenderer.invoke('file:writeMarkdown', filePath, content),
+    writeMarkdown: (filePath: string, content: string, expectedContent?: string) =>
+      ipcRenderer.invoke('file:writeMarkdown', filePath, content, expectedContent),
   },
   app: {
     onCommand: (listener: (payload: { id: string }) => void) => {
@@ -123,8 +124,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resumeRun: (requestId: string, workspaceId: string, parentRunId: string) => ipcRenderer.invoke('agent:runStream:resume', requestId, workspaceId, parentRunId),
     summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) =>
       ipcRenderer.invoke('agent:summarizeConversation', messages, maxChars),
-    resolveApproval: (approvalId: string, approved: boolean) =>
-      ipcRenderer.invoke('agent:approval:resolve', approvalId, approved),
+    listApprovals: (workspaceId: string) => ipcRenderer.invoke('agent:approvals:list', workspaceId),
+    resolveApproval: (workspaceId: string, approvalId: string, approved: boolean) =>
+      ipcRenderer.invoke('agent:approval:resolve', workspaceId, approvalId, approved),
     runStream: {
       start: (requestId: string, workspaceId: string, options: AgentRunOptionsPayload) =>
         ipcRenderer.invoke('agent:runStream:start', requestId, workspaceId, options),

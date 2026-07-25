@@ -81,18 +81,15 @@ const operationTimeLabel = (event: AgentConversationDisplayEvent) => {
     <button
       v-else-if="event.kind === 'file_review' && event.fileReview"
       type="button"
-      class="flex w-full items-center gap-2.5 rounded-lg border border-border-soft bg-panel px-2.5 py-2 text-left transition-colors hover:border-accent/40 hover:bg-accent-soft/30"
+      class="inline-flex max-w-full items-center gap-1.5 px-1 py-0.5 text-left text-[10px] leading-4 text-text-muted transition-colors hover:text-text-main"
       @click="emit('openDiff', event.fileReview)"
     >
-      <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-panel-soft text-accent"><FileDiff :size="14" /></span>
-      <span class="min-w-0 flex-1">
-        <strong class="block truncate text-[10px] font-semibold text-text-main">{{ event.fileReview.path.split('/').pop() }}</strong>
-        <small class="mt-0.5 block truncate text-[8px] text-text-subtle">{{ event.fileReview.path }}</small>
-      </span>
-      <span class="text-[9px] text-success">+{{ event.fileReview.additions }}</span>
-      <span class="text-[9px] text-danger">−{{ event.fileReview.deletions }}</span>
-      <span class="shrink-0 text-[9px]" :class="statusClass(fileStatus(event) as AgentConversationDisplayEvent['status'])">{{ statusLabel(fileStatus(event) as AgentConversationDisplayEvent['status']) }}</span>
-      <span class="text-text-subtle">›</span>
+      <FileDiff :size="11" class="shrink-0" :class="statusClass(fileStatus(event) as AgentConversationDisplayEvent['status'])" />
+      <span class="shrink-0">文件审查</span>
+      <span class="truncate text-text-subtle">· {{ event.fileReview.path }}</span>
+      <span class="shrink-0 text-success">+{{ event.fileReview.additions }}</span>
+      <span class="shrink-0 text-danger">−{{ event.fileReview.deletions }}</span>
+      <span class="shrink-0" :class="statusClass(fileStatus(event) as AgentConversationDisplayEvent['status'])">· {{ statusLabel(fileStatus(event) as AgentConversationDisplayEvent['status']) }}</span>
     </button>
   </template>
 </template>

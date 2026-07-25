@@ -5,6 +5,7 @@ import path from 'path'
 import { createHash, randomUUID } from 'crypto'
 import type { WebContents } from 'electron'
 import type { Result } from '../../../shared/types/Result'
+import { withFileWriteLock } from './fileWriteLock'
 
 export type WatchState = {
   workspacePath: string
@@ -78,7 +79,7 @@ const assertNoLinksOrReparsePoints = async (root: string, parts: string[]) => {
   }
 }
 
-export const applyAgentFileProposal = async (
+const applyAgentFileProposalUnlocked = async (
   workspacePath: string,
   proposal: AgentFileProposal,
 ): Promise<Result<AgentFileApplyResult>> => {
@@ -168,6 +169,16 @@ export const applyAgentFileProposal = async (
     if (tempPath) await fs.unlink(tempPath).catch(() => {})
     return { success: false, error: error?.message || '应用文件修改失败', errorCode: 'AGENT_PATCH_APPLY_FAILED' }
   }
+}
+
+export const applyAgentFileProposal = async (
+  workspacePath: string,
+  proposal: AgentFileProposal,
+): Promise<Result<AgentFileApplyResult>> => {
+  const relativePath = typeof proposal?.path === 'string' ? proposal.path : '__invalid_agent_path__'
+  return withFileWriteLock(path.resolve(workspacePath, relativePath), () => (
+    applyAgentFileProposalUnlocked(workspacePath, proposal)
+  ))
 }
 
 const toFsEntryFromDirent = (root: string, parentAbs: string, d: import('fs').Dirent): FsEntry => {

@@ -12,10 +12,9 @@ from pydantic import Field, root_validator
 
 from agent.security import WorkspaceSecurityError
 from agent.tools.base import AgentTool, AgentToolContext, StrictToolArgs
+from agent.tools.staging import AgentStagingArea, StagedFile
 from agent.tools.workspace_common import (
-    observation_path,
     open_regular_no_follow,
-    relative_posix,
     resolve_no_follow_workspace_path,
 )
 
@@ -51,7 +50,11 @@ class FilePatchArgs(StrictToolArgs):
 
 class FilePatchTool(AgentTool):
     name = "file_patch"
-    description = "Prepare a UTF-8 text file create/update proposal without writing to disk."
+    description = (
+        "Modify a run-isolated staged copy of one UTF-8 workspace file. Consecutive calls "
+        "use the previous staged content; Electron approval is required before the "
+        "cumulative change is written to the workspace."
+    )
     risk_level = "write"
     args_model = FilePatchArgs
 
@@ -61,92 +64,80 @@ class FilePatchTool(AgentTool):
     def _execute_sync(self, context: AgentToolContext, args: StrictToolArgs) -> dict[str, object]:
         if not isinstance(args, FilePatchArgs):
             raise TypeError("args must be FilePatchArgs")
-        if args.new_content is not None:
-            return self._build_create_proposal(context, args)
-        return self._build_update_proposal(context, args)
-
-    def _build_create_proposal(
-        self, context: AgentToolContext, args: FilePatchArgs
-    ) -> dict[str, object]:
         try:
             target = resolve_no_follow_workspace_path(context.workspace_path, args.path)
-            workspace = resolve_no_follow_workspace_path(context.workspace_path, ".")
+            staging = AgentStagingArea(context.workspace_path, context.run_id)
+            staged = staging.load(args.path)
         except WorkspaceSecurityError as exc:
             raise ValueError(exc.code) from None
-        if os.path.lexists(target):
-            raise ValueError("target already exists")
-        assert args.new_content is not None
-        self._validate_proposed_content(args.new_content)
-        return self._proposal(
-            workspace=workspace,
-            target=target,
-            operation="create",
-            original_content="",
-            proposed_content=args.new_content,
-            expected_sha256=None,
-        )
 
-    def _build_update_proposal(
-        self, context: AgentToolContext, args: FilePatchArgs
-    ) -> dict[str, object]:
+        if staged is None:
+            original_content = self._read_utf8_text(target) if os.path.lexists(target) else None
+            if args.new_content is not None:
+                if original_content is not None:
+                    raise ValueError("target already exists")
+                proposed_content = args.new_content
+            else:
+                if original_content is None:
+                    raise ValueError("target does not exist")
+                assert args.old_text is not None
+                assert args.new_text is not None
+                matches = original_content.count(args.old_text)
+                if matches != 1:
+                    raise ValueError("old_text must match exactly once in the current staged file")
+                proposed_content = original_content.replace(args.old_text, args.new_text, 1)
+            self._validate_proposed_content(proposed_content)
+            try:
+                staged = staging.initialize(args.path, original_content)
+            except WorkspaceSecurityError as exc:
+                raise ValueError(exc.code) from None
+        elif args.new_content is not None:
+            proposed_content = args.new_content
+            self._validate_proposed_content(proposed_content)
+        else:
+            assert args.old_text is not None
+            assert args.new_text is not None
+            matches = staged.current_content.count(args.old_text)
+            if matches != 1:
+                raise ValueError("old_text must match exactly once in the current staged file")
+            proposed_content = staged.current_content.replace(args.old_text, args.new_text, 1)
+            self._validate_proposed_content(proposed_content)
+
         try:
-            target = resolve_no_follow_workspace_path(
-                context.workspace_path, args.path, must_exist=True
-            )
-            workspace = resolve_no_follow_workspace_path(context.workspace_path, ".")
+            staged = staging.write(staged, proposed_content)
         except WorkspaceSecurityError as exc:
             raise ValueError(exc.code) from None
-        original_content = self._read_utf8_text(target)
-        assert args.old_text is not None
-        assert args.new_text is not None
-        matches = original_content.count(args.old_text)
-        if matches != 1:
-            raise ValueError("old_text must match exactly once")
-        proposed_content = original_content.replace(args.old_text, args.new_text, 1)
-        self._validate_proposed_content(proposed_content)
-        return self._proposal(
-            workspace=workspace,
-            target=target,
-            operation="update",
-            original_content=original_content,
-            proposed_content=proposed_content,
-            expected_sha256=self._sha256(original_content),
-        )
+        return self._proposal(staged=staged, proposed_content=proposed_content)
 
     def _proposal(
         self,
         *,
-        workspace: Path,
-        target: Path,
-        operation: str,
-        original_content: str,
+        staged: StagedFile,
         proposed_content: str,
-        expected_sha256: str | None,
     ) -> dict[str, object]:
-        path = (
-            observation_path(target.name)
-            if target == workspace
-            else relative_posix(workspace, target)
-        )
-        from_name = "/dev/null" if operation == "create" else path
-        to_name = path
+        from_name = "/dev/null" if staged.operation == "create" else staged.path
         unified_diff = "".join(
             difflib.unified_diff(
-                original_content.splitlines(keepends=True),
+                staged.base_content.splitlines(keepends=True),
                 proposed_content.splitlines(keepends=True),
                 fromfile=from_name,
-                tofile=to_name,
+                tofile=staged.path,
                 lineterm="",
             )
         )
         return {
             "requiresApproval": True,
-            "path": path,
-            "operation": operation,
+            "path": staged.path,
+            "operation": staged.operation,
             "unified_diff": unified_diff,
-            "expected_sha256": expected_sha256,
+            "expected_sha256": staged.expected_sha256,
             "proposed_sha256": self._sha256(proposed_content),
             "proposed_content": proposed_content,
+            "staging": {
+                "run_id": staged.run_id,
+                "source": "staged_copy",
+                "workspace_disk_changed": False,
+            },
         }
 
     def _read_utf8_text(self, target: Path) -> str:

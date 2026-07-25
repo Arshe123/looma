@@ -8,6 +8,7 @@ import { normalizeAiAssistantSourcePath } from '@/renderer/stores/workspace-ai-u
 import type { AiAssistantMessage, AiAssistantMessageAction } from '@/renderer/stores/workspace'
 import AiMarkdown from './AiMarkdown.vue'
 import AgentConversationFlow from './AgentConversationFlow.vue'
+import AgentFileReviewFloat from './AgentFileReviewFloat.vue'
 import AgentRecoveryCard from './AgentRecoveryCard.vue'
 import AgentRagSources from './AgentRagSources.vue'
 import type { AgentFileReviewDisplayData } from './agentConversationDisplay'
@@ -97,8 +98,9 @@ const getMessageApprovals = (message: AiAssistantMessage) => {
 
 const openAgentDiff = (review: AgentFileReviewDisplayData) => {
   const conversationId = activeConversationId.value
-  if (!conversationId) return
-  const opened = workspaceStore.openAgentDiffPage({ conversationId, ...review })
+  const workspaceId = workspaceStore.activeWorkspaceId
+  if (!conversationId || !workspaceId) return
+  const opened = workspaceStore.openAgentDiffPage({ workspaceId, conversationId, ...review })
   if (!opened) appendMessage('system', '无法打开文件对比：文件路径或审批信息无效。')
 }
 
@@ -406,6 +408,7 @@ onMounted(() => {
   backfillLegacyAiNames()
   scrollToBottom()
   checkIndexStatus().catch(console.error)
+  aiAssistStore.refreshPendingFileReviews(workspaceStore.activeWorkspaceId).catch(console.error)
 })
 
 onBeforeUnmount(() => {
@@ -420,6 +423,7 @@ watch(() => workspaceStore.activeWorkspaceId, (_nextWorkspaceId, oldWorkspaceId)
   closeAiContextMenu()
   backfillLegacyAiNames()
   checkIndexStatus().catch(console.error)
+  aiAssistStore.refreshPendingFileReviews(_nextWorkspaceId).catch(console.error)
 })
 watch(activeConversationId, () => {
   closeAiContextMenu()
@@ -653,7 +657,12 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
       </div>
     </div>
 
-    <footer class="shrink-0 border-t border-border-soft bg-panel px-3 py-3">
+    <footer class="relative shrink-0 border-t border-border-soft bg-panel px-3 py-3">
+      <AgentFileReviewFloat
+        v-if="workspaceStore.activeWorkspaceId && activeConversationId"
+        :workspace-id="workspaceStore.activeWorkspaceId"
+        :conversation-id="activeConversationId"
+      />
       <form
         class="rounded-2xl border border-border-soft bg-panel-soft p-2.5 shadow-sm"
         @submit.prevent="askQuestion"

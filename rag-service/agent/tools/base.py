@@ -23,6 +23,7 @@ class AgentToolContext:
     """Execution context shared by tools without coupling them to the runtime."""
 
     workspace_path: Path | str
+    run_id: str | None = None
     ai_config: AIConfig | None = None
     knowledge: KnowledgeConfig | None = None
 

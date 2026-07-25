@@ -10,6 +10,7 @@ vi.mock('electron', () => ({
 }))
 
 import { applyAgentFileProposal, type AgentFileProposal } from '../fileSystemService'
+import { fileService } from '../fileService'
 
 const hash = (value: string) => createHash('sha256').update(Buffer.from(value, 'utf8')).digest('hex')
 const proposal = (overrides: Partial<AgentFileProposal> = {}): AgentFileProposal => {
@@ -64,6 +65,21 @@ describe('applyAgentFileProposal', () => {
     }))
     expect(result.success).toBe(false)
     expect(await fs.readFile(target, 'utf8')).toBe('changed\n')
+  })
+
+  it('prevents stale editor content from overwriting an applied Agent proposal', async () => {
+    const target = path.join(workspace, 'notes/a.md')
+    await fs.writeFile(target, 'old\n')
+    const applied = await applyAgentFileProposal(workspace, proposal({
+      operation: 'update',
+      expected_sha256: hash('old\n'),
+    }))
+    expect(applied.success).toBe(true)
+
+    const staleSave = await fileService.writeMarkdown(target, 'old\n', 'old\n')
+
+    expect(staleSave).toMatchObject({ success: false, errorCode: 'FILE_CHANGED_ON_DISK' })
+    expect(await fs.readFile(target, 'utf8')).toBe('new content\n')
   })
 
   it.each(['../outside.md', '.looma/secret', 'notes/a.md:stream', 'notes/CON', 'C:/outside.md'])('rejects unsafe path %s', async (unsafePath) => {

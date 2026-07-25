@@ -209,10 +209,3 @@ class AgentRunRequest(StrictAgentModel):
         if parent_run_id and parent_run_id == values.get("run_id"):
             raise ValueError("continuation run_id must differ from parent_run_id")
         return values
-
-
-class AgentApprovalResolveRequest(StrictAgentModel):
-    approval_id: str = Field(..., min_length=1)
-    status: Literal["approved", "rejected"]
-    reason: Optional[str] = None
-    applied: Optional[bool] = None

@@ -6,7 +6,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from agent.approvals import ApprovalManager, ApprovalResolution
 from agent.events import error_event, event, utc_iso_z
 from agent.models import AgentError
 from agent.runtime import AgentRuntime
@@ -34,7 +33,6 @@ from rag.index_manager import (
 )
 from schemas import (
     AIConfig,
-    AgentApprovalResolveRequest,
     AgentRunRequest,
     ChatMessage,
     AgentSummarizeRequest,
@@ -46,7 +44,6 @@ from schemas import (
 )
 
 app = FastAPI(title="Looma Agent Service")
-approval_manager = ApprovalManager()
 
 app.add_middleware(
     CORSMiddleware,
@@ -214,7 +211,7 @@ async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
 
         provider = create_chat_provider(request.ai_config.chat)
         # Product policy explicitly allows every built-in Agent tool. Write-risk tools
-        # still require request.agent.allow_write and always pause for Electron approval.
+        # still require request.agent.allow_write and enqueue non-blocking Electron review.
         registry = ToolRegistry(allowed_tools=DEFAULT_AGENT_TOOLS)
         registry.register(RagSearchTool())
         registry.register(WorkspaceListTool())
@@ -228,10 +225,10 @@ async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
                 workspace_path=(
                     request.workspace.workspace_path if request.workspace is not None else "."
                 ),
+                run_id=run_id,
                 ai_config=request.ai_config,
                 knowledge=request.knowledge,
             ),
-            approval_manager=approval_manager,
         )
         async for runtime_event in runtime.run(
             input=request.input,
@@ -272,23 +269,3 @@ async def agent_run_stream(request: AgentRunRequest):
         agent_run_events(request),
         media_type="application/x-ndjson; charset=utf-8",
     )
-
-
-@app.post("/agent/approvals/resolve")
-async def agent_approval_resolve(request: AgentApprovalResolveRequest):
-    try:
-        approval = await approval_manager.resolve(
-            request.approval_id,
-            ApprovalResolution(
-                status=request.status,
-                reason=request.reason,
-                applied=request.applied,
-            ),
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="approval not found") from exc
-    return {
-        "approvalId": approval.approval_id,
-        "runId": approval.run_id,
-        "status": request.status,
-    }

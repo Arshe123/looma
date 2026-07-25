@@ -82,6 +82,12 @@ class FakeProvider:
             raise
 
 
+class FakeAPIStatusError(Exception):
+    def __init__(self, status_code, message="api_key=must-not-leak"):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 async def collect(runtime, **kwargs):
     return [event async for event in runtime.run(**kwargs)]
 
@@ -634,6 +640,76 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("super-secret", rendered)
         self.assertIn("RuntimeError", events[-1]["error"]["technical_detail"])
 
+    async def test_provider_insufficient_balance_is_actionable_and_sanitized(self):
+        provider = FakeProvider([FakeAPIStatusError(402)])
+        events = await collect(
+            build_runtime(provider), input="问", history=[], config=AgentConfig(enabled_tools=[]),
+        )
+
+        error = events[-1]["error"]
+        self.assertEqual(error["code"], "provider_insufficient_balance")
+        self.assertEqual(error["message"], "模型服务账户余额不足，请充值后重试。")
+        self.assertEqual(error["technical_detail"], "FakeAPIStatusError (HTTP 402)")
+        self.assertFalse(error["retryable"])
+        self.assertNotIn("must-not-leak", json.dumps(events, ensure_ascii=False))
+
+    async def test_provider_rate_limit_and_unavailable_are_retryable(self):
+        for status, code in ((429, "provider_rate_limited"), (503, "provider_unavailable")):
+            with self.subTest(status=status):
+                events = await collect(
+                    build_runtime(FakeProvider([FakeAPIStatusError(status)])),
+                    input="问",
+                    history=[],
+                    config=AgentConfig(enabled_tools=[]),
+                )
+                self.assertEqual(events[-1]["error"]["code"], code)
+                self.assertTrue(events[-1]["error"]["retryable"])
+
+    async def test_oversized_file_patch_still_emits_full_approval_proposal(self):
+        proposed_content = "# expanded\n" + ("content line\n" * 200)
+        proposal = {
+            "requiresApproval": True,
+            "path": "notes.md",
+            "operation": "update",
+            "expected_sha256": "a" * 64,
+            "proposed_sha256": "b" * 64,
+            "proposed_content": proposed_content,
+            "unified_diff": "--- a/notes.md\n+++ b/notes.md\n" + ("+content line\n" * 200),
+        }
+        tool = FakeWriteTool(result=proposal)
+        registry = ToolRegistry(allowed_tools=["file_patch"], max_output_chars=256)
+        registry.register(tool)
+        provider = FakeProvider([
+            AgentToolCall(
+                type="tool_call",
+                thought_summary="更新笔记",
+                tool="file_patch",
+                arguments={"value": "change"},
+            ),
+            AgentFinalAnswer(type="final", answer="已提交审查"),
+        ])
+        runtime = AgentRuntime(
+            provider=provider,
+            registry=registry,
+            context=AgentToolContext(workspace_path="."),
+        )
+
+        events = await collect(
+            runtime,
+            input="完善笔记",
+            history=[],
+            config=AgentConfig(enabled_tools=["file_patch"], allow_write=True),
+        )
+
+        approval = next(event for event in events if event["type"] == "approval_required")
+        self.assertEqual(approval["proposal"]["proposed_content"], proposed_content)
+        self.assertEqual(approval["proposal"]["unified_diff"], proposal["unified_diff"])
+        result = next(event["result"] for event in events if event["type"] == "tool_result")
+        self.assertTrue(result["success"])
+        self.assertEqual(result["modelContext"]["structuredData"]["status"], "pending_approval")
+        self.assertNotIn("proposed_content", json.dumps(result, ensure_ascii=False))
+        self.assertEqual(events[-1]["answer"], "已提交审查")
+
     async def test_tool_exception_detail_is_sanitized_before_client_event(self):
         tool = FailingFakeTool()
         provider = FakeProvider([
@@ -793,6 +869,7 @@ class AgentMainStreamTest(unittest.IsolatedAsyncioTestCase):
 
         paths = {route.path for route in main.app.routes}
         self.assertIn("/agent/run/stream", paths)
+        self.assertNotIn("/agent/approvals/resolve", paths)
         self.assertIn("/agent/summarize", paths)
         self.assertNotIn("/chat", paths)
         self.assertNotIn("/chat/stream", paths)

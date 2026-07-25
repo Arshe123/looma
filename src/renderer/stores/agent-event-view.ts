@@ -33,6 +33,23 @@ const approvalDisplayStatus = (
   return status
 }
 
+export const isArtifactBackedFilePatchBridgeInterruption = (events: AgentEvent[]) => {
+  const orderedEvents = ordered(events)
+  const bridgeFailure = [...orderedEvents].reverse().find(event => event.type === 'run_failed')
+  if (bridgeFailure?.type !== 'run_failed' || bridgeFailure.payload.code !== 'agent_bridge_failed') return false
+  const indexes = projectEventIndexes(events)
+  const artifactCallIds = new Set(events.flatMap(event => event.type === 'artifact_created' ? [event.payload.callId] : []))
+  const toolByCallId = new Map(events.flatMap(event => event.type === 'tool_call_requested'
+    ? [[event.payload.callId, event.payload.tool] as const]
+    : []))
+  const unfinishedCallIds = Object.values(indexes.toolCalls)
+    .filter(call => call.status === 'running')
+    .map(call => call.callId)
+  return unfinishedCallIds.length > 0 && unfinishedCallIds.every(callId => (
+    toolByCallId.get(callId) === 'file_patch' && artifactCallIds.has(callId)
+  ))
+}
+
 export const projectAgentApprovals = (events: AgentEvent[]): ProjectedAgentApproval[] => {
   const indexes = projectEventIndexes(events)
   const artifacts = new Map<string, Extract<AgentEvent, { type: 'artifact_created' }>['payload']>()
@@ -60,8 +77,10 @@ export const projectAgentApprovals = (events: AgentEvent[]): ProjectedAgentAppro
 
 export const projectAgentDisplayEvents = (events: AgentEvent[]): AgentConversationDisplayEvent[] => {
   const indexes = projectEventIndexes(events)
+  const state = foldAgentState(events)
   const approvals = indexes.approvals
   const approvalByArtifact = new Map(Object.values(approvals).map((approval) => [approval.artifactId, approval]))
+  const artifactCallIds = new Set(events.flatMap(event => event.type === 'artifact_created' ? [event.payload.callId] : []))
   const result: AgentConversationDisplayEvent[] = []
 
   for (const event of ordered(events)) {
@@ -81,6 +100,8 @@ export const projectAgentDisplayEvents = (events: AgentEvent[]): AgentConversati
     }
     if (event.type === 'tool_call_requested') {
       const call = indexes.toolCalls[event.payload.callId]
+      const patchProposalCreated = event.payload.tool === 'file_patch' && artifactCallIds.has(event.payload.callId)
+      const interrupted = call?.status === 'running' && ['failed', 'cancelled'].includes(state.status)
       result.push({
         id: event.id,
         order: event.sequence,
@@ -88,17 +109,25 @@ export const projectAgentDisplayEvents = (events: AgentEvent[]): AgentConversati
         stepId: event.payload.stepId,
         callId: event.payload.callId,
         title: `调用 ${event.payload.tool}`,
-        content: call?.status === 'completed'
+        content: patchProposalCreated
+          ? '文件修改提案已生成，等待审查。'
+          : call?.status === 'completed'
           ? '工具调用已完成。'
           : call?.status === 'failed'
             ? '工具调用失败。'
+            : interrupted
+              ? '运行已中断，未收到工具结果。'
             : event.payload.tool === 'file_patch'
               ? '正在生成文件修改提案。'
               : `正在执行工具 ${event.payload.tool}。`,
         tool: event.payload.tool,
         argumentsPreview: jsonPreview(event.payload.argumentsPreview),
         durationMs: call?.durationMs,
-        status: call?.status === 'failed' ? 'error' : call?.status === 'completed' ? 'completed' : 'active',
+        status: patchProposalCreated || call?.status === 'completed'
+          ? 'completed'
+          : call?.status === 'failed' || interrupted
+            ? 'error'
+            : 'active',
         createdAt: event.timestamp,
       })
       continue
@@ -133,6 +162,8 @@ export const projectAgentTimeline = (events: AgentEvent[], sources: AgentSource[
   const indexes = projectEventIndexes(events)
   const state = foldAgentState(events)
   const cancelledAt = ordered(events).find((event) => event.type === 'run_cancelled')?.timestamp
+  const failedAt = ordered(events).find((event) => event.type === 'run_failed')?.timestamp
+  const artifactCallIds = new Set(events.flatMap(event => event.type === 'artifact_created' ? [event.payload.callId] : []))
   const steps: AiAssistantTimelineStep[] = []
   const started = ordered(events).find((event) => event.type === 'agent_started')
   if (started) {
@@ -143,6 +174,8 @@ export const projectAgentTimeline = (events: AgentEvent[], sources: AgentSource[
     const call = indexes.toolCalls[event.payload.callId]
     const failed = call?.status === 'failed'
     const cancelled = state.status === 'cancelled' && call?.status === 'running'
+    const interrupted = state.status === 'failed' && call?.status === 'running'
+    const patchProposalCreated = event.payload.tool === 'file_patch' && artifactCallIds.has(event.payload.callId)
     const outputs: AiAssistantTimelineOutput[] = [{ id: `${event.id}-arguments`, type: 'json', title: '调用参数', content: jsonPreview(event.payload.argumentsPreview) }]
     if (call?.uiSummary) outputs.push({
       id: `${event.id}-result`,
@@ -154,10 +187,28 @@ export const projectAgentTimeline = (events: AgentEvent[], sources: AgentSource[
     steps.push({
       id: event.payload.stepId,
       title: `调用 ${event.payload.tool}`,
-      detail: cancelled ? '运行已取消。' : call?.uiSummary,
-      status: cancelled ? 'completed' : failed ? 'error' : call?.status === 'completed' ? 'completed' : 'active',
+      detail: patchProposalCreated
+        ? '文件修改提案已生成，等待审查。'
+        : cancelled
+          ? '运行已取消。'
+          : interrupted
+            ? '运行已中断，未收到工具结果。'
+            : call?.uiSummary,
+      status: patchProposalCreated || cancelled
+        ? 'completed'
+        : failed || interrupted
+          ? 'error'
+          : call?.status === 'completed'
+            ? 'completed'
+            : 'active',
       startedAt: event.payload.startedAt,
-      endedAt: cancelled ? cancelledAt : call?.endedAt,
+      endedAt: patchProposalCreated
+        ? ordered(events).find(item => item.type === 'artifact_created' && item.payload.callId === event.payload.callId)?.timestamp
+        : cancelled
+          ? cancelledAt
+          : interrupted
+            ? failedAt
+            : call?.endedAt,
       outputs,
     })
   }

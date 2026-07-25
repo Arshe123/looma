@@ -6,7 +6,7 @@ from pathlib import Path
 from agent.approvals import ApprovalManager, ApprovalResolution
 from agent.models import AgentFinalAnswer, AgentToolCall
 from agent.runtime import AgentRuntime
-from agent.tools import AgentToolContext, FilePatchTool, ToolRegistry
+from agent.tools import AgentToolContext, FilePatchTool, FileReadTool, ToolRegistry
 from schemas import AgentConfig
 
 
@@ -63,42 +63,13 @@ class ApprovalManagerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(resolution.status, "cancelled")
 
-    async def test_main_resolve_endpoint_and_route(self):
-        import main
-
-        manager = ApprovalManager(default_timeout_seconds=30)
-        approval = manager.create(
-            run_id="run-1",
-            step_id="step-1",
-            call_id="call-1",
-            tool_name="file_patch",
-            payload={"path": "a.txt"},
-        )
-        original = main.approval_manager
-        main.approval_manager = manager
-        try:
-            response = await main.agent_approval_resolve(
-                main.AgentApprovalResolveRequest(
-                    approval_id=approval.approval_id,
-                    status="approved",
-                    reason="ok",
-                    applied=True,
-                )
-            )
-            self.assertEqual(response["approvalId"], approval.approval_id)
-            self.assertEqual(response["status"], "approved")
-            self.assertIn("/agent/approvals/resolve", {route.path for route in main.app.routes})
-        finally:
-            main.approval_manager = original
-
-
 class AgentApprovalRuntimeTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         import tempfile
 
-        self.manager = ApprovalManager(default_timeout_seconds=30)
-        self.registry = ToolRegistry(allowed_tools={"file_patch"})
+        self.registry = ToolRegistry(allowed_tools={"file_patch", "file_read"})
         self.registry.register(FilePatchTool())
+        self.registry.register(FileReadTool())
         self._temp_dir = tempfile.TemporaryDirectory()
         self.workspace = Path(self._temp_dir.name)
         self.context = AgentToolContext(workspace_path=self.workspace)
@@ -111,10 +82,9 @@ class AgentApprovalRuntimeTest(unittest.IsolatedAsyncioTestCase):
             provider=provider,
             registry=self.registry,
             context=self.context,
-            approval_manager=self.manager,
         )
 
-    async def test_approval_required_then_approved_continues_to_final(self):
+    async def test_file_patch_is_queued_without_blocking_final_answer(self):
         provider = FakeProvider([
             AgentToolCall(
                 type="tool_call",
@@ -122,165 +92,94 @@ class AgentApprovalRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 tool="file_patch",
                 arguments={"path": "note.md", "new_content": "hello\n"},
             ),
-            AgentFinalAnswer(type="final", answer="已生成 patch 提案。"),
+            AgentFinalAnswer(type="final", answer="已生成 patch 提案并继续完成任务。"),
         ])
-        runtime = self.build_runtime(provider)
-
-        task = asyncio.create_task(collect(
-            runtime,
+        events = await asyncio.wait_for(collect(
+            self.build_runtime(provider),
             input="创建文件",
             history=[],
             config=AgentConfig(enabled_tools=["file_patch"], allow_write=True),
-        ))
-        approval_id = None
-        while approval_id is None:
-            for pending in list(self.manager.pending_approvals()):
-                approval_id = pending.approval_id
-                break
-            await asyncio.sleep(0)
-        await self.manager.resolve(
-            approval_id,
-            ApprovalResolution(status="approved", reason="ok", applied=True),
-        )
-        events = await task
+        ), timeout=2)
 
-        types = [event["type"] for event in events]
+        types = [item["type"] for item in events]
         self.assertIn("approval_required", types)
-        self.assertIn("approval_resolved", types)
+        self.assertNotIn("approval_resolved", types)
         self.assertIn("tool_result", types)
         self.assertEqual(events[-1]["type"], "done")
-        tool_result = next(event["result"] for event in events if event["type"] == "tool_result")
-        self.assertTrue(tool_result["success"])
+        self.assertEqual(len(provider.calls), 2)
+        approval = next(item for item in events if item["type"] == "approval_required")
+        self.assertTrue(approval["approvalId"].startswith("approval_"))
+        self.assertEqual(approval["proposal"]["path"], "note.md")
+
+        result = next(item["result"] for item in events if item["type"] == "tool_result")
+        self.assertTrue(result["success"])
+        structured = result["modelContext"]["structuredData"]
+        self.assertEqual(structured["status"], "pending_approval")
+        self.assertFalse(structured["applied"])
+        self.assertNotIn("proposed_content", json.dumps(result, ensure_ascii=False))
+
         observation = provider.calls[-1][0][-1].content
-        self.assertIn('"status":"approved"', observation)
+        self.assertIn('"status":"pending_approval"', observation)
+        self.assertIn('"diskState":"unchanged_until_approved"', observation)
         self.assertNotIn("proposed_content", observation)
 
-    async def test_approved_but_apply_failed_returns_structured_failure(self):
+    async def test_multiple_patch_proposals_queue_and_continue_together(self):
+        from agent.models import AgentToolBatch
+
         provider = FakeProvider([
-            AgentToolCall(
-                type="tool_call",
-                thought_summary="准备修改文件",
-                tool="file_patch",
-                arguments={"path": "note.md", "new_content": "hello\n"},
-            ),
-            AgentFinalAnswer(type="final", answer="写入失败。"),
+            AgentToolBatch(type="tool_calls", calls=[
+                AgentToolCall(type="tool_call", thought_summary="修改 A", tool="file_patch", arguments={"path": "a.md", "new_content": "a\n"}),
+                AgentToolCall(type="tool_call", thought_summary="修改 B", tool="file_patch", arguments={"path": "b.md", "new_content": "b\n"}),
+            ]),
+            AgentFinalAnswer(type="final", answer="两个提案均已进入审查队列。"),
         ])
-        runtime = self.build_runtime(provider)
-        task = asyncio.create_task(collect(
-            runtime,
-            input="创建文件",
+        events = await asyncio.wait_for(collect(
+            self.build_runtime(provider),
+            input="创建两个文件",
             history=[],
             config=AgentConfig(enabled_tools=["file_patch"], allow_write=True),
-        ))
-        while not self.manager.pending_approvals():
-            await asyncio.sleep(0)
-        approval_id = self.manager.pending_approvals()[0].approval_id
-        await self.manager.resolve(
-            approval_id,
-            ApprovalResolution(
-                status="approved",
-                reason="file changed since proposal",
-                applied=False,
-            ),
-        )
-        events = await task
-        result = next(event["result"] for event in events if event["type"] == "tool_result")
-        self.assertFalse(result["success"])
-        self.assertEqual(result["error"]["code"], "patch_apply_failed")
+        ), timeout=2)
 
-    async def test_rejected_resolution_returns_unsuccessful_tool_result_and_final(self):
-        provider = FakeProvider([
-            AgentToolCall(
-                type="tool_call",
-                thought_summary="准备修改文件",
-                tool="file_patch",
-                arguments={"path": "note.md", "new_content": "hello\n"},
-            ),
-            AgentFinalAnswer(type="final", answer="已拒绝修改。"),
-        ])
-        runtime = self.build_runtime(provider)
-
-        task = asyncio.create_task(collect(
-            runtime,
-            input="创建文件",
-            history=[],
-            config=AgentConfig(enabled_tools=["file_patch"], allow_write=True),
-        ))
-        approval_id = None
-        while approval_id is None:
-            for pending in list(self.manager.pending_approvals()):
-                approval_id = pending.approval_id
-                break
-            await asyncio.sleep(0)
-        await self.manager.resolve(
-            approval_id,
-            ApprovalResolution(status="rejected", reason="不要改"),
-        )
-        events = await task
-
-        resolved = next(event for event in events if event["type"] == "approval_resolved")
-        self.assertEqual(resolved["resolution"]["status"], "rejected")
-        tool_result = next(event["result"] for event in events if event["type"] == "tool_result")
-        self.assertFalse(tool_result["success"])
-        self.assertEqual(tool_result["error"]["code"], "approval_rejected")
+        approvals = [item for item in events if item["type"] == "approval_required"]
+        results = [item for item in events if item["type"] == "tool_result"]
+        self.assertEqual(len(approvals), 2)
+        self.assertEqual(len(results), 2)
         self.assertEqual(events[-1]["status"], "completed")
 
-    async def test_expired_resolution_returns_unsuccessful_tool_result_and_final(self):
-        manager = ApprovalManager(default_timeout_seconds=0.01)
-        runtime = AgentRuntime(
-            provider=FakeProvider([
-                AgentToolCall(
-                    type="tool_call",
-                    thought_summary="准备修改文件",
-                    tool="file_patch",
-                    arguments={"path": "note.md", "new_content": "hello\n"},
-                ),
-                AgentFinalAnswer(type="final", answer="审批超时。"),
-            ]),
-            registry=self.registry,
-            context=self.context,
-            approval_manager=manager,
-        )
-
-        events = await collect(
-            runtime,
-            input="创建文件",
-            history=[],
-            config=AgentConfig(enabled_tools=["file_patch"], allow_write=True),
-        )
-
-        resolved = next(event for event in events if event["type"] == "approval_resolved")
-        self.assertEqual(resolved["resolution"]["status"], "expired")
-        tool_result = next(event["result"] for event in events if event["type"] == "tool_result")
-        self.assertEqual(tool_result["error"]["code"], "approval_expired")
-
-    async def test_cancel_while_waiting_for_approval_marks_run_cancelled(self):
+    async def test_runtime_binds_tools_to_run_staging_and_following_read_sees_patch(self):
         provider = FakeProvider([
             AgentToolCall(
                 type="tool_call",
-                thought_summary="准备修改文件",
+                thought_summary="创建暂存文件",
                 tool="file_patch",
-                arguments={"path": "note.md", "new_content": "hello\n"},
+                arguments={"path": "staged.md", "new_content": "staged value\n"},
             ),
+            AgentToolCall(
+                type="tool_call",
+                thought_summary="复查暂存文件",
+                tool="file_read",
+                arguments={"path": "staged.md"},
+            ),
+            AgentFinalAnswer(type="final", answer="暂存内容可以继续读取。"),
         ])
-        cancel = asyncio.Event()
-        runtime = self.build_runtime(provider)
 
-        task = asyncio.create_task(collect(
-            runtime,
-            input="创建文件",
+        events = await collect(
+            self.build_runtime(provider),
+            input="创建并复查文件",
             history=[],
-            config=AgentConfig(enabled_tools=["file_patch"], allow_write=True),
-            cancel_event=cancel,
-        ))
-        while not list(self.manager.pending_approvals()):
-            await asyncio.sleep(0)
-        cancel.set()
-        events = await task
+            config=AgentConfig(enabled_tools=["file_patch", "file_read"], allow_write=True),
+            run_id="run_staging_read",
+        )
 
-        resolved = next(event for event in events if event["type"] == "approval_resolved")
-        self.assertEqual(resolved["resolution"]["status"], "cancelled")
-        self.assertEqual(events[-1]["status"], "cancelled")
+        self.assertEqual(events[-1]["type"], "done")
+        self.assertFalse((self.workspace / "staged.md").exists())
+        self.assertEqual(
+            (self.workspace / ".looma" / "agent-staging" / "run_staging_read" / "files" / "staged.md").read_text(encoding="utf-8"),
+            "staged value\n",
+        )
+        read_observation = provider.calls[2][0][-1].content
+        self.assertIn('"source":"staging"', read_observation)
+        self.assertIn("staged value", read_observation)
 
 
 if __name__ == "__main__":

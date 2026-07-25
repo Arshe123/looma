@@ -1,5 +1,5 @@
 import type { Result } from '../shared/types/Result'
-import type { AgentEvent, AgentSource } from '../shared/types/agent-events'
+import type { AgentEvent, AgentPendingFileReview, AgentSource } from '../shared/types/agent-events'
 import type { AgentRun, AgentTask } from '../shared/types/agent-state'
 import type { AppSettings as AppSettingsPayload } from '../shared/utils/app-settings'
 
@@ -269,7 +269,7 @@ interface ElectronAPI {
     readMarkdown: (filePath: string) => Promise<Result<string>>;
     readFileBase64: (filePath: string) => Promise<Result<string>>;
     getFileStats: (filePath: string) => Promise<Result<{ size: number }>>;
-    writeMarkdown: (filePath: string, content: string) => Promise<Result<void>>;
+    writeMarkdown: (filePath: string, content: string, expectedContent?: string) => Promise<Result<void>>;
   };
   app: {
     onCommand: (listener: (payload: { id: string }) => void) => () => void;
@@ -343,7 +343,8 @@ interface ElectronAPI {
     }>>;
     resumeRun: (requestId: string, workspaceId: string, parentRunId: string) => Promise<Result<{ taskId: string; runId: string; parentRunId: string }>>;
     summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) => Promise<Result<{ answer: string }>>;
-    resolveApproval: (approvalId: string, approved: boolean) => Promise<Result<{ applied: boolean }>>;
+    listApprovals: (workspaceId: string) => Promise<Result<AgentPendingFileReview[]>>;
+    resolveApproval: (workspaceId: string, approvalId: string, approved: boolean) => Promise<Result<{ applied: boolean }>>;
     runStream: {
       start: (requestId: string, workspaceId: string, options: AgentRunOptionsPayload) => Promise<Result<{ taskId: string; runId: string }>>;
       cancel: (requestId: string) => Promise<Result<{ agentEvents: AgentEvent[] }>>;

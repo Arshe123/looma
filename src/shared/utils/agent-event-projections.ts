@@ -107,19 +107,21 @@ export const foldAgentState = (events: AgentEvent[]): AgentState => {
         state.completedSteps = unique([...state.completedSteps, event.payload.stepId])
         break
       case 'approval_required':
-        state.status = 'waiting_approval'
+        state.status = 'running'
         state.pendingApproval = event.payload.approvalId
-        state.currentStep = `approval:${event.payload.approvalId}`
+        state.currentStep = '文件修改提案已加入审查队列，Agent 继续执行'
         break
       case 'approval_inherited':
-        state.status = 'waiting_approval'
+        state.status = 'running'
         state.pendingApproval = event.payload.approvalId
-        state.currentStep = `approval:${event.payload.approvalId}`
+        state.currentStep = '继承待审文件修改提案，Agent 继续执行'
         break
       case 'approval_resolved':
         if (state.pendingApproval === event.payload.approvalId) delete state.pendingApproval
-        state.status = event.payload.status === 'cancelled' ? 'cancelled' : 'running'
-        state.currentStep = `approval:${event.payload.status}`
+        if (!['completed', 'failed', 'cancelled'].includes(state.status)) {
+          state.status = event.payload.status === 'cancelled' ? 'cancelled' : 'running'
+          state.currentStep = `approval:${event.payload.status}`
+        }
         break
       case 'file_patch_applied':
         state.currentStep = `patch:${event.payload.path}`
@@ -308,7 +310,7 @@ export const projectCompactTimeline = (events: AgentEvent[]): CompactTimelineIte
         break
       }
       case 'approval_required':
-        items.push({ eventId: event.id, runId: event.runId, kind: 'approval', title: '等待审批', status: 'pending', startedAt: event.timestamp, refId: event.payload.approvalId })
+        items.push({ eventId: event.id, runId: event.runId, kind: 'approval', title: '文件审查', status: 'pending', startedAt: event.timestamp, refId: event.payload.approvalId })
         break
       case 'retrieval_completed':
         items.push({ eventId: event.id, runId: event.runId, kind: 'retrieval', title: '检索来源', status: 'completed', startedAt: Math.max(0, event.timestamp - event.payload.durationMs), endedAt: event.timestamp, durationMs: event.payload.durationMs, summary: `找到 ${event.payload.sourceCount} 个来源`, refId: event.payload.retrievalId })

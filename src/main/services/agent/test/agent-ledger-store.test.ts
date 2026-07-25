@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -76,11 +76,33 @@ describe('AgentLedgerStore', () => {
     const root = await createRoot()
     const tmp = path.join(root, 'tmp')
     await mkdir(tmp, { recursive: true })
-    await writeFile(path.join(tmp, 'crash.tmp'), '{partial')
+    const abandoned = path.join(tmp, 'crash.tmp')
+    await writeFile(abandoned, '{partial')
+    const staleAt = new Date(Date.now() - 2 * 60 * 60 * 1000)
+    await utimes(abandoned, staleAt, staleAt)
     const store = new AgentLedgerStore(root)
     await store.init()
     expect(await readdir(tmp)).toEqual([])
     expect(await store.materialize()).toMatchObject({ messages: [], events: [] })
+  })
+
+  it('shares initialization and commit sequencing without deleting another live store temporary file', async () => {
+    const root = await createRoot()
+    const first = new AgentLedgerStore(root)
+    await first.init()
+    const liveTemporary = path.join(root, 'tmp', 'in-flight.tmp')
+    await writeFile(liveTemporary, '{in-flight')
+
+    const second = new AgentLedgerStore(root)
+    await second.init()
+
+    expect(await readdir(path.join(root, 'tmp'))).toContain('in-flight.tmp')
+    const transactions = await Promise.all([
+      first.commit({ kind: 'event_commit' }),
+      second.commit({ kind: 'event_commit' }),
+    ])
+    expect(transactions.map(item => item.ledgerSequence).sort((a, b) => a - b)).toEqual([1, 2])
+    expect((await first.readTransactions()).map(item => item.ledgerSequence)).toEqual([1, 2])
   })
 
   it('treats snapshots and checkpoints as invalid disposable caches when hashes change or files disappear', async () => {
@@ -130,6 +152,42 @@ describe('AgentArtifactStore', () => {
     await expect(store.apply(workspace, 'workspace_1', 'artifact_2')).resolves.toMatchObject({ status: 'applied' })
     await expect(store.apply(workspace, 'workspace_1', 'artifact_2')).resolves.toMatchObject({ status: 'already_applied' })
     expect(await readFile(path.join(workspace, 'note.md'), 'utf8')).toBe('after')
+  })
+
+  it('cleans only the staged revision whose hash matches the resolved artifact', async () => {
+    const workspace = await createRoot()
+    const store = new AgentArtifactStore(path.join(workspace, '.looma', 'agent-ledger'))
+    const stagingRoot = path.join(workspace, '.looma', 'agent-staging', 'run_1')
+    const stagedPath = path.join(stagingRoot, 'files', 'note.md')
+    const basePath = path.join(stagingRoot, 'base', 'note.md')
+    const metaPath = path.join(stagingRoot, 'meta', `${sha256Text('note.md').slice('sha256:'.length)}.json`)
+    await Promise.all([
+      mkdir(path.dirname(stagedPath), { recursive: true }),
+      mkdir(path.dirname(basePath), { recursive: true }),
+      mkdir(path.dirname(metaPath), { recursive: true }),
+    ])
+    await Promise.all([
+      writeFile(stagedPath, 'newer staged content', 'utf8'),
+      writeFile(basePath, 'before', 'utf8'),
+      writeFile(metaPath, '{}', 'utf8'),
+    ])
+
+    await expect(store.cleanupStagedFile(workspace, 'run_1', 'note.md', sha256Text('older proposal'))).resolves.toBe(false)
+    expect(await readFile(stagedPath, 'utf8')).toBe('newer staged content')
+    await expect(store.cleanupStagedFile(workspace, 'run_1', 'note.md', sha256Text('newer staged content'))).resolves.toBe(true)
+    await expect(readFile(stagedPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+
+    await Promise.all([
+      mkdir(path.dirname(basePath), { recursive: true }),
+      mkdir(path.dirname(metaPath), { recursive: true }),
+    ])
+    await Promise.all([
+      writeFile(basePath, 'orphan base', 'utf8'),
+      writeFile(metaPath, '{}', 'utf8'),
+    ])
+    await expect(store.cleanupStagedFile(workspace, 'run_1', 'note.md', sha256Text('missing staged file'))).resolves.toBe(true)
+    await expect(readFile(basePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(metaPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('rejects protected paths and tampered proposed content', async () => {

@@ -25,6 +25,10 @@ const installElectronApiStub = () => {
   ;(globalThis as any).window = globalThis.window || globalThis
   ;(globalThis as any).window.electronAPI = {
     workspaceAi: { set: vi.fn().mockResolvedValue({ success: true }) },
+    file: {
+      readMarkdown: vi.fn().mockResolvedValue({ success: true, data: 'Agent applied\n' }),
+      writeMarkdown: vi.fn().mockResolvedValue({ success: true }),
+    },
     rag: {
       indexStream: {
         start: vi.fn().mockResolvedValue({ success: true }),
@@ -34,7 +38,9 @@ const installElectronApiStub = () => {
     },
     agent: {
       runStream: agentApi,
+      listApprovals: vi.fn().mockResolvedValue({ success: true, data: [] }),
       resolveApproval: vi.fn().mockResolvedValue({ success: true, data: { applied: true } }),
+      getRun: vi.fn(),
       summarizeConversation: vi.fn().mockResolvedValue({ success: true, data: { answer: '摘要' } }),
     },
   }
@@ -74,6 +80,141 @@ describe('agent stream state', () => {
     const requestId = useAiAssistantStore().createStreamRequestId()
 
     expect(requestId).toMatch(/^[A-Za-z0-9_-]{1,128}$/)
+  })
+
+  it('reloads an open editor buffer after an approved file_patch is materialized', async () => {
+    const workspace = useWorkspaceStore()
+    workspace.workspaces = [{ id: 'workspace-1', name: 'Notes', path: 'C:\\Notes', createdAt: 1, lastOpenedAt: 1 }]
+    workspace.activeWorkspaceId = 'workspace-1'
+    workspace.openedTextFileContents['note.md'] = {
+      content: 'Before\n', loadedContent: 'Before\n', isSaving: false, saveError: '',
+    }
+    const store = useAiAssistantStore()
+    store.pendingFileReviewsByWorkspaceId['workspace-1'] = [{
+      approvalId: 'approval-refresh', artifactId: 'artifact-refresh', taskId: 'task-1', runId: 'run-1',
+      workspaceId: 'workspace-1', callId: 'call-1', path: 'note.md', operation: 'update', diff: '-Before\n+Agent applied',
+      additions: 1, deletions: 1, createdAt: 1, deadlineAt: Date.now() + 60_000, status: 'pending',
+    }]
+
+    const result = await store.resolvePendingFileReview('workspace-1', 'approval-refresh', true)
+
+    expect(result).toEqual({ success: true, data: { applied: true } })
+    expect((window as any).electronAPI.file.readMarkdown).toHaveBeenCalledOnce()
+    expect(workspace.openedTextFileContents['note.md']).toMatchObject({
+      content: 'Agent applied\n', loadedContent: 'Agent applied\n', saveError: '',
+    })
+  })
+
+  it('blocks approval while the target has unsaved editor changes', async () => {
+    const workspace = useWorkspaceStore()
+    workspace.openedTextFileContents['note.md'] = {
+      content: 'Unsaved local edit\n', loadedContent: 'Before\n', isSaving: false, saveError: '',
+    }
+    const store = useAiAssistantStore()
+    store.pendingFileReviewsByWorkspaceId['workspace-1'] = [{
+      approvalId: 'approval-dirty', artifactId: 'artifact-dirty', taskId: 'task-1', runId: 'run-1',
+      workspaceId: 'workspace-1', callId: 'call-1', path: 'note.md', operation: 'update', diff: '-Before\n+Agent applied',
+      additions: 1, deletions: 1, createdAt: 1, deadlineAt: Date.now() + 60_000, status: 'pending',
+    }]
+
+    const result = await store.resolvePendingFileReview('workspace-1', 'approval-dirty', true)
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('未保存修改')
+    expect((window as any).electronAPI.agent.resolveApproval).not.toHaveBeenCalled()
+  })
+
+  it('does not show an interrupted-run card when a completed run is hydrated after file review', async () => {
+    const conversationId = createConversation()
+    const run = await startAgent(conversationId)
+    const store = useAiAssistantStore()
+    const workspace = useWorkspaceStore()
+    store.handleAgentStreamEvent({
+      requestId: run.requestId,
+      type: 'run_started',
+      runId: 'run-completed-review',
+      startedAt: new Date().toISOString(),
+    })
+    const events = [
+      canonicalEvent('run-completed-review', 1, 'execution', 'agent_started', {
+        requestId: run.requestId,
+        inputMessageId: 1,
+        assistantMessageId: run.assistantMessageId,
+        modelIdentity: { provider: 'openai', model: 'gpt-4o-mini' },
+        contextVersion: 1,
+      }),
+      canonicalEvent('run-completed-review', 2, 'execution', 'run_completed', { completedStep: '已完成' }),
+    ]
+    ;(window as any).electronAPI.agent.getRun.mockResolvedValue({
+      success: true,
+      data: {
+        run: { id: 'run-completed-review', taskId: 'task-1' },
+        events,
+        sources: [],
+        recovery: { recoverable: false, checkpointAvailable: true, reason: '当前运行状态不支持继续。' },
+      },
+    })
+
+    await store.hydrateAgentHistory('workspace-1', [workspace.getAiAssistantConversationById(conversationId)!])
+
+    expect(store.getMessageAgentRecovery(conversationId, run.assistantMessageId, 'run-completed-review')).toBeNull()
+    store.agentRecoveryByMessageKey[`${conversationId}:${run.assistantMessageId}`] = {
+      recoverable: false,
+      checkpointAvailable: true,
+      reason: '当前运行状态不支持继续。',
+    }
+    expect(store.getMessageAgentRecovery(conversationId, run.assistantMessageId, 'run-completed-review')).toBeNull()
+  })
+
+  it('suppresses the false recovery card for an artifact-backed file_patch bridge interruption', async () => {
+    const conversationId = createConversation()
+    const run = await startAgent(conversationId)
+    const store = useAiAssistantStore()
+    const workspace = useWorkspaceStore()
+    store.handleAgentStreamEvent({
+      requestId: run.requestId,
+      type: 'run_started',
+      runId: 'run-patch-bridge-gap',
+      startedAt: new Date().toISOString(),
+    })
+    const events = [
+      canonicalEvent('run-patch-bridge-gap', 1, 'execution', 'agent_started', {
+        requestId: run.requestId,
+        inputMessageId: 1,
+        assistantMessageId: run.assistantMessageId,
+        modelIdentity: { provider: 'openai', model: 'gpt-4o-mini' },
+        contextVersion: 1,
+      }),
+      canonicalEvent('run-patch-bridge-gap', 2, 'execution', 'tool_call_requested', {
+        stepId: 'step-1', callId: 'call-1', tool: 'file_patch', argumentsPreview: { path: 'note.md' }, argumentsDigest: 'digest', startedAt: 1_002,
+      }),
+      canonicalEvent('run-patch-bridge-gap', 3, 'artifact', 'artifact_created', {
+        artifactId: 'artifact-1', callId: 'call-1', kind: 'file_patch', path: 'note.md', beforeHash: 'before', afterHash: 'after', operation: 'update', diff: '-old\n+new', additions: 1, deletions: 1, createdAt: 1_003, expiresAt: 10_000,
+      }),
+      canonicalEvent('run-patch-bridge-gap', 4, 'artifact', 'approval_required', {
+        approvalId: 'approval-1', callId: 'call-1', artifactId: 'artifact-1', deadlineAt: 10_000,
+      }),
+      canonicalEvent('run-patch-bridge-gap', 6, 'recovery', 'run_failed', {
+        code: 'agent_bridge_failed', message: 'Agent 服务暂时不可用', retryable: true,
+      }),
+    ]
+    ;(window as any).electronAPI.agent.getRun.mockResolvedValue({
+      success: true,
+      data: {
+        run: { id: 'run-patch-bridge-gap', taskId: 'task-1' },
+        events,
+        sources: [],
+        recovery: { recoverable: true, checkpointAvailable: true, reason: '将从已确认的事件和消息继续。' },
+      },
+    })
+
+    await store.hydrateAgentHistory('workspace-1', [workspace.getAiAssistantConversationById(conversationId)!])
+
+    expect(store.getMessageAgentRecovery(conversationId, run.assistantMessageId, 'run-patch-bridge-gap')).toBeNull()
+    expect(store.getMessageAgentDisplayEvents(conversationId, run.assistantMessageId).find(event => event.kind === 'tool_call')).toMatchObject({
+      callId: 'call-1',
+      status: 'completed',
+    })
   })
 
   it('snapshots model identity at request time and keeps the user prompt as a user bubble', async () => {
@@ -476,6 +617,13 @@ describe('agent stream state', () => {
     const conversationId = createConversation()
     const run = await startAgent(conversationId)
     const store = useAiAssistantStore()
+    ;(window as any).electronAPI.agent.listApprovals.mockResolvedValueOnce({
+      success: true,
+      data: [{
+        approvalId: 'approval-1', artifactId: 'artifact-1', taskId: 'task-1', runId: 'run-approval', workspaceId: 'workspace-1', callId: 'call-1',
+        path: 'notes/a.md', operation: 'update', diff: '--- a\n+++ a\n-old\n+new', additions: 1, deletions: 1, createdAt: 1_002, deadlineAt: Date.now() + 60_000,
+      }],
+    })
     store.handleAgentStreamEvent({
       requestId: run.requestId,
       type: 'approval_required',
@@ -503,12 +651,14 @@ describe('agent stream state', () => {
       ],
     })
 
-    expect(store.getConversationAgentApprovals(conversationId)).toEqual([
+    await vi.waitFor(() => expect(store.getWorkspacePendingFileReviews('workspace-1')).toEqual([
       expect.objectContaining({ approvalId: 'approval-1', path: 'notes/a.md', status: 'pending' }),
-    ])
-    const result = await store.resolveAgentApproval(conversationId, 'approval-1', true)
-    expect((window as any).electronAPI.agent.resolveApproval).toHaveBeenCalledWith('approval-1', true)
-    expect(result).toEqual({ success: true })
-    expect(store.getConversationAgentApprovals(conversationId)[0].status).toBe('resolving')
+    ]))
+    const result = await store.resolvePendingFileReview('workspace-1', 'approval-1', true)
+    expect((window as any).electronAPI.agent.resolveApproval).toHaveBeenCalledWith('workspace-1', 'approval-1', true)
+    expect(result).toEqual({ success: true, data: { applied: true } })
+    expect(store.getWorkspacePendingFileReviews('workspace-1')).toEqual([])
+    expect(store.getMessageAgentDisplayEvents(conversationId, run.assistantMessageId))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'file_review' })]))
   })
 })

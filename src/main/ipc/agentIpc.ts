@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { ipcMain, type WebContents } from 'electron'
-import type { AgentEvent, AgentSource, FilePatchArtifact, JsonValue } from '../../shared/types/agent-events'
+import type { AgentEvent, AgentPendingFileReview, AgentSource, FilePatchArtifact, JsonValue } from '../../shared/types/agent-events'
 import type { AgentMessage } from '../../shared/types/agent-message'
 import type { AgentRun, AgentTask } from '../../shared/types/agent-state'
 import { createEventSnapshot, foldAgentState } from '../../shared/utils/agent-event-projections'
@@ -59,6 +59,24 @@ export const abortAllAgentRuns = () => {
 const eventId = () => `evt_${randomUUID().replace(/-/g, '')}`
 const messageId = () => `msg_${randomUUID().replace(/-/g, '')}`
 const digestJson = (value: unknown) => `sha256:${createHash('sha256').update(JSON.stringify(value)).digest('hex')}`
+const bridgeTechnicalDetail = (error: unknown) => {
+  const code = /\b(E[A-Z]{2,})\b/.exec(typeof error === 'string' ? error : '')?.[1]
+  return code ? `AgentBridgeError:${code}` : 'AgentBridgeError'
+}
+const retryTransientLedgerWrite = async <T>(operation: () => Promise<T>) => {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await operation()
+    } catch (error) {
+      lastError = error
+      const code = (error as NodeJS.ErrnoException)?.code
+      if (!['ENOENT', 'EBUSY', 'EPERM'].includes(code || '') || attempt === 2) throw error
+      await new Promise(resolve => setTimeout(resolve, 10 * (attempt + 1)))
+    }
+  }
+  throw lastError
+}
 const asJsonRecord = (value: Record<string, unknown>) => JSON.parse(JSON.stringify(value)) as Record<string, JsonValue>
 const sensitiveArgumentKey = /(api[-_]?key|token|authorization|cookie|password|passwd|secret|credential|private[-_]?key|access[-_]?key)/i
 const sanitizeToolArguments = (value: unknown, depth = 0): unknown => {
@@ -73,7 +91,7 @@ const sanitizeToolArguments = (value: unknown, depth = 0): unknown => {
   ]))
 }
 const withEventBase = (
-  run: ActiveAgentRun,
+  run: Pick<ActiveAgentRun, 'taskId' | 'runId' | 'nextEventSequence'>,
   family: AgentEvent['family'],
   type: AgentEvent['type'],
   payload: AgentEvent['payload'],
@@ -237,7 +255,7 @@ const persistStreamEvent = async (run: ActiveAgentRun, requestId: string, payloa
         tool_call_id: payload.callId,
         name: payload.result.tool,
       }
-      await ledger.commitToolResult(resultEvent, toolMessage, {
+      await retryTransientLedgerWrite(() => ledger.commitToolResult(resultEvent, toolMessage, {
         callId: payload.callId,
         taskId: run.taskId,
         runId: run.runId,
@@ -245,7 +263,7 @@ const persistStreamEvent = async (run: ActiveAgentRun, requestId: string, payloa
         status: payload.result.success ? 'completed' : 'failed',
         updatedAt: Date.now(),
         resultEventId: resultEvent.id,
-      })
+      }))
       await persistCheckpoint(run, payload.step + 1)
       break
     }
@@ -272,8 +290,20 @@ const persistStreamEvent = async (run: ActiveAgentRun, requestId: string, payloa
         expiresAt,
       }
       await run.artifactStore.save(artifact)
+      const currentView = await ledger.materialize()
+      const superseded = collectPendingFileReviews(run.workspaceId, currentView.events).filter(item => (
+        item.runId === run.runId && item.path === artifact.path
+      ))
       const diffLines = artifact.diff.split('\n')
       const events: AgentEvent[] = [
+        ...superseded.map(item => withEventBase(run, 'artifact', 'approval_resolved', {
+          approvalId: item.approvalId,
+          callId: item.callId,
+          artifactId: item.artifactId,
+          status: 'cancelled' as const,
+          applied: false,
+          reason: 'superseded_by_later_patch',
+        })),
         withEventBase(run, 'artifact', 'artifact_created', {
           artifactId,
           callId: payload.callId,
@@ -296,6 +326,8 @@ const persistStreamEvent = async (run: ActiveAgentRun, requestId: string, payloa
         }),
       ]
       await ledger.commit({ kind: 'event_commit', events })
+      await Promise.all(superseded.map(item => run.artifactStore!.remove(item.artifactId).catch(() => {})))
+      superseded.forEach(item => run.approvals.delete(item.approvalId))
       run.approvals.set(payload.approvalId, { artifactId, deadlineAt: payload.deadlineAt, status: 'pending' })
       await persistCheckpoint(run, payload.step + 1, {
         approvalId: payload.approvalId,
@@ -443,13 +475,51 @@ const sendEvent = async (
       ...payload,
       agentEvents,
       agentSources,
-      proposal: { ...payload.proposal, proposed_content: '' },
+      proposal: {
+        path: payload.proposal.path,
+        operation: payload.proposal.operation,
+        unified_diff: payload.proposal.unified_diff,
+      },
       requestId,
     })
     return
   }
   if (payload.type === 'approval_resolved') run.approvals.delete(payload.approvalId)
   run.sender.send('agent:runStream:event', { ...payload, agentEvents, agentSources, requestId })
+}
+
+const collectPendingFileReviews = (
+  workspaceId: string,
+  events: AgentEvent[],
+): AgentPendingFileReview[] => {
+  const artifacts = new Map<string, Extract<AgentEvent, { type: 'artifact_created' }>['payload']>()
+  const resolved = new Set<string>()
+  const required: Array<Extract<AgentEvent, { type: 'approval_required' }>> = []
+  for (const event of events) {
+    if (event.type === 'artifact_created') artifacts.set(event.payload.artifactId, event.payload)
+    if (event.type === 'approval_required') required.push(event)
+    if (event.type === 'approval_resolved') resolved.add(event.payload.approvalId)
+  }
+  return required.flatMap((event) => {
+    if (resolved.has(event.payload.approvalId)) return []
+    const artifact = artifacts.get(event.payload.artifactId)
+    if (!artifact) return []
+    return [{
+      approvalId: event.payload.approvalId,
+      artifactId: event.payload.artifactId,
+      taskId: event.taskId,
+      runId: event.runId,
+      workspaceId,
+      callId: event.payload.callId,
+      path: artifact.path,
+      operation: artifact.operation,
+      diff: artifact.diff,
+      additions: artifact.additions,
+      deletions: artifact.deletions,
+      createdAt: artifact.createdAt,
+      deadlineAt: event.payload.deadlineAt,
+    }]
+  }).sort((a, b) => a.createdAt - b.createdAt)
 }
 
 const buildContinuationHistory = (messages: AgentMessage[]): AgentRunOptions['history'] => {
@@ -484,6 +554,68 @@ ipcMain.handle('agent:summarizeConversation', async (_event, messages: unknown, 
   const limit = Math.min(8000, Math.max(200, Math.round(Number(maxChars) || 1600)))
   if (!normalized.length) return { success: false, error: 'Agent summary messages are empty' }
   return aiService.summarizeAgentConversation(normalized, limit)
+})
+
+ipcMain.handle('agent:approvals:list', async (_event, workspaceId: unknown) => {
+  if (!validIdentifier(workspaceId)) return { success: false, error: 'Invalid workspace ID' }
+  const workspacePath = await getWorkspacePathById(workspaceId)
+  if (!workspacePath) return { success: false, error: 'Workspace not found' }
+  try {
+    const ledgerRoot = path.join(workspacePath, '.looma', 'agent-ledger')
+    const ledger = new AgentLedgerStore(ledgerRoot)
+    const artifactStore = new AgentArtifactStore(ledgerRoot)
+    await Promise.all([ledger.init(), artifactStore.init()])
+    const view = await ledger.materialize()
+    let pending = collectPendingFileReviews(workspaceId, view.events)
+    const expired = pending.filter(item => !Number.isFinite(item.deadlineAt) || Date.now() >= item.deadlineAt)
+    if (expired.length) {
+      const expiryContexts = new Map<string, Pick<ActiveAgentRun, 'taskId' | 'runId' | 'nextEventSequence'>>()
+      const expiryEvents = expired.map((item) => {
+        let context = expiryContexts.get(item.runId)
+        if (!context) {
+          context = [...activeAgentRuns.values()].find(run => (
+            run.workspaceId === workspaceId && run.runId === item.runId
+          )) || {
+            taskId: item.taskId,
+            runId: item.runId,
+            nextEventSequence: Math.max(
+              0,
+              ...view.events.filter(event => event.runId === item.runId).map(event => event.sequence),
+            ) + 1,
+          }
+          expiryContexts.set(item.runId, context)
+        }
+        return withEventBase(context, 'artifact', 'approval_resolved', {
+          approvalId: item.approvalId,
+          callId: item.callId,
+          artifactId: item.artifactId,
+          status: 'expired',
+          applied: false,
+          reason: 'approval_expired',
+        })
+      })
+      await ledger.commit({ kind: 'event_commit', events: expiryEvents })
+      await Promise.all(expired.map(async (item) => {
+        try {
+          const artifact = await artifactStore.load(item.artifactId)
+          await artifactStore.cleanupStagedFile(
+            workspacePath,
+            artifact.runId,
+            artifact.path,
+            artifact.afterHash,
+          ).catch(() => false)
+        } catch {
+          // Expiry is canonical even if the local staging cache is damaged.
+        }
+        await artifactStore.remove(item.artifactId).catch(() => {})
+      }))
+      const expiredIds = new Set(expired.map(item => item.approvalId))
+      pending = pending.filter(item => !expiredIds.has(item.approvalId))
+    }
+    return { success: true, data: pending }
+  } catch {
+    return { success: false, error: 'Unable to read pending file reviews' }
+  }
 })
 
 ipcMain.handle('agent:ledger:getRun', async (_event, workspaceId: unknown, runId: unknown) => {
@@ -675,7 +807,7 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
         error: {
           code: 'agent_bridge_failed',
           message: 'Agent 服务暂时不可用，请稍后重试。',
-          technical_detail: 'AgentBridgeError',
+          technical_detail: bridgeTechnicalDetail(result.error),
           retryable: true,
         },
       }).catch(() => {})
@@ -861,109 +993,127 @@ ipcMain.handle('agent:runStream:cancel', async (event, requestId: unknown) => {
   return { success: true, data: { agentEvents } }
 })
 
-ipcMain.handle('agent:approval:resolve', async (event, approvalId: unknown, approved: unknown) => {
-  if (!validIdentifier(approvalId) || typeof approved !== 'boolean') {
+ipcMain.handle('agent:approval:resolve', async (event, workspaceId: unknown, approvalId: unknown, approved: unknown) => {
+  if (!validIdentifier(workspaceId) || !validIdentifier(approvalId) || typeof approved !== 'boolean') {
     return { success: false, error: 'Invalid Agent approval request' }
   }
-  const match = [...activeAgentRuns.entries()].find(([, run]) => run.sender.id === event.sender.id && run.approvals.has(approvalId))
-  if (!match) return { success: false, error: '审批已失效或不属于当前窗口' }
-  const [, run] = match
-  const approval = run.approvals.get(approvalId)!
-  if (approval.status !== 'pending') return { success: false, error: '审批正在处理，请勿重复操作' }
-  if (!run.artifactStore || !run.ledger) return { success: false, error: 'Agent Artifact 存储不可用' }
-  let artifact: FilePatchArtifact
-  try {
-    artifact = await run.artifactStore.load(approval.artifactId)
-  } catch {
-    return { success: false, error: '文件修改提案已损坏或不可读取' }
+  const activeOwner = [...activeAgentRuns.values()].find(run => run.approvals.has(approvalId))
+  if (activeOwner && activeOwner.sender.id !== event.sender.id) {
+    return { success: false, error: '审批不属于当前窗口' }
   }
-  if (!Number.isFinite(Date.parse(approval.deadlineAt)) || Date.now() >= Date.parse(approval.deadlineAt)) {
-    await run.ledger.commit({
-      kind: 'event_commit',
-      events: [withEventBase(run, 'artifact', 'approval_resolved', {
-        approvalId,
-        callId: artifact.callId,
-        artifactId: artifact.artifactId,
-        status: 'expired',
-        applied: false,
-        reason: 'approval_expired',
-      })],
-    }).catch(() => {})
-    run.approvals.delete(approvalId)
-    return { success: false, error: '审批已过期，请让 Agent 重新生成修改提案' }
-  }
-  approval.status = 'resolving'
+  const workspacePath = await getWorkspacePathById(workspaceId)
+  if (!workspacePath) return { success: false, error: 'Workspace not found' }
 
-  let applied = false
-  let reason = approved ? undefined : '用户拒绝了文件修改'
-  const artifactEvents: AgentEvent[] = []
-  if (approved) {
+  try {
+    const ledgerRoot = path.join(workspacePath, '.looma', 'agent-ledger')
+    const ledger = new AgentLedgerStore(ledgerRoot)
+    const artifactStore = new AgentArtifactStore(ledgerRoot)
+    await Promise.all([ledger.init(), artifactStore.init()])
+    const view = await ledger.materialize()
+    const review = collectPendingFileReviews(workspaceId, view.events)
+      .find(item => item.approvalId === approvalId)
+    if (!review) return { success: false, error: '审批已完成或不存在' }
+
+    let artifact: FilePatchArtifact
     try {
-      const result = await run.artifactStore.apply(run.workspacePath, run.workspaceId, approval.artifactId)
-      if (result.status === 'applied' || result.status === 'already_applied') {
-        applied = true
-        artifactEvents.push(withEventBase(run, 'artifact', 'file_patch_applied', {
+      artifact = await artifactStore.load(review.artifactId)
+    } catch {
+      return { success: false, error: '文件修改提案已损坏或不可读取' }
+    }
+    const runRecord = view.runs[review.runId]
+    if (!runRecord || artifact.workspaceId !== workspaceId || artifact.runId !== review.runId) {
+      return { success: false, error: '文件修改提案与当前工作空间不匹配' }
+    }
+    const eventContext = activeOwner && activeOwner.runId === review.runId
+      ? activeOwner
+      : {
+          taskId: review.taskId,
+          runId: review.runId,
+          nextEventSequence: Math.max(0, ...view.events.filter(item => item.runId === review.runId).map(item => item.sequence)) + 1,
+        }
+    if (!Number.isFinite(review.deadlineAt) || Date.now() >= review.deadlineAt) {
+      await ledger.commit({
+        kind: 'event_commit',
+        events: [withEventBase(eventContext, 'artifact', 'approval_resolved', {
+          approvalId,
+          callId: artifact.callId,
+          artifactId: artifact.artifactId,
+          status: 'expired',
+          applied: false,
+          reason: 'approval_expired',
+        })],
+      })
+      await artifactStore.cleanupStagedFile(
+        workspacePath,
+        artifact.runId,
+        artifact.path,
+        artifact.afterHash,
+      ).catch(() => false)
+      await artifactStore.remove(artifact.artifactId).catch(() => {})
+      activeOwner?.approvals.delete(approvalId)
+      return { success: false, error: '审批已过期，请让 Agent 重新生成修改提案' }
+    }
+
+    let applied = false
+    let reason = approved ? undefined : '用户拒绝了文件修改'
+    const artifactEvents: AgentEvent[] = []
+    if (approved) {
+      try {
+        const result = await artifactStore.apply(workspacePath, workspaceId, artifact.artifactId)
+        if (result.status === 'applied' || result.status === 'already_applied') {
+          applied = true
+          artifactEvents.push(withEventBase(eventContext, 'artifact', 'file_patch_applied', {
+            approvalId,
+            artifactId: artifact.artifactId,
+            callId: artifact.callId,
+            path: result.path,
+            beforeHash: result.beforeHash,
+            afterHash: result.afterHash,
+          }))
+        } else {
+          reason = '文件已在审批期间发生变化，请重新生成修改提案'
+          artifactEvents.push(withEventBase(eventContext, 'artifact', 'file_patch_conflict', {
+            approvalId,
+            artifactId: artifact.artifactId,
+            callId: artifact.callId,
+            path: result.path,
+            expectedHash: result.expectedHash,
+            actualHash: result.actualHash,
+          }))
+        }
+      } catch {
+        reason = '应用文件修改失败'
+        artifactEvents.push(withEventBase(eventContext, 'artifact', 'file_patch_failed', {
           approvalId,
           artifactId: artifact.artifactId,
           callId: artifact.callId,
-          path: result.path,
-          beforeHash: result.beforeHash,
-          afterHash: result.afterHash,
-        }))
-      } else {
-        reason = '文件已在审批期间发生变化，请重新生成修改提案'
-        artifactEvents.push(withEventBase(run, 'artifact', 'file_patch_conflict', {
-          approvalId,
-          artifactId: artifact.artifactId,
-          callId: artifact.callId,
-          path: result.path,
-          expectedHash: result.expectedHash,
-          actualHash: result.actualHash,
+          path: artifact.path,
+          code: 'patch_apply_failed',
+          message: reason,
         }))
       }
-    } catch {
-      reason = '应用文件修改失败'
-      artifactEvents.push(withEventBase(run, 'artifact', 'file_patch_failed', {
-        approvalId,
-        artifactId: artifact.artifactId,
-        callId: artifact.callId,
-        path: artifact.path,
-        code: 'patch_apply_failed',
-        message: reason,
-      }))
     }
-  }
-  artifactEvents.push(withEventBase(run, 'artifact', 'approval_resolved', {
-    approvalId,
-    callId: artifact.callId,
-    artifactId: artifact.artifactId,
-    status: approved ? 'approved' : 'rejected',
-    applied,
-    reason,
-  }))
-  await run.ledger.commit({ kind: 'event_commit', events: artifactEvents })
-  approval.status = 'resolved'
-
-  let resolved: Awaited<ReturnType<typeof aiService.resolveAgentApproval>> = { success: false, error: '审批服务不可用' }
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    resolved = await aiService.resolveAgentApproval(
+    artifactEvents.push(withEventBase(eventContext, 'artifact', 'approval_resolved', {
       approvalId,
-      approved ? 'approved' : 'rejected',
-      reason,
+      callId: artifact.callId,
+      artifactId: artifact.artifactId,
+      status: approved ? 'approved' : 'rejected',
       applied,
-    )
-    if (resolved.success) break
+      reason,
+    }))
+    await ledger.commit({ kind: 'event_commit', events: artifactEvents })
+    await artifactStore.cleanupStagedFile(
+      workspacePath,
+      artifact.runId,
+      artifact.path,
+      artifact.afterHash,
+    ).catch(() => false)
+    await artifactStore.remove(artifact.artifactId).catch(() => {})
+    activeOwner?.approvals.delete(approvalId)
+    return applied || !approved
+      ? { success: true, data: { applied } }
+      : { success: false, error: reason || '文件修改未能应用', errorCode: 'AGENT_PATCH_APPLY_FAILED' }
+  } catch {
+    return { success: false, error: '处理文件审查失败，请重试' }
   }
-  if (!resolved.success) {
-    return {
-      success: false,
-      error: applied
-        ? '文件已经安全写入，但 Agent 未能恢复执行。可稍后创建 continuation run。'
-        : '审批结果已经记录，但 Agent 服务未能继续执行。可稍后创建 continuation run。',
-    }
-  }
-  run.approvals.delete(approvalId)
-  return applied || !approved
-    ? { success: true, data: { applied } }
-    : { success: false, error: reason || '文件修改未能应用', errorCode: 'AGENT_PATCH_APPLY_FAILED' }
 })

@@ -3,8 +3,11 @@ import {
   buildSideBySideDiffRows,
   countUnifiedDiffChanges,
   formatAgentArgumentsPreview,
+  getSyncedDiffScrollLeft,
   partitionAgentConversationEvents,
+  shouldUseInlineDiff,
 } from '../agentConversationDisplay'
+import { projectAgentRunView } from '@/renderer/stores/agent-event-view'
 
 describe('agent conversation display helpers', () => {
   it('redacts sensitive argument keys and bounds nested previews', () => {
@@ -45,6 +48,57 @@ describe('agent conversation display helpers', () => {
     expect(countUnifiedDiffChanges(diff)).toEqual({ additions: 2, deletions: 1 })
   })
 
+  it('keeps one compact file-review record and reflects its resolved status', () => {
+    const base = { taskId: 'task-1', runId: 'run-1' }
+    const events = [
+      { ...base, id: 'call', sequence: 1, timestamp: 1, family: 'execution', type: 'tool_call_requested', payload: { stepId: 'step-1', callId: 'call-1', tool: 'file_patch', argumentsPreview: { path: 'notes/a.md' }, argumentsDigest: 'digest', startedAt: 1 } },
+      { ...base, id: 'artifact', sequence: 2, timestamp: 2, family: 'artifact', type: 'artifact_created', payload: { artifactId: 'artifact-1', callId: 'call-1', kind: 'file_patch', path: 'notes/a.md', beforeHash: 'before', afterHash: 'after', operation: 'update', diff: '-old\n+new', additions: 1, deletions: 1, createdAt: 2, expiresAt: 10_000 } },
+      { ...base, id: 'required', sequence: 3, timestamp: 3, family: 'artifact', type: 'approval_required', payload: { approvalId: 'approval-1', callId: 'call-1', artifactId: 'artifact-1', deadlineAt: 10_000 } },
+      { ...base, id: 'resolved', sequence: 4, timestamp: 4, family: 'artifact', type: 'approval_resolved', payload: { approvalId: 'approval-1', callId: 'call-1', artifactId: 'artifact-1', status: 'approved', applied: true } },
+    ] as any
+
+    const reviews = projectAgentRunView(events, []).displayEvents.filter(event => event.kind === 'file_review')
+    expect(reviews).toHaveLength(1)
+    expect(reviews[0]).toMatchObject({ status: 'approved', fileReview: { approvalId: 'approval-1', path: 'notes/a.md' } })
+  })
+
+  it('closes a file_patch operation from its durable artifact when the result transaction is interrupted', () => {
+    const base = { taskId: 'task-1', runId: 'run-1' }
+    const events = [
+      { ...base, id: 'start', sequence: 1, timestamp: 1, family: 'execution', type: 'agent_started', payload: { requestId: 'request-1', inputMessageId: 1, assistantMessageId: 2, modelIdentity: {}, contextVersion: 1 } },
+      { ...base, id: 'call', sequence: 2, timestamp: 2, family: 'execution', type: 'tool_call_requested', payload: { stepId: 'step-1', callId: 'call-1', tool: 'file_patch', argumentsPreview: { path: 'notes/a.md' }, argumentsDigest: 'digest', startedAt: 2 } },
+      { ...base, id: 'artifact', sequence: 3, timestamp: 3, family: 'artifact', type: 'artifact_created', payload: { artifactId: 'artifact-1', callId: 'call-1', kind: 'file_patch', path: 'notes/a.md', beforeHash: 'before', afterHash: 'after', operation: 'update', diff: '-old\n+new', additions: 1, deletions: 1, createdAt: 3, expiresAt: 10_000 } },
+      { ...base, id: 'required', sequence: 4, timestamp: 4, family: 'artifact', type: 'approval_required', payload: { approvalId: 'approval-1', callId: 'call-1', artifactId: 'artifact-1', deadlineAt: 10_000 } },
+      { ...base, id: 'failed', sequence: 6, timestamp: 6, family: 'recovery', type: 'run_failed', payload: { code: 'agent_bridge_failed', message: 'Agent 服务暂时不可用', retryable: true } },
+    ] as any
+
+    const projected = projectAgentRunView(events, [])
+    expect(projected.displayEvents.find(event => event.kind === 'tool_call')).toMatchObject({
+      callId: 'call-1',
+      status: 'completed',
+      content: '文件修改提案已生成，等待审查。',
+    })
+    expect(projected.displayEvents.find(event => event.kind === 'file_review')).toMatchObject({ status: 'pending_approval' })
+    expect(projected.timeline.find(step => step.id === 'step-1')).toMatchObject({ status: 'completed' })
+  })
+
+  it('marks an unmatched tool call as interrupted instead of leaving it active after run failure', () => {
+    const base = { taskId: 'task-1', runId: 'run-1' }
+    const events = [
+      { ...base, id: 'start', sequence: 1, timestamp: 1, family: 'execution', type: 'agent_started', payload: { requestId: 'request-1', inputMessageId: 1, assistantMessageId: 2, modelIdentity: {}, contextVersion: 1 } },
+      { ...base, id: 'call', sequence: 2, timestamp: 2, family: 'execution', type: 'tool_call_requested', payload: { stepId: 'step-1', callId: 'call-1', tool: 'file_read', argumentsPreview: { path: 'notes/a.md' }, argumentsDigest: 'digest', startedAt: 2 } },
+      { ...base, id: 'failed', sequence: 3, timestamp: 3, family: 'recovery', type: 'run_failed', payload: { code: 'agent_bridge_failed', message: 'Agent 服务暂时不可用', retryable: true } },
+    ] as any
+
+    const projected = projectAgentRunView(events, [])
+    expect(projected.displayEvents.find(event => event.kind === 'tool_call')).toMatchObject({
+      callId: 'call-1',
+      status: 'error',
+      content: '运行已中断，未收到工具结果。',
+    })
+    expect(projected.timeline.find(step => step.id === 'step-1')).toMatchObject({ status: 'error' })
+  })
+
   it('collapses every tool event after the final answer and keeps only the latest call live', () => {
     const events = [
       { id: 'thought-1', order: 1, kind: 'thought', stepId: 'step-1', callId: 'call-1', title: '思考', content: '第一步', status: 'completed', createdAt: 1 },
@@ -62,6 +116,18 @@ describe('agent conversation display helpers', () => {
     const completed = partitionAgentConversationEvents([...events], true)
     expect(completed.collapsed).toHaveLength(events.length)
     expect(completed.visible).toEqual([])
+  })
+
+  it('switches to an inline diff only when the available view is too narrow', () => {
+    expect(shouldUseInlineDiff(759)).toBe(true)
+    expect(shouldUseInlineDiff(760)).toBe(false)
+    expect(shouldUseInlineDiff(1_200)).toBe(false)
+  })
+
+  it('synchronizes horizontal scrolling proportionally across unequal diff panes', () => {
+    expect(getSyncedDiffScrollLeft(300, 1_000, 400, 700, 400)).toBe(150)
+    expect(getSyncedDiffScrollLeft(800, 1_000, 400, 700, 400)).toBe(300)
+    expect(getSyncedDiffScrollLeft(100, 400, 400, 700, 400)).toBe(0)
   })
 
   it('builds aligned before and after rows from a unified diff', () => {

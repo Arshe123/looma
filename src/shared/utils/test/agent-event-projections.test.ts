@@ -40,6 +40,21 @@ describe('Agent event projections', () => {
     expect(indexes.usage.operationIds).toEqual(['op_1'])
   })
 
+  it('keeps the run completed when a queued file review is resolved later', () => {
+    const approvalEvents: AgentEvent[] = [
+      events[0],
+      { ...base, id: 'evt_approval', sequence: 2, timestamp: 20, family: 'artifact', type: 'approval_required', payload: { approvalId: 'approval_1', callId: 'call_patch', artifactId: 'artifact_1', deadlineAt: 10_000 } },
+      { ...base, id: 'evt_done', sequence: 3, timestamp: 30, family: 'execution', type: 'run_completed', payload: { answerMessageId: 'msg_answer', completedStep: 'final' } },
+      { ...base, id: 'evt_resolved', sequence: 4, timestamp: 40, family: 'artifact', type: 'approval_resolved', payload: { approvalId: 'approval_1', callId: 'call_patch', artifactId: 'artifact_1', status: 'approved', applied: true } },
+    ]
+
+    expect(foldAgentState(approvalEvents)).toEqual({
+      status: 'completed',
+      currentStep: 'final',
+      completedSteps: [],
+    })
+  })
+
   it('creates a disposable snapshot and compact timeline without model context', () => {
     const snapshot = createEventSnapshot('run_1', events, 'hash_1')
     expect(snapshot.throughSequence).toBe(8)

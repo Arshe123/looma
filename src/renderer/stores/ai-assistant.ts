@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { AgentEvent, AgentSource } from '../../shared/types/agent-events'
+import type { AgentEvent, AgentPendingFileReview, AgentSource } from '../../shared/types/agent-events'
 import { useSettingsStore } from './settings'
 import { useWorkspaceStore } from './workspace'
 import type { AiAssistantMessage, AiAssistantTimelineOutput, AiAssistantTimelineStep } from './workspace'
@@ -10,7 +10,7 @@ import {
   failAiTimelineStep,
   formatAiRuntimeError,
 } from '../components/ai/aiTimeline'
-import { projectAgentRunView } from './agent-event-view'
+import { isArtifactBackedFilePatchBridgeInterruption, projectAgentRunView } from './agent-event-view'
 import {
   flattenAgentHistoryForSummary,
   normalizeAgentConversationHistory,
@@ -78,6 +78,11 @@ export type AgentApprovalState = {
   requestedAt: string
   deadlineAt: string
   status: 'pending' | 'resolving' | 'approved' | 'rejected' | 'expired' | 'cancelled' | 'error'
+  error?: string
+}
+
+export type PendingFileReviewState = AgentPendingFileReview & {
+  status: 'pending' | 'resolving' | 'error'
   error?: string
 }
 
@@ -262,6 +267,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     agentRecoveryByMessageKey: {} as Record<string, AgentRecoveryState>,
     subscribeAgentStreamEvents: null as null | (() => void),
     agentStartingConversationIds: {} as Record<string, ConversationPreparingState>,
+    pendingFileReviewsByWorkspaceId: {} as Record<string, PendingFileReviewState[]>,
   }),
   getters: {
     isConversationRunningAgent: (state) => (conversationId: string | null | undefined) => (
@@ -281,13 +287,23 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
           status: run.approvalResolutionInFlight[approval.approvalId] ? 'resolving' : approval.status,
         }))
     },
+    getWorkspacePendingFileReviews: (state) => (workspaceId: string | null | undefined) => (
+      workspaceId ? state.pendingFileReviewsByWorkspaceId[workspaceId] || [] : []
+    ),
+    getPendingFileReview: (state) => (approvalId: string | null | undefined) => (
+      approvalId
+        ? Object.values(state.pendingFileReviewsByWorkspaceId).flat().find(item => item.approvalId === approvalId) || null
+        : null
+    ),
     getMessageAgentRecovery: (state) => (conversationId: string | null | undefined, messageId: number | undefined, runId?: string): AgentRecoveryState | null => {
       if (!conversationId || messageId === undefined || !runId) return null
       const key = getAgentDisplayMessageKey(conversationId, messageId)
+      const events = state.agentEventsByMessageKey[key] || []
+      if (isArtifactBackedFilePatchBridgeInterruption(events)) return null
+      const projection = projectAgentRunView(events, state.agentSourcesByMessageKey[key] || [])
+      if (!['failed', 'cancelled'].includes(projection.state.status)) return null
       const cached = state.agentRecoveryByMessageKey[key]
       if (cached) return cached
-      const projection = projectAgentRunView(state.agentEventsByMessageKey[key] || [], state.agentSourcesByMessageKey[key] || [])
-      if (!['failed', 'cancelled'].includes(projection.state.status)) return null
       return { recoverable: true, checkpointAvailable: false, reason: '将从已确认的事件和消息继续。' }
     },
     getMessageAgentDisplayEvents: (state) => (conversationId: string | null | undefined, messageId: number | undefined) => {
@@ -308,6 +324,18 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
   actions: {
     createStreamRequestId() {
       return `${Date.now()}_${Math.random().toString(36).slice(2)}`
+    },
+
+    async refreshPendingFileReviews(workspaceId: string | null | undefined) {
+      if (!workspaceId) return []
+      const result = await (window as any).electronAPI.agent.listApprovals(workspaceId)
+      if (!result?.success || !Array.isArray(result.data)) return this.pendingFileReviewsByWorkspaceId[workspaceId] || []
+      const previous = new Map((this.pendingFileReviewsByWorkspaceId[workspaceId] || []).map(item => [item.approvalId, item]))
+      this.pendingFileReviewsByWorkspaceId[workspaceId] = result.data.map((item: AgentPendingFileReview) => ({
+        ...item,
+        status: previous.get(item.approvalId)?.status === 'resolving' ? 'resolving' : 'pending',
+      }))
+      return this.pendingFileReviewsByWorkspaceId[workspaceId]
     },
 
     appendCanonicalAgentFacts(run: AgentConversationRunState, payload: AgentStreamEventPayload) {
@@ -361,8 +389,12 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
         const key = getAgentDisplayMessageKey(conversationId, message.id)
         this.agentEventsByMessageKey[key] = result.data.events
         this.agentSourcesByMessageKey[key] = result.data.sources
-        this.agentRecoveryByMessageKey[key] = result.data.recovery
         const projection = projectAgentRunView(result.data.events, result.data.sources)
+        if (['failed', 'cancelled'].includes(projection.state.status) && !isArtifactBackedFilePatchBridgeInterruption(result.data.events)) {
+          this.agentRecoveryByMessageKey[key] = result.data.recovery
+        } else {
+          delete this.agentRecoveryByMessageKey[key]
+        }
         workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, message.id, projection.timeline, { persist: false })
         workspaceStore.updateAiAssistantMessageMetaInConversation(conversationId, message.id, {
           taskId: result.data.run.taskId,
@@ -381,6 +413,18 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
           },
         }, { persist: false })
       }))
+    },
+
+    async refreshAgentRunHistoryById(workspaceId: string, runId: string) {
+      const workspaceStore = useWorkspaceStore()
+      const conversation = workspaceStore.aiAssistant.conversations.find(item => (
+        item.messages.some(message => message.runId === runId)
+      ))
+      if (!conversation) return
+      await this.hydrateAgentHistory(workspaceId, [{
+        id: conversation.id,
+        messages: conversation.messages.filter(message => message.runId === runId),
+      }])
     },
 
     ensureAgentStreamEventSubscription() {
@@ -694,6 +738,10 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       this.syncAgentProjection(run)
       const workspaceStore = useWorkspaceStore()
 
+      if (payload.type === 'approval_required') {
+        void this.refreshPendingFileReviews(run.workspaceId)
+      }
+
       if (payload.type === 'run_started') {
         workspaceStore.updateAiAssistantMessageMetaInConversation(conversationId, run.assistantMessageId, {
           runId: payload.runId,
@@ -714,6 +762,12 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       }
 
       if (payload.type === 'error') {
+        const key = getAgentDisplayMessageKey(conversationId, run.assistantMessageId)
+        if (isArtifactBackedFilePatchBridgeInterruption(this.agentEventsByMessageKey[key] || [])) {
+          if (!run.assistantText.trim()) run.assistantText = '文件修改提案已生成，等待审查。'
+          this.completeAgentConversation(conversationId, 'completed')
+          return
+        }
         this.failAgentConversation(conversationId, payload.error.message || 'Agent 运行失败。', payload.error.technical_detail || undefined)
         return
       }
@@ -795,27 +849,61 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       }
     },
 
-    async resolveAgentApproval(conversationId: string, approvalId: string, approved: boolean) {
-      const run = this.agentRunsByConversationId[conversationId]
-      const approval = this.getConversationAgentApprovals(conversationId)
-        .find((item) => item.approvalId === approvalId)
-      if (!run || !approval) return { success: false, error: '审批已失效。' }
-      if (approval.status !== 'pending') return { success: false, error: '审批已经处理或正在处理中。' }
-      if (Date.now() >= Date.parse(approval.deadlineAt)) {
-        return { success: false, error: '审批已过期，请让 Agent 重新生成修改提案。' }
+    async resolvePendingFileReview(workspaceId: string, approvalId: string, approved: boolean) {
+      const reviews = this.pendingFileReviewsByWorkspaceId[workspaceId] || []
+      const review = reviews.find(item => item.approvalId === approvalId)
+      if (!review) return { success: false, error: '文件审查已完成或不存在。' }
+      if (review.status === 'resolving') return { success: false, error: '文件审查正在处理中。' }
+      const workspaceStore = useWorkspaceStore()
+      if (approved && workspaceStore.isFileDirty(review.path)) {
+        review.status = 'error'
+        review.error = '该文件在编辑器中有未保存修改，请先保存或放弃修改，再重新生成 Agent 提案。'
+        return { success: false, error: review.error }
       }
-      run.approvalResolutionInFlight[approvalId] = true
+      review.status = 'resolving'
+      delete review.error
       try {
-        const result = await (window as any).electronAPI.agent.resolveApproval(approvalId, approved)
+        const result = await (window as any).electronAPI.agent.resolveApproval(workspaceId, approvalId, approved)
+        await this.refreshAgentRunHistoryById(workspaceId, review.runId)
         if (!result?.success) {
-          delete run.approvalResolutionInFlight[approvalId]
-          return { success: false, error: result?.error || '提交审批失败。' }
+          const message = result?.error || '提交文件审查失败。'
+          await this.refreshPendingFileReviews(workspaceId)
+          const pending = (this.pendingFileReviewsByWorkspaceId[workspaceId] || []).find(item => item.approvalId === approvalId)
+          if (pending) {
+            pending.status = 'error'
+            pending.error = message
+          }
+          return { success: false, error: message }
         }
-        return { success: true }
+        if (approved && result.data?.applied) {
+          const refreshed = await workspaceStore.refreshOpenTextFileContentFromDisk(review.path)
+          if (!refreshed.success) {
+            review.status = 'error'
+            review.error = refreshed.error || '文件已应用，但编辑器重新加载失败，请重新打开该文件。'
+            return { success: false, error: review.error }
+          }
+        }
+        this.pendingFileReviewsByWorkspaceId[workspaceId] = reviews.filter(item => item.approvalId !== approvalId)
+        return { success: true, data: result.data }
       } catch (error: any) {
-        delete run.approvalResolutionInFlight[approvalId]
-        return { success: false, error: compactText(error?.message ?? String(error), 1000) || '提交审批失败。' }
+        review.status = 'error'
+        review.error = compactText(error?.message ?? String(error), 1000) || '提交文件审查失败。'
+        return { success: false, error: review.error }
       }
+    },
+
+    async resolveAllPendingFileReviews(workspaceId: string, approved: boolean) {
+      const ids = (this.pendingFileReviewsByWorkspaceId[workspaceId] || [])
+        .filter(item => item.status !== 'resolving')
+        .map(item => item.approvalId)
+      const failures: string[] = []
+      for (const approvalId of ids) {
+        const result = await this.resolvePendingFileReview(workspaceId, approvalId, approved)
+        if (!result.success) failures.push(result.error || approvalId)
+      }
+      return failures.length
+        ? { success: false, error: `${failures.length} 个文件处理失败，请逐项重试。` }
+        : { success: true }
     },
 
 

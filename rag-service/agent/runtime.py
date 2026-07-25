@@ -6,10 +6,10 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from agent.approvals import ApprovalManager, ApprovalResolution
 from pydantic import ValidationError
 
 from agent.decision_parser import AgentDecisionParseError, AgentEmptyDecisionError
@@ -44,6 +44,87 @@ class _AgentTimedOut(Exception):
 
 
 _SAFE_PROVIDER_CALL_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def _provider_http_status(exc: Exception) -> int | None:
+    """Extract only the HTTP status from SDK exceptions; never persist raw responses."""
+
+    candidates = (
+        getattr(exc, "status_code", None),
+        getattr(getattr(exc, "response", None), "status_code", None),
+    )
+    for value in candidates:
+        if isinstance(value, int) and not isinstance(value, bool) and 100 <= value <= 599:
+            return value
+    return None
+
+
+def _provider_agent_error(exc: Exception) -> AgentError:
+    error_type = type(exc).__name__[:120]
+    status = _provider_http_status(exc)
+    technical_detail = (
+        f"{error_type} (HTTP {status})" if status is not None else error_type
+    )
+    mappings: dict[int, tuple[str, str, bool]] = {
+        401: (
+            "provider_auth_failed",
+            "模型服务认证失败，请检查 API Key 后重试。",
+            False,
+        ),
+        402: (
+            "provider_insufficient_balance",
+            "模型服务账户余额不足，请充值后重试。",
+            False,
+        ),
+        403: (
+            "provider_access_denied",
+            "模型服务拒绝访问，请检查 API Key 权限或模型权限。",
+            False,
+        ),
+        408: (
+            "provider_timeout",
+            "模型服务响应超时，请稍后重试。",
+            True,
+        ),
+        413: (
+            "provider_request_too_large",
+            "发送给模型的上下文过大，请缩小任务范围或开始新对话。",
+            False,
+        ),
+        429: (
+            "provider_rate_limited",
+            "模型服务请求过于频繁，请稍后重试。",
+            True,
+        ),
+    }
+    if status in mappings:
+        code, message, retryable = mappings[status]
+        return AgentError(
+            code=code,
+            message=message,
+            technical_detail=technical_detail,
+            retryable=retryable,
+        )
+    if status is not None and status >= 500:
+        return AgentError(
+            code="provider_unavailable",
+            message="模型服务暂时不可用，请稍后重试。",
+            technical_detail=technical_detail,
+            retryable=True,
+        )
+    if status is not None:
+        return AgentError(
+            code="provider_request_failed",
+            message="模型服务拒绝了本次请求，请检查模型配置后重试。",
+            technical_detail=technical_detail,
+            retryable=status in {409, 425},
+        )
+    return AgentError(
+        code="agent_failed",
+        message="Agent 运行失败，请稍后重试。",
+        technical_detail=technical_detail,
+        retryable=True,
+    )
 
 
 @dataclass
@@ -115,12 +196,10 @@ class AgentRuntime:
         provider: Any,
         registry: ToolRegistry,
         context: AgentToolContext,
-        approval_manager: ApprovalManager | None = None,
     ):
         self.provider = provider
         self.registry = registry
         self.context = context
-        self.approval_manager = approval_manager
 
     async def run(
         self,
@@ -132,6 +211,7 @@ class AgentRuntime:
         cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         run_id = run_id or f"run_{uuid.uuid4().hex}"
+        run_context = replace(self.context, run_id=run_id)
         yield event("run_started", run_id, startedAt=utc_iso_z())
 
         messages = [*history, ChatMessage(role="user", content=input)]
@@ -188,8 +268,12 @@ class AgentRuntime:
                     )
                 except (_RunCancelled, _AgentTimedOut, asyncio.CancelledError):
                     raise
-                except Exception:
+                except Exception as exc:
                     if forced_final:
+                        provider_error = _provider_agent_error(exc)
+                        if provider_error.code != "agent_failed":
+                            yield error_event(run_id, provider_error)
+                            return
                         yield error_event(run_id, AgentError(
                             code="max_steps_exceeded",
                             message="已达到最大工具步数，且无法生成最终答案。",
@@ -388,7 +472,7 @@ class AgentRuntime:
                     started = time.perf_counter()
                     result = await self.registry.execute(
                         plan.call.tool,
-                        self.context,
+                        run_context,
                         plan.call.arguments,
                         enabled_tools=config.enabled_tools,
                         allow_write=config.allow_write,
@@ -419,52 +503,24 @@ class AgentRuntime:
                     plan.result = result
                     plan.duration_ms = duration_ms
 
-                cancelled_during_approval = False
                 for plan in plans:
                     assert plan.result is not None
                     if not self._requires_approval(plan.call.tool, plan.result):
                         continue
-                    if cancelled_during_approval:
-                        plan.result = self._approval_tool_result(
-                            plan.call.tool,
-                            plan.result,
-                            ApprovalResolution(
-                                status="cancelled", reason="run cancelled"
-                            ),
-                        )
-                        continue
-                    if self.approval_manager is None:
-                        raise RuntimeError("approval manager is required for file_patch")
-                    approval = self.approval_manager.create(
-                        run_id=run_id,
-                        step_id=plan.step_id,
-                        call_id=plan.call_id,
-                        tool_name=plan.call.tool,
-                        payload=plan.result.data,
-                    )
+                    requested_at = datetime.now(timezone.utc)
+                    approval_id = f"approval_{uuid.uuid4().hex}"
                     yield event(
                         "approval_required", run_id, step=plan.step,
-                        **approval.as_event(),
+                        approvalId=approval_id,
+                        stepId=plan.step_id,
+                        callId=plan.call_id,
+                        tool=plan.call.tool,
+                        proposal=self._approval_proposal(plan.result),
+                        requestedAt=requested_at.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                        deadlineAt=(requested_at + timedelta(days=7)).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
                     )
-                    try:
-                        resolution = await budget.wait(
-                            self.approval_manager.wait_for_resolution(approval.approval_id),
-                            cancel_event,
-                        )
-                    except _RunCancelled:
-                        await self.approval_manager.cancel_run(run_id)
-                        resolution = ApprovalResolution(
-                            status="cancelled", reason="run cancelled"
-                        )
-                        cancelled_during_approval = True
-                    yield event(
-                        "approval_resolved", run_id, step=plan.step,
-                        stepId=plan.step_id, callId=plan.call_id,
-                        approvalId=approval.approval_id,
-                        resolution=resolution.as_dict(),
-                    )
-                    plan.result = self._approval_tool_result(
-                        plan.call.tool, plan.result, resolution
+                    plan.result = self._pending_approval_tool_result(
+                        plan.call.tool, plan.result, approval_id
                     )
 
                 for plan in plans:
@@ -532,12 +588,7 @@ class AgentRuntime:
                     )
                     for plan in plans
                 )
-                if cancelled_during_approval:
-                    yield event("done", run_id, status="cancelled")
-                    return
         except _RunCancelled:
-            if self.approval_manager is not None:
-                await self.approval_manager.cancel_run(run_id)
             pending_steps = list(active_steps.values()) or [
                 (steps + 1, f"step_{steps + 1}_cancelled")
             ]
@@ -571,12 +622,7 @@ class AgentRuntime:
                 retryable=True,
             ))
         except Exception as exc:
-            yield error_event(run_id, AgentError(
-                code="agent_failed",
-                message="Agent 运行失败，请稍后重试。",
-                technical_detail=type(exc).__name__,
-                retryable=True,
-            ))
+            yield error_event(run_id, _provider_agent_error(exc))
 
     @staticmethod
     def _safe_sources(
@@ -628,67 +674,45 @@ class AgentRuntime:
 
     @staticmethod
     def _requires_approval(tool_name: str, result: ToolResult) -> bool:
+        proposal = AgentRuntime._approval_proposal(result)
         return (
             tool_name == "file_patch"
             and result.success
-            and isinstance(result.data, dict)
-            and result.data.get("requiresApproval") is True
+            and isinstance(proposal, dict)
+            and proposal.get("requiresApproval") is True
         )
 
     @staticmethod
-    def _approval_tool_result(
-        tool_name: str, pending_result: ToolResult, resolution: ApprovalResolution
+    def _approval_proposal(result: ToolResult) -> dict[str, Any] | None:
+        private_payload = getattr(result, "_approval_payload", None)
+        if isinstance(private_payload, dict):
+            return private_payload
+        return result.data if isinstance(result.data, dict) else None
+
+    @staticmethod
+    def _pending_approval_tool_result(
+        tool_name: str, pending_result: ToolResult, approval_id: str
     ) -> ToolResult:
-        payload = pending_result.data if isinstance(pending_result.data, dict) else {}
+        payload = AgentRuntime._approval_proposal(pending_result) or {}
         safe_proposal = {
             key: value
             for key, value in payload.items()
             if key in {"path", "operation", "expected_sha256", "proposed_sha256"}
         }
-        data = {
-            "status": resolution.status,
-            "reason": resolution.reason,
-            "applied": resolution.applied,
-            "proposal": safe_proposal,
-        }
-        if resolution.status == "approved":
-            if resolution.applied is not True:
-                return ToolResult(
-                    tool=tool_name,
-                    success=False,
-                    summary="Patch was approved but could not be applied.",
-                    data=data,
-                    error=AgentError(
-                        code="patch_apply_failed",
-                        message="文件修改已获批准，但写入失败。",
-                        technical_detail=resolution.reason,
-                        retryable=True,
-                    ),
-                )
-            return ToolResult(
-                tool=tool_name,
-                success=True,
-                summary="Patch proposal approved.",
-                data=data,
-            )
-        error_codes = {
-            "rejected": "approval_rejected",
-            "expired": "approval_expired",
-            "cancelled": "approval_cancelled",
-        }
-        messages = {
-            "rejected": "Patch proposal was rejected.",
-            "expired": "Patch proposal approval timed out.",
-            "cancelled": "Patch proposal approval was cancelled.",
-        }
         return ToolResult(
             tool=tool_name,
-            success=False,
-            summary=messages[resolution.status],
-            data=data,
-            error=AgentError(
-                code=error_codes[resolution.status],
-                message=messages[resolution.status],
-                retryable=resolution.status == "expired",
+            success=True,
+            summary=(
+                "文件修改已写入本次运行的暂存视图并加入待审队列；正式工作区尚未改变，"
+                "后续 file_read/file_patch 会继续使用暂存版本。"
             ),
+            data={
+                "status": "pending_approval",
+                "approvalId": approval_id,
+                "applied": False,
+                "diskState": "unchanged_until_approved",
+                "stagedView": "updated",
+                "subsequentFileAccess": "staging_first",
+                "proposal": safe_proposal,
+            },
         )

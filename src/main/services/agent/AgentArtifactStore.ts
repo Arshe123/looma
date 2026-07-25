@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises'
+import { lstat, mkdir, open, readFile, realpath, rename, rm, rmdir } from 'node:fs/promises'
 import path from 'node:path'
 import type { FilePatchArtifact } from '../../../shared/types/agent-events'
 import type { AgentArtifactEnvelope } from './agentLedgerTypes'
@@ -33,6 +33,19 @@ const exists = async (filePath: string) => {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
     throw error
+  }
+}
+
+const ensureContainedWithoutLinks = async (root: string, target: string) => {
+  if (!isInside(root, target)) throw new Error('Path escapes trusted root')
+  let cursor = root
+  for (const segment of path.relative(root, target).split(path.sep).filter(Boolean)) {
+    cursor = path.join(cursor, segment)
+    if (!await exists(cursor)) continue
+    const stat = await lstat(cursor)
+    if (stat.isSymbolicLink()) throw new Error('Path traverses a symbolic link')
+    const componentReal = await realpath(cursor)
+    if (!isInside(root, componentReal)) throw new Error('Path escapes trusted root')
   }
 }
 
@@ -128,6 +141,66 @@ export class AgentArtifactStore {
     if (parsed.schemaVersion !== 1 || parsed.artifact.artifactId !== artifactId) throw new Error('Invalid patch artifact')
     if (sha256Text(parsed.artifact.proposedContent) !== parsed.artifact.afterHash) throw new Error('Patch artifact hash mismatch')
     return parsed.artifact
+  }
+
+  async remove(artifactId: string) {
+    await rm(this.artifactPath(artifactId), { force: true })
+  }
+
+  async cleanupStagedFile(
+    workspaceRoot: string,
+    runId: string,
+    relativePath: string,
+    expectedAfterHash: string,
+  ) {
+    if (!SAFE_ID.test(runId)) throw new Error('Invalid Agent run id')
+    const safePath = safeRelativePath(relativePath)
+    const workspaceReal = await realpath(workspaceRoot)
+    const stagingRoot = path.join(workspaceReal, '.looma', 'agent-staging', runId)
+    const stagedPath = path.join(stagingRoot, 'files', ...safePath.split('/'))
+    const basePath = path.join(stagingRoot, 'base', ...safePath.split('/'))
+    const metaName = `${createHash('sha256').update(safePath, 'utf8').digest('hex')}.json`
+    const metaPath = path.join(stagingRoot, 'meta', metaName)
+    await Promise.all([
+      ensureContainedWithoutLinks(workspaceReal, stagedPath),
+      ensureContainedWithoutLinks(workspaceReal, basePath),
+      ensureContainedWithoutLinks(workspaceReal, metaPath),
+    ])
+    if (await exists(stagedPath)) {
+      const stagedStat = await lstat(stagedPath)
+      if (!stagedStat.isFile() || stagedStat.isSymbolicLink()) throw new Error('Staged target must be a regular file')
+      const stagedContent = await readFile(stagedPath, 'utf8')
+      if (sha256Text(stagedContent) !== expectedAfterHash) return false
+    }
+    await Promise.all([
+      rm(stagedPath, { force: true }),
+      rm(basePath, { force: true }),
+      rm(metaPath, { force: true }),
+    ])
+    const pruneEmptyParents = async (start: string, boundary: string) => {
+      let cursor = start
+      while (isInside(boundary, cursor) && cursor !== boundary) {
+        try {
+          await rmdir(cursor)
+        } catch {
+          break
+        }
+        cursor = path.dirname(cursor)
+      }
+    }
+    await Promise.all([
+      pruneEmptyParents(path.dirname(stagedPath), path.join(stagingRoot, 'files')),
+      pruneEmptyParents(path.dirname(basePath), path.join(stagingRoot, 'base')),
+    ])
+    for (const directory of [
+      path.join(stagingRoot, 'files'),
+      path.join(stagingRoot, 'base'),
+      path.join(stagingRoot, 'meta'),
+      stagingRoot,
+    ]) {
+      await rmdir(directory).catch(() => {})
+    }
+    return true
   }
 
   async apply(workspaceRoot: string, workspaceId: string, artifactId: string): Promise<ApplyArtifactResult> {

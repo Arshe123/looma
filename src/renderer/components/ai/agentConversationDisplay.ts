@@ -124,6 +124,23 @@ export interface SideBySideDiffRow {
   after: string
 }
 
+export const DIFF_INLINE_BREAKPOINT = 760
+
+export const shouldUseInlineDiff = (width: number) => width < DIFF_INLINE_BREAKPOINT
+
+export const getSyncedDiffScrollLeft = (
+  sourceLeft: number,
+  sourceScrollWidth: number,
+  sourceClientWidth: number,
+  targetScrollWidth: number,
+  targetClientWidth: number,
+) => {
+  const sourceMax = Math.max(0, sourceScrollWidth - sourceClientWidth)
+  const targetMax = Math.max(0, targetScrollWidth - targetClientWidth)
+  if (sourceMax === 0 || targetMax === 0) return 0
+  return Math.max(0, Math.min(targetMax, (sourceLeft / sourceMax) * targetMax))
+}
+
 const parseHunkStart = (line: string) => {
   const match = line.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/)
   return match ? { before: Number(match[1]), after: Number(match[2]) } : null

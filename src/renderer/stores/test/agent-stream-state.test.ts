@@ -195,8 +195,12 @@ describe('agent stream state', () => {
       },
     })
 
-    await store.hydrateAgentHistory('workspace-1', [workspace.getAiAssistantConversationById(conversationId)!])
+    const conversation = workspace.getAiAssistantConversationById(conversationId)!
+    conversation.updatedAt = 1_234
 
+    await store.hydrateAgentHistory('workspace-1', [conversation])
+
+    expect(conversation.updatedAt).toBe(1_234)
     expect(store.getMessageAgentRecovery(conversationId, run.assistantMessageId, 'run-completed-review')).toBeNull()
     store.agentRecoveryByMessageKey[`${conversationId}:${run.assistantMessageId}`] = {
       recoverable: false,

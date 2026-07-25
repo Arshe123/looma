@@ -643,23 +643,23 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.updateAiAssistantMessageTextInConversation(conversation.id, id, text, options)
     },
 
-    updateAiAssistantMessageTimelineInConversation(conversationId: string, id: number, timeline: AiAssistantMessage['timeline'], options?: { persist?: boolean }) {
+    updateAiAssistantMessageTimelineInConversation(conversationId: string, id: number, timeline: AiAssistantMessage['timeline'], options?: { persist?: boolean; touchConversation?: boolean }) {
       const conversation = this.getAiAssistantConversationById(conversationId)
       if (!conversation) return
       const message = conversation.messages.find((item) => item.id === id)
       if (!message) return
       message.timeline = timeline
-      this.touchAiAssistantConversation(conversation)
+      if (options?.touchConversation !== false) this.touchAiAssistantConversation(conversation)
       if (options?.persist === false) return
       this.saveAiAssistantState()
     },
 
-    updateAiAssistantMessageTimeline(id: number, timeline: AiAssistantMessage['timeline'], options?: { persist?: boolean }) {
+    updateAiAssistantMessageTimeline(id: number, timeline: AiAssistantMessage['timeline'], options?: { persist?: boolean; touchConversation?: boolean }) {
       const conversation = this.ensureActiveAiAssistantConversation()
       this.updateAiAssistantMessageTimelineInConversation(conversation.id, id, timeline, options)
     },
 
-    updateAiAssistantMessageMetaInConversation(conversationId: string, id: number, meta: Partial<Pick<AiAssistantMessage, 'aiName' | 'taskId' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>>, options?: { persist?: boolean }) {
+    updateAiAssistantMessageMetaInConversation(conversationId: string, id: number, meta: Partial<Pick<AiAssistantMessage, 'aiName' | 'taskId' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>>, options?: { persist?: boolean; touchConversation?: boolean }) {
       const conversation = this.getAiAssistantConversationById(conversationId)
       if (!conversation) return
       const message = conversation.messages.find((item) => item.id === id)
@@ -671,12 +671,12 @@ export const useWorkspaceStore = defineStore('workspace', {
         if ('modelIdentity' in meta) message.modelIdentity = meta.modelIdentity
         if ('agentSummary' in meta) message.agentSummary = meta.agentSummary
       }
-      this.touchAiAssistantConversation(conversation)
+      if (options?.touchConversation !== false) this.touchAiAssistantConversation(conversation)
       if (options?.persist === false) return
       this.saveAiAssistantState()
     },
 
-    updateAiAssistantMessageMeta(id: number, meta: Partial<Pick<AiAssistantMessage, 'aiName' | 'taskId' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>>, options?: { persist?: boolean }) {
+    updateAiAssistantMessageMeta(id: number, meta: Partial<Pick<AiAssistantMessage, 'aiName' | 'taskId' | 'runId' | 'mode' | 'modelIdentity' | 'agentSummary'>>, options?: { persist?: boolean; touchConversation?: boolean }) {
       const conversation = this.ensureActiveAiAssistantConversation()
       this.updateAiAssistantMessageMetaInConversation(conversation.id, id, meta, options)
     },
@@ -746,7 +746,6 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       const conversation = this.ensureActiveAiAssistantConversation()
       conversation.draft = value
-      conversation.updatedAt = Date.now()
       this.saveAiAssistantState()
     },
 

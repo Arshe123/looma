@@ -395,7 +395,10 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
         } else {
           delete this.agentRecoveryByMessageKey[key]
         }
-        workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, message.id, projection.timeline, { persist: false })
+        workspaceStore.updateAiAssistantMessageTimelineInConversation(conversationId, message.id, projection.timeline, {
+          persist: false,
+          touchConversation: false,
+        })
         workspaceStore.updateAiAssistantMessageMetaInConversation(conversationId, message.id, {
           taskId: result.data.run.taskId,
           runId: result.data.run.id,
@@ -411,7 +414,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
             sourceCount: projection.sourceCount,
             ...(projection.state.status === 'failed' ? { error: { message: projection.state.currentStep } } : {}),
           },
-        }, { persist: false })
+        }, { persist: false, touchConversation: false })
       }))
     },
 

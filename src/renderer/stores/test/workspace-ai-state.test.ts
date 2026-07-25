@@ -65,6 +65,17 @@ describe('workspace ai assistant temporary conversation state', () => {
     expect(store.aiAssistant.conversations[0].draft).toBe('')
   })
 
+  it('does not refresh conversation history time when editing a draft', () => {
+    const store = useWorkspaceStore()
+    const conversation = store.aiAssistant.conversations[0]
+    conversation.updatedAt = 1_234
+
+    store.setAiAssistantDraft('尚未发送的问题')
+
+    expect(conversation.draft).toBe('尚未发送的问题')
+    expect(conversation.updatedAt).toBe(1_234)
+  })
+
   it('materializes a real conversation only when the first message is appended', () => {
     const store = useWorkspaceStore()
     const originalCount = store.aiAssistant.conversations.length

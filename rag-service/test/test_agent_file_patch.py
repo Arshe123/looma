@@ -159,7 +159,9 @@ class FilePatchToolTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertFalse(result.success)
-        self.assertEqual(result.error.code, "tool_invalid_arguments")
+        self.assertEqual(result.error.code, "file_patch_old_text_not_unique")
+        self.assertIn("matched 2 times", result.error.message)
+        self.assertTrue(result.error.retryable)
         self.assertFalse(
             (self.workspace / ".looma" / "agent-staging" / "run_test" / "files" / "repeat.txt").exists()
         )
@@ -175,14 +177,15 @@ class FilePatchToolTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertFalse(result.success)
-        self.assertEqual(result.error.code, "tool_invalid_arguments")
+        self.assertEqual(result.error.code, "file_patch_old_text_not_unique")
+        self.assertIn("matched 0 times", result.error.message)
 
     async def test_escape_and_internal_paths_are_rejected(self):
         for path in ("../outside.txt", ".looma/config.json", str(self.workspace / "abs.txt")):
             with self.subTest(path=path):
                 result = await self.execute(path=path, new_content="x")
                 self.assertFalse(result.success)
-                self.assertEqual(result.error.code, "tool_invalid_arguments")
+                self.assertTrue(result.error.code.startswith("file_patch_"))
 
     async def test_binary_and_large_files_are_rejected(self):
         binary = self.workspace / "bin.dat"
@@ -192,7 +195,7 @@ class FilePatchToolTest(unittest.IsolatedAsyncioTestCase):
 
         binary_result = await self.execute(
             path="bin.dat",
-            old_text="",
+            old_text="content",
             new_text="next",
         )
         large_result = await self.execute(
@@ -202,9 +205,9 @@ class FilePatchToolTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertFalse(binary_result.success)
-        self.assertEqual(binary_result.error.code, "tool_invalid_arguments")
+        self.assertEqual(binary_result.error.code, "file_patch_binary_file")
         self.assertFalse(large_result.success)
-        self.assertEqual(large_result.error.code, "tool_invalid_arguments")
+        self.assertEqual(large_result.error.code, "file_patch_source_too_large")
 
     async def test_existing_target_for_create_is_rejected(self):
         target = self.workspace / "exists.txt"
@@ -213,10 +216,26 @@ class FilePatchToolTest(unittest.IsolatedAsyncioTestCase):
         result = await self.execute(path="exists.txt", new_content="new")
 
         self.assertFalse(result.success)
-        self.assertEqual(result.error.code, "tool_invalid_arguments")
+        self.assertEqual(result.error.code, "file_patch_target_exists")
+        self.assertIn("use old_text/new_text", result.error.message)
         self.assertFalse(
             (self.workspace / ".looma" / "agent-staging" / "run_test" / "files" / "exists.txt").exists()
         )
+
+    async def test_multibyte_content_obeys_the_200000_utf8_byte_limit(self):
+        result = await self.execute(path="large-cn.md", new_content="中" * 70_000)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.error.code, "file_patch_content_too_large")
+        self.assertIn("200,000-byte", result.error.message)
+
+    def test_tool_schema_describes_limits_and_exact_match_contract(self):
+        schemas = self.registry.tool_schemas(enabled_tools={"file_patch"}, allow_write=True)
+        schema = schemas[0]
+
+        self.assertIn("200,000 UTF-8 bytes", schema["description"])
+        self.assertIn("match exactly once", schema["description"])
+        self.assertEqual(schema["parameters"]["properties"]["new_content"]["anyOf"][0]["maxLength"], 200_000)
 
     async def test_symlink_and_junction_like_targets_are_rejected_when_supported(self):
         target = self.workspace / "real.txt"
@@ -234,7 +253,7 @@ class FilePatchToolTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertFalse(result.success)
-        self.assertEqual(result.error.code, "tool_invalid_arguments")
+        self.assertTrue(result.error.code.startswith("file_patch_"))
 
     async def test_staged_symlink_is_rejected_when_supported(self):
         target = self.workspace / "notes.md"
@@ -253,8 +272,21 @@ class FilePatchToolTest(unittest.IsolatedAsyncioTestCase):
         result = await self.execute(path="notes.md", old_text="outside", new_text="escaped")
 
         self.assertFalse(result.success)
-        self.assertEqual(result.error.code, "tool_invalid_arguments")
+        self.assertTrue(result.error.code.startswith("file_patch_"))
         self.assertEqual(outside.read_text(encoding="utf-8"), "outside\n")
+
+    async def test_validation_conflict_reports_an_actionable_reason(self):
+        result = await self.execute(
+            path="note.md",
+            new_content="new\n",
+            old_text="old",
+            new_text="next",
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.error.code, "file_patch_new_content_conflict")
+        self.assertIn("cannot be combined", result.error.message)
+        self.assertTrue(result.error.retryable)
 
     async def test_write_access_must_be_explicitly_allowed(self):
         result = await self.registry.execute(

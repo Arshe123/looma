@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -253,3 +254,40 @@ class AgentStagingArea:
                 "The staged file cache is incomplete.",
             )
         return updated
+
+    def cleanup_run(self) -> bool:
+        """Remove this run's unreviewed staging tree without following links."""
+
+        if not os.path.lexists(self.root):
+            return False
+        self._assert_safe_existing_components(self.root)
+        if is_link_or_reparse(self.root) or not self.root.is_dir():
+            raise WorkspaceSecurityError(
+                "invalid_staging_root",
+                "The Agent staging root is not a safe directory.",
+            )
+        for current, directories, files in os.walk(self.root, topdown=False, followlinks=False):
+            current_path = Path(current)
+            for name in files:
+                candidate = current_path / name
+                candidate_stat = candidate.lstat()
+                if is_link_or_reparse(candidate) or not stat.S_ISREG(candidate_stat.st_mode):
+                    raise WorkspaceSecurityError(
+                        "invalid_staging_file",
+                        "The Agent staging tree contains an unsafe file.",
+                    )
+                candidate.unlink()
+            for name in directories:
+                candidate = current_path / name
+                if is_link_or_reparse(candidate) or not candidate.is_dir():
+                    raise WorkspaceSecurityError(
+                        "invalid_staging_directory",
+                        "The Agent staging tree contains an unsafe directory.",
+                    )
+                candidate.rmdir()
+        self.root.rmdir()
+        try:
+            self.root.parent.rmdir()
+        except OSError:
+            pass
+        return True

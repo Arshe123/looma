@@ -168,9 +168,8 @@ class ToolConfig(StrictAgentModel):
 
 class AgentConfig(StrictAgentModel):
     enabled_tools: list[ToolName] = Field(default_factory=lambda: list(DEFAULT_AGENT_TOOLS))
-    max_steps: int = Field(default=90, gt=0, le=100)
+    max_iterations: int = Field(default=90, gt=0, le=100)
     tool_timeout_seconds: int = Field(default=30, gt=0, le=300)
-    run_timeout_seconds: int = Field(default=300, gt=0, le=1800)
     allow_write: bool = False
 
 

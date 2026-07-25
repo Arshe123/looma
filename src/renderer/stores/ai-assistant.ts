@@ -757,6 +757,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
 
       if (payload.type === 'done') {
         if (!run.assistantText.trim() && payload.answer?.trim()) run.assistantText = payload.answer.trim()
+        if (payload.status === 'completed') void this.refreshPendingFileReviews(run.workspaceId)
         this.completeAgentConversation(conversationId, payload.status)
         return
       }

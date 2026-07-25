@@ -18,6 +18,8 @@ import { getWorkspacePathById } from './workspaceIpc'
 const MAX_ACTIVE_AGENT_RUNS_PER_SENDER = 4
 const MAX_ACTIVE_AGENT_RUNS_GLOBAL = 32
 
+type ApprovalRequiredStreamEvent = Extract<AgentStreamEvent, { type: 'approval_required' }>
+
 type ActiveAgentRun = {
   controller: AbortController
   sender: WebContents
@@ -35,6 +37,7 @@ type ActiveAgentRun = {
   artifactStore: AgentArtifactStore | null
   callInputDigests: Map<string, string>
   approvals: Map<string, { artifactId: string; deadlineAt: string; status: 'pending' | 'resolving' | 'resolved' }>
+  deferredApprovals: Map<string, ApprovalRequiredStreamEvent>
 }
 
 export const activeAgentRuns = new Map<string, ActiveAgentRun>()
@@ -152,11 +155,72 @@ const persistCheckpoint = async (
       messageCursor: messages[messages.length - 1].id,
       messageTranscriptHash,
       nextStep,
-      remainingToolSteps: Math.max(0, 50 - run.callInputDigests.size),
       completedCallDigests: [...run.callInputDigests.values()],
       pendingApprovalRef,
     },
   })
+}
+
+const prepareDeferredApprovals = async (
+  run: ActiveAgentRun,
+): Promise<{ events: AgentEvent[]; artifacts: FilePatchArtifact[] }> => {
+  if (!run.deferredApprovals.size) return { events: [], artifacts: [] }
+  if (!run.artifactStore) throw new Error('Agent artifact store is not initialized')
+  const events: AgentEvent[] = []
+  const artifacts: FilePatchArtifact[] = []
+  try {
+    for (const payload of run.deferredApprovals.values()) {
+      const artifactId = `artifact_${randomUUID().replace(/-/g, '')}`
+      const beforeHash = payload.proposal.expected_sha256 ? `sha256:${payload.proposal.expected_sha256}` : null
+      const afterHash = `sha256:${payload.proposal.proposed_sha256}`
+      const expiresAt = Date.parse(payload.deadlineAt)
+      const artifact: FilePatchArtifact = {
+        artifactId,
+        taskId: run.taskId,
+        runId: run.runId,
+        callId: payload.callId,
+        approvalId: payload.approvalId,
+        workspaceId: run.workspaceId,
+        path: payload.proposal.path,
+        operation: payload.proposal.operation,
+        beforeHash,
+        afterHash,
+        diff: payload.proposal.unified_diff,
+        proposedContent: payload.proposal.proposed_content,
+        createdAt: Date.parse(payload.requestedAt) || Date.now(),
+        expiresAt,
+      }
+      await run.artifactStore.save(artifact)
+      artifacts.push(artifact)
+      const diffLines = artifact.diff.split('\n')
+      events.push(
+        withEventBase(run, 'artifact', 'artifact_created', {
+          artifactId,
+          callId: payload.callId,
+          kind: 'file_patch',
+          path: artifact.path,
+          beforeHash,
+          afterHash,
+          operation: artifact.operation,
+          diff: artifact.diff,
+          createdAt: artifact.createdAt,
+          expiresAt: artifact.expiresAt,
+          additions: diffLines.filter(line => line.startsWith('+') && !line.startsWith('+++')).length,
+          deletions: diffLines.filter(line => line.startsWith('-') && !line.startsWith('---')).length,
+        }),
+        withEventBase(run, 'artifact', 'approval_required', {
+          approvalId: payload.approvalId,
+          callId: payload.callId,
+          artifactId,
+          deadlineAt: expiresAt,
+        }),
+      )
+    }
+    return { events, artifacts }
+  } catch (error) {
+    await Promise.all(artifacts.map(item => run.artifactStore!.remove(item.artifactId).catch(() => {})))
+    throw error
+  }
 }
 
 const persistStreamEvent = async (run: ActiveAgentRun, requestId: string, payload: AgentStreamEvent) => {
@@ -268,73 +332,9 @@ const persistStreamEvent = async (run: ActiveAgentRun, requestId: string, payloa
       break
     }
     case 'approval_required': {
-      if (!run.artifactStore) throw new Error('Agent artifact store is not initialized')
-      const artifactId = `artifact_${randomUUID().replace(/-/g, '')}`
-      const beforeHash = payload.proposal.expected_sha256 ? `sha256:${payload.proposal.expected_sha256}` : null
-      const afterHash = `sha256:${payload.proposal.proposed_sha256}`
-      const expiresAt = Date.parse(payload.deadlineAt)
-      const artifact: FilePatchArtifact = {
-        artifactId,
-        taskId: run.taskId,
-        runId: run.runId,
-        callId: payload.callId,
-        approvalId: payload.approvalId,
-        workspaceId: run.workspaceId,
-        path: payload.proposal.path,
-        operation: payload.proposal.operation,
-        beforeHash,
-        afterHash,
-        diff: payload.proposal.unified_diff,
-        proposedContent: payload.proposal.proposed_content,
-        createdAt: Date.parse(payload.requestedAt) || Date.now(),
-        expiresAt,
-      }
-      await run.artifactStore.save(artifact)
-      const currentView = await ledger.materialize()
-      const superseded = collectPendingFileReviews(run.workspaceId, currentView.events).filter(item => (
-        item.runId === run.runId && item.path === artifact.path
-      ))
-      const diffLines = artifact.diff.split('\n')
-      const events: AgentEvent[] = [
-        ...superseded.map(item => withEventBase(run, 'artifact', 'approval_resolved', {
-          approvalId: item.approvalId,
-          callId: item.callId,
-          artifactId: item.artifactId,
-          status: 'cancelled' as const,
-          applied: false,
-          reason: 'superseded_by_later_patch',
-        })),
-        withEventBase(run, 'artifact', 'artifact_created', {
-          artifactId,
-          callId: payload.callId,
-          kind: 'file_patch',
-          path: artifact.path,
-          beforeHash,
-          afterHash,
-          operation: artifact.operation,
-          diff: artifact.diff,
-          createdAt: artifact.createdAt,
-          expiresAt: artifact.expiresAt,
-          additions: diffLines.filter(line => line.startsWith('+') && !line.startsWith('+++')).length,
-          deletions: diffLines.filter(line => line.startsWith('-') && !line.startsWith('---')).length,
-        }),
-        withEventBase(run, 'artifact', 'approval_required', {
-          approvalId: payload.approvalId,
-          callId: payload.callId,
-          artifactId,
-          deadlineAt: expiresAt,
-        }),
-      ]
-      await ledger.commit({ kind: 'event_commit', events })
-      await Promise.all(superseded.map(item => run.artifactStore!.remove(item.artifactId).catch(() => {})))
-      superseded.forEach(item => run.approvals.delete(item.approvalId))
-      run.approvals.set(payload.approvalId, { artifactId, deadlineAt: payload.deadlineAt, status: 'pending' })
-      await persistCheckpoint(run, payload.step + 1, {
-        approvalId: payload.approvalId,
-        artifactId,
-        callId: payload.callId,
-      })
-      await persistSnapshot(run)
+      // Runtime emits only the latest cumulative proposal per path at the end of its loop.
+      // Main keeps it private until the terminal `done` event commits review + completion together.
+      run.deferredApprovals.set(payload.proposal.path, payload)
       break
     }
     case 'approval_resolved': {
@@ -406,9 +406,6 @@ const persistStreamEvent = async (run: ActiveAgentRun, requestId: string, payloa
       break
     }
     case 'done': {
-      const terminalEvent = payload.status === 'cancelled'
-        ? withEventBase(run, 'execution', 'run_cancelled', { reason: 'cancelled' })
-        : withEventBase(run, 'execution', 'run_completed', { answerMessageId: run.assistantMessageId })
       const messages: AgentMessage[] = []
       if (payload.status === 'completed' && typeof payload.answer === 'string') {
         messages.push({
@@ -421,7 +418,33 @@ const persistStreamEvent = async (run: ActiveAgentRun, requestId: string, payloa
           createdAt: Date.now(),
         })
       }
-      await ledger.commit({ kind: 'event_commit', events: [terminalEvent], messages })
+      const prepared = payload.status === 'completed'
+        ? await prepareDeferredApprovals(run)
+        : { events: [], artifacts: [] }
+      const terminalEvent = payload.status === 'cancelled'
+        ? withEventBase(run, 'execution', 'run_cancelled', { reason: 'cancelled' })
+        : withEventBase(run, 'execution', 'run_completed', { answerMessageId: run.assistantMessageId })
+      try {
+        await ledger.commit({
+          kind: 'event_commit',
+          events: [...prepared.events, terminalEvent],
+          messages,
+        })
+      } catch (error) {
+        await Promise.all(prepared.artifacts.map(item => run.artifactStore!.remove(item.artifactId).catch(() => {})))
+        throw error
+      }
+      for (const artifact of prepared.artifacts) {
+        const pending = run.deferredApprovals.get(artifact.path)
+        if (pending) {
+          run.approvals.set(artifact.approvalId, {
+            artifactId: artifact.artifactId,
+            deadlineAt: pending.deadlineAt,
+            status: 'pending',
+          })
+        }
+      }
+      run.deferredApprovals.clear()
       await persistSnapshot(run)
       break
     }
@@ -453,6 +476,7 @@ const sendEvent = async (
   if (activeAgentRuns.get(key) !== run || run.controller.signal.aborted || run.sender.isDestroyed()) return
   const firstSequence = run.nextEventSequence
   await persistStreamEvent(run, requestId, payload)
+  if (payload.type === 'approval_required') return
   const ledgerView = run.nextEventSequence > firstSequence && run.ledger
     ? await run.ledger.materialize()
     : null
@@ -470,20 +494,6 @@ const sendEvent = async (
   const agentSources = ledgerView
     ? ledgerView.sources.filter((source) => source.runId === run.runId && retrievalIds.has(source.retrievalId))
     : []
-  if (payload.type === 'approval_required') {
-    run.sender.send('agent:runStream:event', {
-      ...payload,
-      agentEvents,
-      agentSources,
-      proposal: {
-        path: payload.proposal.path,
-        operation: payload.proposal.operation,
-        unified_diff: payload.proposal.unified_diff,
-      },
-      requestId,
-    })
-    return
-  }
   if (payload.type === 'approval_resolved') run.approvals.delete(payload.approvalId)
   run.sender.send('agent:runStream:event', { ...payload, agentEvents, agentSources, requestId })
 }
@@ -522,7 +532,33 @@ const collectPendingFileReviews = (
   }).sort((a, b) => a.createdAt - b.createdAt)
 }
 
-const buildContinuationHistory = (messages: AgentMessage[]): AgentRunOptions['history'] => {
+const discardedFilePatchObservation = () => JSON.stringify({
+  tool: 'file_patch',
+  success: false,
+  status: 'failed',
+  modelContext: {
+    facts: [
+      '上次运行的暂存修改已因失败或取消而丢弃。',
+      '正式工作区未因该提案发生变化；请在新运行中重新读取文件后再修改。',
+    ],
+    structuredData: {
+      status: 'staging_discarded',
+      diskState: 'unchanged',
+      retryInNewRun: true,
+    },
+  },
+  error: {
+    code: 'file_patch_staging_discarded',
+    message: '上次运行未成功完成，暂存修改已丢弃。请重新读取正式文件后再修改。',
+    retryable: true,
+  },
+  truncated: false,
+})
+
+const buildContinuationHistory = (
+  messages: AgentMessage[],
+  discardedRunIds: ReadonlySet<string> = new Set(),
+): AgentRunOptions['history'] => {
   const pendingCalls = new Map<string, number>()
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index]
@@ -532,7 +568,11 @@ const buildContinuationHistory = (messages: AgentMessage[]): AgentRunOptions['hi
   const safeLength = pendingCalls.size ? Math.min(...pendingCalls.values()) : messages.length
   return messages.slice(0, safeLength).map(message => ({
     role: message.role,
-    content: message.content,
+    content: message.role === 'tool'
+      && message.name === 'file_patch'
+      && discardedRunIds.has(message.runId)
+      ? discardedFilePatchObservation()
+      : message.content,
     ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
     ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
     ...(message.name ? { name: message.name } : {}),
@@ -566,7 +606,11 @@ ipcMain.handle('agent:approvals:list', async (_event, workspaceId: unknown) => {
     const artifactStore = new AgentArtifactStore(ledgerRoot)
     await Promise.all([ledger.init(), artifactStore.init()])
     const view = await ledger.materialize()
+    const completedRuns = new Set(Object.keys(view.runs).filter(runId => (
+      foldAgentState(view.events.filter(event => event.runId === runId)).status === 'completed'
+    )))
     let pending = collectPendingFileReviews(workspaceId, view.events)
+      .filter(item => completedRuns.has(item.runId))
     const expired = pending.filter(item => !Number.isFinite(item.deadlineAt) || Date.now() >= item.deadlineAt)
     if (expired.length) {
       const expiryContexts = new Map<string, Pick<ActiveAgentRun, 'taskId' | 'runId' | 'nextEventSequence'>>()
@@ -723,6 +767,7 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
     artifactStore: null,
     callInputDigests: new Map(),
     approvals: new Map(),
+    deferredApprovals: new Map(),
     onDestroyed: () => {
       controller.abort()
       cleanupRun(key, run)
@@ -861,7 +906,10 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
 
   const runId = `run_${randomUUID().replace(/-/g, '')}`
   const input = '请基于上次运行中已确认的事实继续完成任务；不要重复已经成功完成的操作。'
-  const history = buildContinuationHistory(view.messages.filter(message => message.conversationId === parentRun.conversationId))
+  const history = buildContinuationHistory(
+    view.messages.filter(message => message.conversationId === parentRun.conversationId),
+    new Set([parentRunId]),
+  )
   let options: ReturnType<typeof normalizeAgentRunOptions>
   try {
     options = normalizeAgentRunOptions({
@@ -900,6 +948,7 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
     artifactStore,
     callInputDigests: new Map(),
     approvals: new Map(),
+    deferredApprovals: new Map(),
     onDestroyed: () => {
       controller.abort()
       cleanupRun(key, run)
@@ -1023,6 +1072,10 @@ ipcMain.handle('agent:approval:resolve', async (event, workspaceId: unknown, app
     const runRecord = view.runs[review.runId]
     if (!runRecord || artifact.workspaceId !== workspaceId || artifact.runId !== review.runId) {
       return { success: false, error: '文件修改提案与当前工作空间不匹配' }
+    }
+    const reviewRunState = foldAgentState(view.events.filter(item => item.runId === review.runId))
+    if (reviewRunState.status !== 'completed') {
+      return { success: false, error: 'Agent 本轮对话尚未成功结束，当前不允许审查文件' }
     }
     const eventContext = activeOwner && activeOwner.runId === review.runId
       ? activeOwner

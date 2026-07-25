@@ -27,9 +27,8 @@ class AgentRequestContractTest(unittest.TestCase):
             request.agent.enabled_tools,
             ["rag_search", "workspace_list", "workspace_search", "file_read", "file_patch"],
         )
-        self.assertEqual(request.agent.max_steps, 90)
+        self.assertEqual(request.agent.max_iterations, 90)
         self.assertEqual(request.agent.tool_timeout_seconds, 30)
-        self.assertEqual(request.agent.run_timeout_seconds, 300)
         self.assertFalse(request.agent.allow_write)
         self.assertFalse(hasattr(request.agent, "mode"))
 
@@ -44,22 +43,22 @@ class AgentRequestContractTest(unittest.TestCase):
         self.assertNotIn("web_search", enabled)
         self.assertNotIn("terminal", enabled)
 
-    def test_agent_config_rejects_max_steps_outside_bounds(self):
+    def test_agent_config_rejects_max_iterations_outside_bounds(self):
         for value in (0, 101):
             with self.subTest(value=value), self.assertRaises(ValidationError):
-                AgentConfig(max_steps=value)
+                AgentConfig(max_iterations=value)
 
     def test_agent_config_rejects_timeout_outside_bounds(self):
         for value in (0, 301):
             with self.subTest(value=value), self.assertRaises(ValidationError):
                 AgentConfig(tool_timeout_seconds=value)
-        for value in (0, 1801):
-            with self.subTest(value=value), self.assertRaises(ValidationError):
-                AgentConfig(run_timeout_seconds=value)
+
 
     def test_agent_config_forbids_extra_fields(self):
         with self.assertRaises(ValidationError):
             AgentConfig(mode="rag")
+        with self.assertRaises(ValidationError):
+            AgentConfig(run_timeout_seconds=300)
 
 
 class AgentDecisionContractTest(unittest.TestCase):

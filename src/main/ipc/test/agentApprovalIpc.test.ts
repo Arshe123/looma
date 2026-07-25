@@ -94,25 +94,35 @@ describe('Agent approval IPC trusted boundary', () => {
       },
     })
 
+    expect(owner.send.mock.calls.some(call => call[1]?.type === 'approval_required')).toBe(false)
+    const list = state.handlers.get('agent:approvals:list')!
+    expect(await list({ sender: owner }, 'workspace-1')).toEqual({ success: true, data: [] })
+    const resolve = state.handlers.get('agent:approval:resolve')!
+    expect(await resolve({ sender: owner }, 'workspace-1', 'approval-1', true)).toEqual({
+      success: false,
+      error: '审批已完成或不存在',
+    })
+
+    await state.streamEvent!({
+      type: 'done', runId: started.data.runId, status: 'completed', answer: '完成',
+    })
     expect(owner.send).toHaveBeenCalledWith('agent:runStream:event', expect.objectContaining({
       requestId: 'request-1',
-      proposal: {
-        path: 'notes/approved.md',
-        operation: 'create',
-        unified_diff: '--- /dev/null\n+++ notes/approved.md\n+# approved',
-      },
+      type: 'done',
+      agentEvents: expect.arrayContaining([
+        expect.objectContaining({ type: 'approval_required' }),
+        expect.objectContaining({ type: 'run_completed' }),
+      ]),
     }))
-    const forwardedProposal = owner.send.mock.calls.at(-1)?.[1]?.proposal
-    expect(forwardedProposal).not.toHaveProperty('proposed_content')
-    expect(forwardedProposal).not.toHaveProperty('proposed_sha256')
-
-    const list = state.handlers.get('agent:approvals:list')!
     expect(await list({ sender: owner }, 'workspace-1')).toEqual({
       success: true,
       data: [expect.objectContaining({ approvalId: 'approval-1', path: 'notes/approved.md' })],
     })
+    const completedRun = await state.handlers.get('agent:ledger:getRun')!({ sender: owner }, 'workspace-1', started.data.runId)
+    const approvalEvent = completedRun.data.events.find((event: any) => event.type === 'approval_required')
+    const completedEvent = completedRun.data.events.find((event: any) => event.type === 'run_completed')
+    expect(approvalEvent.sequence).toBeLessThan(completedEvent.sequence)
     abortAllAgentRuns()
-    const resolve = state.handlers.get('agent:approval:resolve')!
     expect(await resolve({ sender: owner }, 'workspace-1', 'approval-1', true)).toEqual({ success: true, data: { applied: true } })
     expect(await fs.readFile(path.join(state.workspacePath, 'notes/approved.md'), 'utf8')).toBe(content)
     await expect(fs.stat(stagedPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -139,13 +149,48 @@ describe('Agent approval IPC trusted boundary', () => {
     await emitProposal('approval-old', 'call-old', 'first\n')
     await emitProposal('approval-latest', 'call-latest', 'second\n')
 
-    const listed = await state.handlers.get('agent:approvals:list')!({ sender: owner }, 'workspace-1')
+    const list = state.handlers.get('agent:approvals:list')!
+    expect(await list({ sender: owner }, 'workspace-1')).toEqual({ success: true, data: [] })
+    await state.streamEvent!({ type: 'done', runId: started.data.runId, status: 'completed', answer: '完成' })
+
+    const listed = await list({ sender: owner }, 'workspace-1')
     expect(listed).toEqual({
       success: true,
       data: [expect.objectContaining({ approvalId: 'approval-latest', path: 'notes/revised.md' })],
     })
     const oldResult = await state.handlers.get('agent:approval:resolve')!({ sender: owner }, 'workspace-1', 'approval-old', true)
     expect(oldResult).toEqual({ success: false, error: '审批已完成或不存在' })
+  })
+
+  it('discards deferred reviews when the user interrupts the run', async () => {
+    const owner = sender(181)
+    const started = await state.handlers.get('agent:runStream:start')!({
+      sender: owner,
+    }, 'request-cancel-review', 'workspace-1', { input: 'patch then cancel' })
+    await vi.waitFor(() => expect(state.streamEvent).toBeTypeOf('function'))
+    await state.streamEvent!({
+      type: 'approval_required', runId: started.data.runId, step: 1, stepId: 'step-cancel', callId: 'call-cancel',
+      approvalId: 'approval-cancel', tool: 'file_patch',
+      requestedAt: new Date().toISOString(), deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+      proposal: {
+        requiresApproval: true,
+        path: 'notes/cancelled.md', operation: 'create', unified_diff: '+partial',
+        expected_sha256: null, proposed_sha256: sha('partial\n'), proposed_content: 'partial\n',
+      },
+    })
+
+    expect(await state.handlers.get('agent:approvals:list')!({ sender: owner }, 'workspace-1')).toEqual({
+      success: true,
+      data: [],
+    })
+    await state.handlers.get('agent:runStream:cancel')!({ sender: owner }, 'request-cancel-review')
+    expect(await state.handlers.get('agent:approvals:list')!({ sender: owner }, 'workspace-1')).toEqual({
+      success: true,
+      data: [],
+    })
+    const persisted = await state.handlers.get('agent:ledger:getRun')!({ sender: owner }, 'workspace-1', started.data.runId)
+    expect(persisted.data.events.some((event: any) => event.type === 'artifact_created')).toBe(false)
+    expect(persisted.data.events.some((event: any) => event.type === 'run_cancelled')).toBe(true)
   })
 
   it('expires overdue proposals during pending-list hydration', async () => {
@@ -165,6 +210,9 @@ describe('Agent approval IPC trusted boundary', () => {
       },
     })
 
+    await state.streamEvent!({
+      type: 'done', runId: started.data.runId, status: 'completed', answer: '完成',
+    })
     const listed = await state.handlers.get('agent:approvals:list')!({ sender: owner }, 'workspace-1')
     expect(listed).toEqual({ success: true, data: [] })
     const persisted = await state.handlers.get('agent:ledger:getRun')!({ sender: owner }, 'workspace-1', started.data.runId)
@@ -179,7 +227,7 @@ describe('Agent approval IPC trusted boundary', () => {
       input: 'inspect tools',
       history: [],
       enabledTools: ['file_read'],
-      maxSteps: 1,
+      maxIterations: 1,
       toolTimeoutSeconds: 1,
     })
     await vi.waitFor(() => expect(state.streamAgent).toHaveBeenCalled())
@@ -197,7 +245,26 @@ describe('Agent approval IPC trusted boundary', () => {
     const started = await start({ sender: owner }, 'request-parent', 'workspace-1', { input: 'inspect workspace' })
     await vi.waitFor(() => expect(state.streamEvent).toBeTypeOf('function'))
     await state.streamEvent!({
-      type: 'tool_call', runId: started.data.runId, step: 1, stepId: 'step-read', callId: 'call-pending',
+      type: 'tool_call', runId: started.data.runId, step: 1, stepId: 'step-patch', callId: 'call-staged',
+      tool: 'file_patch', arguments: { path: 'notes/a.md', new_content: 'partial\n' }, thought_summary: '暂存文件',
+    })
+    await state.streamEvent!({
+      type: 'tool_result', runId: started.data.runId, step: 1, stepId: 'step-patch', callId: 'call-staged',
+      result: {
+        tool: 'file_patch', success: true, status: 'completed', uiSummary: '暂存版本已更新',
+        modelContext: {
+          facts: [],
+          structuredData: {
+            status: 'staged_for_end_of_run_review',
+            stagedView: 'updated',
+            diskState: 'unchanged_until_approved',
+          },
+        },
+        durationMs: 10, error: null, truncated: false,
+      },
+    })
+    await state.streamEvent!({
+      type: 'tool_call', runId: started.data.runId, step: 2, stepId: 'step-read', callId: 'call-pending',
       tool: 'file_read', arguments: { path: 'notes/a.md' }, thought_summary: '读取文件',
     })
     await state.handlers.get('agent:runStream:cancel')!({ sender: owner }, 'request-parent')
@@ -218,9 +285,34 @@ describe('Agent approval IPC trusted boundary', () => {
       parentRunId: started.data.runId,
       recoveryReason: 'manual_retry',
     }))
-    expect(state.streamAgent.mock.calls[1][1].history).toEqual([
+    const continuationHistory = state.streamAgent.mock.calls[1][1].history
+    expect(continuationHistory).toEqual([
       expect.objectContaining({ role: 'user', content: 'inspect workspace' }),
+      expect.objectContaining({
+        role: 'assistant',
+        tool_calls: [expect.objectContaining({ id: 'call-staged' })],
+      }),
+      expect.objectContaining({
+        role: 'tool',
+        name: 'file_patch',
+        tool_call_id: 'call-staged',
+      }),
     ])
+    const discardedObservation = JSON.parse(continuationHistory[2].content)
+    expect(discardedObservation).toMatchObject({
+      tool: 'file_patch',
+      success: false,
+      status: 'failed',
+      modelContext: {
+        structuredData: {
+          status: 'staging_discarded',
+          diskState: 'unchanged',
+          retryInNewRun: true,
+        },
+      },
+      error: { code: 'file_patch_staging_discarded', retryable: true },
+    })
+    expect(continuationHistory.some((message: any) => message.tool_call_id === 'call-pending')).toBe(false)
 
     const { AgentLedgerStore } = await import('../../services/agent/AgentLedgerStore')
     const ledger = new AgentLedgerStore(path.join(state.workspacePath, '.looma', 'agent-ledger'))
@@ -245,6 +337,9 @@ describe('Agent approval IPC trusted boundary', () => {
       proposal: { requiresApproval: true, path: 'notes/blocked.md', operation: 'create', unified_diff: '+secret', expected_sha256: null, proposed_sha256: sha(content), proposed_content: content },
     })
 
+    await state.streamEvent!({
+      type: 'done', runId: started.data.runId, status: 'completed', answer: '完成',
+    })
     expect((await state.handlers.get('agent:approval:resolve')!({ sender: attacker }, 'workspace-1', 'approval-2', true)).success).toBe(false)
     await expect(fs.stat(path.join(state.workspacePath, 'notes/blocked.md'))).rejects.toMatchObject({ code: 'ENOENT' })
   })

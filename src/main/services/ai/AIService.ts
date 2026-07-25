@@ -156,9 +156,8 @@ export interface AgentRunOptions {
   parentRunId?: string
   recoveryReason?: 'app_restart' | 'service_restart' | 'provider_interrupted' | 'approval_continuation' | 'manual_retry'
   enabledTools?: AgentToolName[]
-  maxSteps?: number
+  maxIterations?: number
   toolTimeoutSeconds?: number
-  runTimeoutSeconds?: number
 }
 
 export interface AgentErrorPayload {
@@ -290,9 +289,8 @@ export interface NormalizedAgentRunOptions {
   parentRunId?: string
   recoveryReason?: AgentRunOptions['recoveryReason']
   enabledTools: AgentToolName[]
-  maxSteps: number
+  maxIterations: number
   toolTimeoutSeconds: number
-  runTimeoutSeconds: number
 }
 
 const normalizeOptionalAgentIdentifier = (value: unknown, label: string) => {
@@ -379,9 +377,8 @@ export const normalizeAgentRunOptions = (options: AgentRunOptions): NormalizedAg
     ...(parentRunId ? { parentRunId } : {}),
     ...(recoveryReason ? { recoveryReason } : {}),
     enabledTools,
-    maxSteps: clampInteger(options.maxSteps, 90, 1, 100),
+    maxIterations: clampInteger(options.maxIterations, 90, 1, 100),
     toolTimeoutSeconds: clampInteger(options.toolTimeoutSeconds, 30, 1, 300),
-    runTimeoutSeconds: clampInteger(options.runTimeoutSeconds, 300, 1, 1800),
   }
 }
 
@@ -460,9 +457,8 @@ const toAgentRequestBody = (workspacePath: string, rawOptions: AgentRunOptions) 
     history: options.history,
     agent: {
       enabled_tools: options.enabledTools,
-      max_steps: options.maxSteps,
+      max_iterations: options.maxIterations,
       tool_timeout_seconds: options.toolTimeoutSeconds,
-      run_timeout_seconds: options.runTimeoutSeconds,
       allow_write: options.enabledTools.includes('file_patch'),
     },
   }

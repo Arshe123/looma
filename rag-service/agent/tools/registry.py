@@ -12,6 +12,7 @@ from agent.tools.base import (
     AgentTool,
     AgentToolContext,
     StrictToolArgs,
+    ToolExecutionError,
     validate_tool_args,
 )
 from schemas import DEFAULT_AGENT_TOOLS, ToolName
@@ -23,6 +24,45 @@ MAX_OUTPUT_DEPTH = 64
 MAX_OUTPUT_STRING_CHARS = 100_000
 MAX_APPROVAL_OUTPUT_STRING_CHARS = 1_000_000
 VALID_TOOL_RISK_LEVELS = frozenset({"read", "write", "network", "terminal"})
+
+_FILE_PATCH_VALIDATION_MESSAGES = {
+    "file_patch_new_content_conflict": (
+        "file_patch_new_content_conflict",
+        "new_content cannot be combined with old_text/new_text. Use new_content only for create, or old_text/new_text for update.",
+    ),
+    "file_patch_new_content_empty": (
+        "file_patch_new_content_empty",
+        "new_content must be a non-empty string when creating a file.",
+    ),
+    "file_patch_update_fields_required": (
+        "file_patch_update_fields_required",
+        "Updating an existing file requires both old_text and new_text.",
+    ),
+    "file_patch_old_text_empty": (
+        "file_patch_old_text_empty",
+        "old_text must not be empty and must identify one exact snippet.",
+    ),
+}
+
+
+def _safe_argument_error(tool_name: str, exc: Exception) -> tuple[str, str, bool]:
+    if tool_name == "file_patch" and isinstance(exc, ValidationError):
+        for item in exc.errors():
+            raw_message = item.get("msg")
+            if isinstance(raw_message, str):
+                for marker, (code, message) in _FILE_PATCH_VALIDATION_MESSAGES.items():
+                    if marker in raw_message:
+                        return code, message, True
+            error_type = str(item.get("type", ""))
+            if "max_length" in error_type or "too_long" in error_type:
+                location = ".".join(str(part) for part in item.get("loc", ()) if part != "__root__")
+                field = location if location in {"path", "old_text", "new_text", "new_content"} else "argument"
+                return (
+                    "file_patch_argument_too_large",
+                    f"file_patch {field} exceeds its declared size limit; split the edit into smaller exact replacements.",
+                    True,
+                )
+    return "tool_invalid_arguments", "The tool arguments are invalid.", False
 
 
 def _validate_json_output(
@@ -221,12 +261,14 @@ class ToolRegistry:
         try:
             validated_args = validate_tool_args(tool.args_model, arguments)
         except (ValidationError, TypeError, ValueError) as exc:
+            code, safe_message, retryable = _safe_argument_error(tool_name, exc)
             return self._failure(
                 tool_name,
-                "tool_invalid_arguments",
-                "The tool arguments are invalid.",
-                "Tool execution failed because its arguments are invalid.",
-                technical_detail=type(exc).__name__,
+                code,
+                safe_message,
+                safe_message,
+                technical_detail=code,
+                retryable=retryable,
             )
 
         try:
@@ -235,6 +277,15 @@ class ToolRegistry:
                 await operation
                 if tool_timeout_seconds is None
                 else await asyncio.wait_for(operation, timeout=tool_timeout_seconds)
+            )
+        except ToolExecutionError as exc:
+            return self._failure(
+                tool_name,
+                exc.code,
+                exc.safe_message,
+                exc.safe_message,
+                technical_detail=exc.code,
+                retryable=exc.retryable,
             )
         except ValueError as exc:
             return self._failure(

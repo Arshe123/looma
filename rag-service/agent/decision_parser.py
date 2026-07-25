@@ -36,6 +36,15 @@ class AgentEmptyDecisionError(AgentDecisionParseError):
         ValueError.__init__(self, "Empty structured agent decision")
 
 
+class AgentContextExhaustedError(AgentDecisionParseError):
+    """The provider exhausted its model context before producing a decision."""
+
+    code = "agent_context_exhausted"
+
+    def __init__(self) -> None:
+        ValueError.__init__(self, "Agent model context exhausted")
+
+
 def parse_agent_decision_text(
     text: str, allowed_tools: AbstractSet[str] | None = None
 ) -> AgentDecision:

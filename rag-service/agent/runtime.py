@@ -12,7 +12,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from agent.decision_parser import AgentDecisionParseError, AgentEmptyDecisionError
+from agent.decision_parser import (
+    AgentContextExhaustedError,
+    AgentDecisionParseError,
+    AgentEmptyDecisionError,
+)
 from agent.events import (
     error_event,
     event,
@@ -32,14 +36,11 @@ from agent.models import (
 from agent.prompts import final_only_prompt, observation_prompt
 from agent.tools.base import AgentToolContext
 from agent.tools.registry import ToolRegistry
+from agent.tools.staging import AgentStagingArea
 from schemas import AgentConfig, ChatMessage, ChatToolCall, ChatToolFunction
 
 
 class _RunCancelled(Exception):
-    pass
-
-
-class _AgentTimedOut(Exception):
     pass
 
 
@@ -127,52 +128,33 @@ def _provider_agent_error(exc: Exception) -> AgentError:
     )
 
 
-@dataclass
-class _AwaitBudget:
-    remaining: float
-
-    async def wait(self, operation: Awaitable[Any], cancel_event: asyncio.Event | None) -> Any:
-        if self.remaining <= 0:
-            if hasattr(operation, "close"):
-                operation.close()  # type: ignore[attr-defined]
-            raise _AgentTimedOut
-        loop = asyncio.get_running_loop()
-        started = loop.time()
-        operation_task = asyncio.ensure_future(operation)
-        cancel_task = (
-            asyncio.create_task(cancel_event.wait()) if cancel_event is not None else None
+async def _wait_with_cancellation(
+    operation: Awaitable[Any], cancel_event: asyncio.Event | None
+) -> Any:
+    if cancel_event is None:
+        return await operation
+    operation_task = asyncio.ensure_future(operation)
+    cancel_task = asyncio.create_task(cancel_event.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {operation_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
         )
-        wait_set = {operation_task}
-        if cancel_task is not None:
-            wait_set.add(cancel_task)
-        try:
-            done, _ = await asyncio.wait(
-                wait_set, timeout=self.remaining, return_when=asyncio.FIRST_COMPLETED
-            )
-            self.remaining -= loop.time() - started
-            if cancel_task is not None and cancel_task in done and cancel_task.result():
-                operation_task.cancel()
-                await asyncio.gather(operation_task, return_exceptions=True)
-                raise _RunCancelled
-            if operation_task in done:
-                return operation_task.result()
+        if cancel_task in done and cancel_task.result():
             operation_task.cancel()
             await asyncio.gather(operation_task, return_exceptions=True)
-            raise _AgentTimedOut
-        except asyncio.CancelledError:
-            operation_task.cancel()
-            if cancel_task is not None:
-                cancel_task.cancel()
-            await asyncio.gather(
-                operation_task,
-                *([cancel_task] if cancel_task is not None else []),
-                return_exceptions=True,
-            )
-            raise
-        finally:
-            if cancel_task is not None and not cancel_task.done():
-                cancel_task.cancel()
-                await asyncio.gather(cancel_task, return_exceptions=True)
+            raise _RunCancelled
+        return operation_task.result()
+    except asyncio.CancelledError:
+        operation_task.cancel()
+        cancel_task.cancel()
+        await asyncio.gather(
+            operation_task, cancel_task, return_exceptions=True,
+        )
+        raise
+    finally:
+        if not cancel_task.done():
+            cancel_task.cancel()
+            await asyncio.gather(cancel_task, return_exceptions=True)
 
 
 @dataclass
@@ -183,8 +165,32 @@ class _ToolPlan:
     call_id: str
     signature: str | None = None
     revision_at_execution: int | None = None
+    reuse_from: _ToolPlan | None = None
     result: ToolResult | None = None
     duration_ms: int = 0
+
+
+@dataclass(frozen=True)
+class _BlockedToolCall:
+    revision: int | None
+    outcome: str
+    result: ToolResult
+
+
+def _reused_success_result(tool_name: str, previous: ToolResult) -> ToolResult:
+    return ToolResult(
+        tool=tool_name,
+        success=True,
+        summary="相同调用已经成功执行，本次未重复执行并复用已有结果。",
+        data={
+            "status": "reused_previous_success",
+            "instruction": (
+                "请使用 previousResult 继续决策；不要再次使用相同工具和参数。"
+            ),
+            "previousResult": previous.data,
+        },
+        truncated=previous.truncated,
+    )
 
 
 class AgentRuntime:
@@ -225,10 +231,10 @@ class AgentRuntime:
                 allow_write=config.allow_write,
             )
         }
-        steps = 0
-        budget = _AwaitBudget(float(config.run_timeout_seconds))
+        iterations = 0
+        tool_steps = 0
         active_steps: dict[str, tuple[int, str]] = {}
-        blocked_call_signatures: dict[str, tuple[int | None, str]] = {}
+        blocked_call_signatures: dict[str, _BlockedToolCall] = {}
         seen_call_ids = {
             call.id
             for message in history
@@ -238,21 +244,27 @@ class AgentRuntime:
         chat_config = getattr(getattr(self.context, "ai_config", None), "chat", None)
         provider_name = str(getattr(chat_config, "provider", "unknown"))
         model_name = str(getattr(chat_config, "model", "unknown"))
+        pending_approvals: dict[str, dict[str, Any]] = {}
         try:
             while True:
-                forced_final = steps >= config.max_steps
+                forced_final = iterations >= config.max_iterations
                 decision_messages = messages
                 decision_schemas = schemas
                 if forced_final:
                     decision_messages = [
                         *messages,
-                        ChatMessage(role="system", content=final_only_prompt()),
+                        ChatMessage(
+                            role="system",
+                            content=final_only_prompt(config.max_iterations),
+                        ),
                     ]
                     decision_schemas = []
+                else:
+                    iterations += 1
 
                 decision_started = time.perf_counter()
                 try:
-                    raw_decision = await budget.wait(
+                    raw_decision = await _wait_with_cancellation(
                         self.provider.complete_structured(
                             decision_messages, decision_schemas
                         ),
@@ -266,7 +278,7 @@ class AgentRuntime:
                         )
                         else parse_agent_decision(raw_decision)
                     )
-                except (_RunCancelled, _AgentTimedOut, asyncio.CancelledError):
+                except (_RunCancelled, asyncio.CancelledError):
                     raise
                 except Exception as exc:
                     if forced_final:
@@ -275,8 +287,8 @@ class AgentRuntime:
                             yield error_event(run_id, provider_error)
                             return
                         yield error_event(run_id, AgentError(
-                            code="max_steps_exceeded",
-                            message="已达到最大工具步数，且无法生成最终答案。",
+                            code="max_iterations_exceeded",
+                            message="Agent 已达到内循环上限，且模型无法生成最终答案。",
                             technical_detail="forced final decision failed",
                             retryable=False,
                         ))
@@ -294,18 +306,26 @@ class AgentRuntime:
                 )
 
                 if isinstance(decision, AgentFinalAnswer):
+                    answer = decision.answer
+                    if forced_final:
+                        answer = (
+                            f"{answer}\n\n> 提示：本次 Agent 已达到 "
+                            f"{config.max_iterations} 次内循环上限，模型已停止调用工具并基于现有信息输出最终答案。"
+                        )
                     yield event(
-                        "delta", run_id, text=decision.answer, content=decision.answer
+                        "delta", run_id, text=answer, content=answer
                     )
+                    for approval_event in pending_approvals.values():
+                        yield approval_event
                     yield event(
-                        "done", run_id, status="completed", answer=decision.answer
+                        "done", run_id, status="completed", answer=answer
                     )
                     return
 
                 if forced_final:
                     yield error_event(run_id, AgentError(
-                        code="max_steps_exceeded",
-                        message="已达到最大工具步数，模型仍未提供最终答案。",
+                        code="max_iterations_exceeded",
+                        message="Agent 已达到内循环上限，模型仍未提供最终答案。",
                         technical_detail="non-final decision after tool budget exhausted",
                         retryable=False,
                     ))
@@ -329,11 +349,11 @@ class AgentRuntime:
                     )
 
                 plans: list[_ToolPlan] = []
-                batch_signatures: set[str] = set()
+                batch_signatures: dict[str, _ToolPlan] = {}
                 assistant_calls: list[ChatToolCall] = []
                 for call in batch_calls:
-                    steps += 1
-                    step_id = f"step_{steps}_{uuid.uuid4().hex[:12]}"
+                    tool_steps += 1
+                    step_id = f"step_{tool_steps}_{uuid.uuid4().hex[:12]}"
                     call_state = getattr(call, "_provider_state", {})
                     provider_call_id = call_state.get("tool_call_id")
                     call_id = (
@@ -345,10 +365,10 @@ class AgentRuntime:
                     )
                     seen_call_ids.add(call_id)
                     plan = _ToolPlan(
-                        call=call, step=steps, step_id=step_id, call_id=call_id
+                        call=call, step=tool_steps, step_id=step_id, call_id=call_id
                     )
                     plans.append(plan)
-                    active_steps[call_id] = (steps, step_id)
+                    active_steps[call_id] = (tool_steps, step_id)
                     assistant_calls.append(ChatToolCall(
                         id=call_id,
                         function=ChatToolFunction(
@@ -356,11 +376,11 @@ class AgentRuntime:
                         ),
                     ))
                     yield event(
-                        "timeline", run_id, step=steps, stepId=step_id,
+                        "timeline", run_id, step=tool_steps, stepId=step_id,
                         status="running", summary=call.thought_summary,
                     )
                     yield event(
-                        "tool_call", run_id, step=steps, stepId=step_id,
+                        "tool_call", run_id, step=tool_steps, stepId=step_id,
                         callId=call_id, tool=call.tool,
                         arguments=call.arguments,
                         thought_summary=call.thought_summary,
@@ -386,21 +406,6 @@ class AgentRuntime:
                         )
                         continue
 
-                    if steps > config.max_steps:
-                        plan.result = ToolResult(
-                            tool=call.tool,
-                            success=False,
-                            summary="工具调用超过本次 Agent 的步骤上限，未执行。",
-                            data={"callId": call_id},
-                            error=AgentError(
-                                code="max_steps_exceeded",
-                                message="工具调用超过本次运行允许的步骤上限。",
-                                technical_detail="batch tool call exceeded step budget",
-                                retryable=False,
-                            ),
-                        )
-                        continue
-
                     try:
                         canonical_arguments = json.dumps(
                             call.arguments,
@@ -413,60 +418,54 @@ class AgentRuntime:
                         raise ValueError("tool arguments are not canonical JSON") from None
                     call_signature = f"{call.tool}:{canonical_arguments}"
                     plan.signature = call_signature
-                    if call_signature in batch_signatures:
-                        plan.result = ToolResult(
-                            tool=call.tool,
-                            success=False,
-                            summary="同一批次中的重复工具调用未再次执行。",
-                            data={"callId": call_id},
-                            error=AgentError(
-                                code="repeated_tool_call",
-                                message="同一批次已包含相同工具和参数。",
-                                technical_detail="duplicate canonical tool call in one batch",
-                                retryable=False,
-                            ),
-                        )
+                    first_batch_plan = batch_signatures.get(call_signature)
+                    if first_batch_plan is not None:
+                        # Defer the duplicate until the first canonical call has
+                        # completed, then mirror its sanitized result without
+                        # executing the tool twice.
+                        plan.signature = None
+                        plan.reuse_from = first_batch_plan
                         continue
-                    batch_signatures.add(call_signature)
+                    batch_signatures[call_signature] = plan
 
                     previous_call = blocked_call_signatures.get(call_signature)
                     repeated_call = (
                         previous_call is not None
                         and (
-                            previous_call[0] is None
-                            or previous_call[0] == workspace_revision
+                            previous_call.revision is None
+                            or previous_call.revision == workspace_revision
                         )
                     )
                     if repeated_call:
-                        previous_outcome = previous_call[1]
-                        if previous_outcome == "success":
-                            repeated_message = (
-                                "相同工具和参数已经成功执行，请使用已有结果或调整参数。"
-                            )
-                            repeated_summary = (
-                                "相同调用已经成功执行，未再次执行；Agent 将继续决策。"
+                        assert previous_call is not None
+                        # A synthesized duplicate result must never replace the real
+                        # canonical outcome stored for this signature.
+                        plan.signature = None
+                        if previous_call.outcome == "success":
+                            plan.result = _reused_success_result(
+                                call.tool, previous_call.result
                             )
                         else:
                             repeated_message = (
                                 "相同工具和参数此前已发生不可重试的失败，请调整参数或更换方案。"
                             )
-                            repeated_summary = (
-                                "相同调用此前已发生不可重试的失败，未再次执行；Agent 将继续决策。"
-                            )
-                        plan.result = ToolResult(
-                            tool=call.tool,
-                            success=False,
-                            summary=repeated_summary,
-                            data={"callId": call_id},
-                            error=AgentError(
-                                code="repeated_tool_call",
-                                message=repeated_message,
-                                technical_detail=(
-                                    f"duplicate canonical tool call after {previous_outcome}"
+                            plan.result = ToolResult(
+                                tool=call.tool,
+                                success=False,
+                                summary=(
+                                    "相同调用此前已发生不可重试的失败，未再次执行；Agent 将继续决策。"
                                 ),
-                                retryable=False,
-                            ),
-                        )
+                                data={"callId": call_id},
+                                error=AgentError(
+                                    code="repeated_tool_call",
+                                    message=repeated_message,
+                                    technical_detail=(
+                                        "duplicate canonical tool call after "
+                                        "non_retryable_failure"
+                                    ),
+                                    retryable=False,
+                                ),
+                            )
 
                 async def execute_plan(plan: _ToolPlan) -> tuple[ToolResult, int]:
                     started = time.perf_counter()
@@ -481,14 +480,17 @@ class AgentRuntime:
                     duration_ms = int((time.perf_counter() - started) * 1000)
                     return result, duration_ms
 
-                runnable = [plan for plan in plans if plan.result is None]
+                runnable = [
+                    plan for plan in plans
+                    if plan.result is None and plan.reuse_from is None
+                ]
                 parallel = [
                     plan for plan in runnable
                     if tool_risk_levels.get(plan.call.tool) in {"read", "network"}
                 ]
                 serial = [plan for plan in runnable if plan not in parallel]
                 if parallel:
-                    completed = await budget.wait(
+                    completed = await _wait_with_cancellation(
                         asyncio.gather(*(execute_plan(plan) for plan in parallel)),
                         cancel_event,
                     )
@@ -497,11 +499,36 @@ class AgentRuntime:
                         plan.duration_ms = duration_ms
                         plan.revision_at_execution = workspace_revision
                 for plan in serial:
-                    result, duration_ms = await budget.wait(
+                    result, duration_ms = await _wait_with_cancellation(
                         execute_plan(plan), cancel_event
                     )
                     plan.result = result
                     plan.duration_ms = duration_ms
+
+                for plan in plans:
+                    if plan.reuse_from is None:
+                        continue
+                    source_result = plan.reuse_from.result
+                    assert source_result is not None
+                    if source_result.success:
+                        plan.result = _reused_success_result(
+                            plan.call.tool, source_result
+                        )
+                    else:
+                        assert source_result.error is not None
+                        plan.result = ToolResult(
+                            tool=plan.call.tool,
+                            success=False,
+                            summary=(
+                                "同一批次中的首个相同调用已失败，本次未重复执行。"
+                            ),
+                            data={
+                                "status": "reused_previous_failure",
+                                "previousResult": source_result.data,
+                            },
+                            error=source_result.error,
+                            truncated=source_result.truncated,
+                        )
 
                 for plan in plans:
                     assert plan.result is not None
@@ -509,7 +536,7 @@ class AgentRuntime:
                         continue
                     requested_at = datetime.now(timezone.utc)
                     approval_id = f"approval_{uuid.uuid4().hex}"
-                    yield event(
+                    approval_event = event(
                         "approval_required", run_id, step=plan.step,
                         approvalId=approval_id,
                         stepId=plan.step_id,
@@ -519,9 +546,11 @@ class AgentRuntime:
                         requestedAt=requested_at.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
                         deadlineAt=(requested_at + timedelta(days=7)).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
                     )
-                    plan.result = self._pending_approval_tool_result(
-                        plan.call.tool, plan.result, approval_id
-                    )
+                    proposal = self._approval_proposal(plan.result) or {}
+                    proposal_path = proposal.get("path")
+                    if isinstance(proposal_path, str):
+                        pending_approvals[proposal_path] = approval_event
+                    plan.result = self._pending_approval_tool_result(plan.call.tool, plan.result)
 
                 for plan in plans:
                     result = plan.result
@@ -540,7 +569,11 @@ class AgentRuntime:
                             else None
                         )
                         outcome = "success" if result.success else "non_retryable_failure"
-                        blocked_call_signatures[plan.signature] = (revision, outcome)
+                        blocked_call_signatures[plan.signature] = _BlockedToolCall(
+                            revision=revision,
+                            outcome=outcome,
+                            result=result,
+                        )
                         if result.success and risk_level in {"write", "terminal"}:
                             workspace_revision += 1
                     yield tool_result_event(
@@ -590,7 +623,7 @@ class AgentRuntime:
                 )
         except _RunCancelled:
             pending_steps = list(active_steps.values()) or [
-                (steps + 1, f"step_{steps + 1}_cancelled")
+                (tool_steps + 1, f"step_{tool_steps + 1}_cancelled")
             ]
             for step, step_id in pending_steps:
                 yield event(
@@ -598,13 +631,6 @@ class AgentRuntime:
                     status="cancelled", summary="Agent 运行已取消。",
                 )
             yield event("done", run_id, status="cancelled")
-        except _AgentTimedOut:
-            yield error_event(run_id, AgentError(
-                code="agent_timeout",
-                message="Agent 运行超过总时间限制，请重试或缩小任务范围。",
-                technical_detail="run deadline exceeded",
-                retryable=True,
-            ))
         except asyncio.CancelledError:
             raise
         except AgentEmptyDecisionError as exc:
@@ -613,6 +639,16 @@ class AgentRuntime:
                 message="模型本次未生成有效回答，请重试或切换模型。",
                 technical_detail=type(exc).__name__,
                 retryable=True,
+            ))
+        except AgentContextExhaustedError as exc:
+            yield error_event(run_id, AgentError(
+                code="decision_context_exhausted",
+                message=(
+                    "模型上下文已满，无法继续生成 Agent 决策。"
+                    "请开始新对话，或减少单次任务中的大段文件修改。"
+                ),
+                technical_detail=type(exc).__name__,
+                retryable=False,
             ))
         except (AgentDecisionParseError, ValidationError, ValueError, TypeError) as exc:
             yield error_event(run_id, AgentError(
@@ -623,6 +659,13 @@ class AgentRuntime:
             ))
         except Exception as exc:
             yield error_event(run_id, _provider_agent_error(exc))
+        finally:
+            try:
+                AgentStagingArea(run_context.workspace_path, run_id).cleanup_run()
+            except Exception:
+                # Main owns immutable review artifacts; staging is only a run-local cache.
+                # Cleanup failure must not mask the canonical terminal event.
+                pass
 
     @staticmethod
     def _safe_sources(
@@ -691,7 +734,7 @@ class AgentRuntime:
 
     @staticmethod
     def _pending_approval_tool_result(
-        tool_name: str, pending_result: ToolResult, approval_id: str
+        tool_name: str, pending_result: ToolResult
     ) -> ToolResult:
         payload = AgentRuntime._approval_proposal(pending_result) or {}
         safe_proposal = {
@@ -703,12 +746,11 @@ class AgentRuntime:
             tool=tool_name,
             success=True,
             summary=(
-                "文件修改已写入本次运行的暂存视图并加入待审队列；正式工作区尚未改变，"
-                "后续 file_read/file_patch 会继续使用暂存版本。"
+                "文件修改已写入本次运行的暂存视图；正式工作区尚未改变。后续 "
+                "file_read/file_patch 会继续使用暂存版本，只有整轮成功结束后的最终累计版本才会进入审查。"
             ),
             data={
-                "status": "pending_approval",
-                "approvalId": approval_id,
+                "status": "staged_for_end_of_run_review",
                 "applied": False,
                 "diskState": "unchanged_until_approved",
                 "stagedView": "updated",

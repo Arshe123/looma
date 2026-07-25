@@ -114,12 +114,12 @@ class AgentApprovalRuntimeTest(unittest.IsolatedAsyncioTestCase):
         result = next(item["result"] for item in events if item["type"] == "tool_result")
         self.assertTrue(result["success"])
         structured = result["modelContext"]["structuredData"]
-        self.assertEqual(structured["status"], "pending_approval")
+        self.assertEqual(structured["status"], "staged_for_end_of_run_review")
         self.assertFalse(structured["applied"])
         self.assertNotIn("proposed_content", json.dumps(result, ensure_ascii=False))
 
         observation = provider.calls[-1][0][-1].content
-        self.assertIn('"status":"pending_approval"', observation)
+        self.assertIn('"status":"staged_for_end_of_run_review"', observation)
         self.assertIn('"diskState":"unchanged_until_approved"', observation)
         self.assertNotIn("proposed_content", observation)
 
@@ -145,6 +145,88 @@ class AgentApprovalRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(approvals), 2)
         self.assertEqual(len(results), 2)
         self.assertEqual(events[-1]["status"], "completed")
+
+    async def test_only_latest_cumulative_proposal_for_one_path_is_published(self):
+        target = self.workspace / "note.md"
+        target.write_text("one\ntwo\n", encoding="utf-8", newline="\n")
+        provider = FakeProvider([
+            AgentToolCall(type="tool_call", thought_summary="第一步", tool="file_patch", arguments={
+                "path": "note.md", "old_text": "one", "new_text": "ONE",
+            }),
+            AgentToolCall(type="tool_call", thought_summary="第二步", tool="file_patch", arguments={
+                "path": "note.md", "old_text": "two", "new_text": "TWO",
+            }),
+            AgentFinalAnswer(type="final", answer="完成。"),
+        ])
+
+        events = await collect(
+            self.build_runtime(provider),
+            input="修改两处",
+            history=[],
+            config=AgentConfig(enabled_tools=["file_patch"], allow_write=True),
+            run_id="run_latest_only",
+        )
+
+        approvals = [item for item in events if item["type"] == "approval_required"]
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals[0]["proposal"]["proposed_content"], "ONE\nTWO\n")
+        self.assertGreater(
+            events.index(approvals[0]),
+            max(index for index, item in enumerate(events) if item["type"] == "tool_result"),
+        )
+        self.assertEqual(events[-1]["type"], "done")
+
+    async def test_cancelled_run_does_not_publish_review_and_cleans_staging(self):
+        cancel_event = asyncio.Event()
+
+        class CancellingProvider(FakeProvider):
+            async def complete_structured(self, messages, tool_schemas):
+                if self.calls:
+                    cancel_event.set()
+                    await asyncio.sleep(60)
+                return await super().complete_structured(messages, tool_schemas)
+
+        provider = CancellingProvider([
+            AgentToolCall(type="tool_call", thought_summary="暂存", tool="file_patch", arguments={
+                "path": "cancelled.md", "new_content": "partial\n",
+            }),
+        ])
+        events = await collect(
+            self.build_runtime(provider),
+            input="创建后取消",
+            history=[],
+            config=AgentConfig(enabled_tools=["file_patch"], allow_write=True),
+            run_id="run_cancel_cleanup",
+            cancel_event=cancel_event,
+        )
+
+        self.assertNotIn("approval_required", [item["type"] for item in events])
+        self.assertEqual(events[-1]["status"], "cancelled")
+        self.assertFalse((self.workspace / ".looma" / "agent-staging" / "run_cancel_cleanup").exists())
+
+    async def test_tool_failure_reason_is_visible_to_the_next_agent_decision(self):
+        target = self.workspace / "existing.md"
+        target.write_text("before\n", encoding="utf-8", newline="\n")
+        provider = FakeProvider([
+            AgentToolCall(type="tool_call", thought_summary="错误地按创建调用", tool="file_patch", arguments={
+                "path": "existing.md", "new_content": "after\n",
+            }),
+            AgentFinalAnswer(type="final", answer="已根据错误原因停止。"),
+        ])
+
+        events = await collect(
+            self.build_runtime(provider),
+            input="修改文件",
+            history=[],
+            config=AgentConfig(enabled_tools=["file_patch"], allow_write=True),
+            run_id="run_error_reason",
+        )
+
+        failed = next(item["result"] for item in events if item["type"] == "tool_result")
+        self.assertEqual(failed["error"]["code"], "file_patch_target_exists")
+        observation = provider.calls[1][0][-1].content
+        self.assertIn("file_patch_target_exists", observation)
+        self.assertIn("use old_text/new_text", observation)
 
     async def test_runtime_binds_tools_to_run_staging_and_following_read_sees_patch(self):
         provider = FakeProvider([
@@ -173,10 +255,7 @@ class AgentApprovalRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(events[-1]["type"], "done")
         self.assertFalse((self.workspace / "staged.md").exists())
-        self.assertEqual(
-            (self.workspace / ".looma" / "agent-staging" / "run_staging_read" / "files" / "staged.md").read_text(encoding="utf-8"),
-            "staged value\n",
-        )
+        self.assertFalse((self.workspace / ".looma" / "agent-staging" / "run_staging_read").exists())
         read_observation = provider.calls[2][0][-1].content
         self.assertIn('"source":"staging"', read_observation)
         self.assertIn("staged value", read_observation)

@@ -61,9 +61,8 @@ describe('Agent stream contract', () => {
       history: [],
       agent: {
         enabled_tools: ['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch'],
-        max_steps: 90,
+        max_iterations: 90,
         tool_timeout_seconds: 30,
-        run_timeout_seconds: 300,
         allow_write: true,
       },
     }))
@@ -104,16 +103,14 @@ describe('Agent stream contract', () => {
       input: '  task  ',
       history: [{ role: 'user', content: '  hello  ' }],
       enabledTools: ['file_read', 'rag_search', 'file_read'],
-      maxSteps: 999,
+      maxIterations: 999,
       toolTimeoutSeconds: -5,
-      runTimeoutSeconds: 4.6,
     })).toEqual({
       input: 'task',
       history: [{ role: 'user', content: 'hello' }],
       enabledTools: ['file_read', 'rag_search'],
-      maxSteps: 100,
+      maxIterations: 100,
       toolTimeoutSeconds: 1,
-      runTimeoutSeconds: 5,
     })
   })
 

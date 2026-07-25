@@ -18,9 +18,8 @@ type AgentRunOptionsPayload = {
   input: string;
   history?: RagChatMessagePayload[];
   enabledTools?: AgentToolNamePayload[];
-  maxSteps?: number;
+  maxIterations?: number;
   toolTimeoutSeconds?: number;
-  runTimeoutSeconds?: number;
 };
 type AgentStreamEventPayload = { requestId: string; type: string; runId: string } & Record<string, unknown>;
 

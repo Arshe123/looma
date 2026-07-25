@@ -21,7 +21,7 @@ from typing import Any
 BASE_URL = os.environ.get("LOOMA_RAG_URL", "http://127.0.0.1:8767").rstrip("/")
 
 
-def run_agent(workspace: Path, prompt: str, tools: list[str], max_steps: int = 4) -> list[dict[str, Any]]:
+def run_agent(workspace: Path, prompt: str, tools: list[str], max_iterations: int = 4) -> list[dict[str, Any]]:
     payload = {
         "input": prompt,
         "task_id": f"task_e2e_{uuid4().hex}",
@@ -29,9 +29,8 @@ def run_agent(workspace: Path, prompt: str, tools: list[str], max_steps: int = 4
         "workspace": {"workspace_path": str(workspace)},
         "agent": {
             "enabled_tools": tools,
-            "max_steps": max_steps,
+            "max_iterations": max_iterations,
             "tool_timeout_seconds": 15,
-            "run_timeout_seconds": 45,
             "allow_write": False,
         },
         "history": [],
@@ -70,11 +69,11 @@ def run_tool_scenario(
     prompt: str,
     tools: list[str],
     expected_tools: set[str],
-    max_steps: int = 4,
+    max_iterations: int = 4,
 ) -> list[dict[str, Any]]:
     last_events: list[dict[str, Any]] = []
     for _ in range(3):
-        last_events = run_agent(workspace, prompt, tools, max_steps=max_steps)
+        last_events = run_agent(workspace, prompt, tools, max_iterations=max_iterations)
         try:
             assert_completed(last_events)
         except AssertionError:
@@ -118,7 +117,7 @@ def main() -> None:
             workspace,
             "调用 file_read 尝试读取 ../outside-secret.txt；如果工具拒绝，请解释路径不能越过工作区。",
             ["file_read"],
-            max_steps=2,
+            max_iterations=2,
         )
         assert_completed(escape_events)
         denied_results = [

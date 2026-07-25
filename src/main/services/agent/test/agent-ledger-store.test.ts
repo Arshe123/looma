@@ -109,7 +109,7 @@ describe('AgentLedgerStore', () => {
     const root = await createRoot()
     const store = new AgentLedgerStore(root)
     const snapshot = { cacheVersion: 1, taskId: 'task_1', runId: 'run_1', eventLogPrefixHash: 'hash_1', throughSequence: 0, value: { version: 1, runId: 'run_1', throughSequence: 0, eventLogPrefixHash: 'hash_1', state: { status: 'running' as const, currentStep: '准备运行', completedSteps: [] }, compactTimeline: [], indexes: { toolCalls: {}, approvals: {}, retrievals: {}, artifactIds: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, latencyMs: 0, costUsd: 0, hasEstimatedCost: false, operationIds: [] } } } }
-    const checkpoint = { cacheVersion: 1, taskId: 'task_1', runId: 'run_1', eventLogPrefixHash: 'hash_1', throughSequence: 0, value: { version: 1, taskId: 'task_1', runId: 'run_1', throughSequence: 0, eventLogPrefixHash: 'hash_1', messageCursor: 'msg_1', messageTranscriptHash: 'transcript_1', nextStep: 1, remainingToolSteps: 8, completedCallDigests: [] } }
+    const checkpoint = { cacheVersion: 1, taskId: 'task_1', runId: 'run_1', eventLogPrefixHash: 'hash_1', throughSequence: 0, value: { version: 1, taskId: 'task_1', runId: 'run_1', throughSequence: 0, eventLogPrefixHash: 'hash_1', messageCursor: 'msg_1', messageTranscriptHash: 'transcript_1', nextStep: 1, completedCallDigests: [] } }
     await store.writeSnapshot(snapshot)
     await store.writeCheckpoint(checkpoint)
     expect(await store.readSnapshot('run_1', 'hash_1')).not.toBeNull()

@@ -464,9 +464,8 @@ class StructuredCompletionTests(unittest.IsolatedAsyncioTestCase):
             await provider.complete_structured([], [])
         self.assertEqual(len(provider.calls), 2)
 
-    def test_all_concrete_chat_providers_expose_base_structured_completion(self):
+    def test_concrete_chat_providers_select_the_expected_agent_protocol(self):
         for provider_class in (
-            OllamaChatProvider,
             OpenAIChatProvider,
             OpenAICompatibleChatProvider,
         ):
@@ -476,6 +475,11 @@ class StructuredCompletionTests(unittest.IsolatedAsyncioTestCase):
                     provider_class.complete_structured,
                     BaseChatProvider.complete_structured,
                 )
+        self.assertTrue(issubclass(OllamaChatProvider, BaseChatProvider))
+        self.assertIsNot(
+            OllamaChatProvider.complete_structured,
+            BaseChatProvider.complete_structured,
+        )
 
 
 class ProviderToolMessageTests(unittest.TestCase):

@@ -82,6 +82,46 @@ describe('agent stream state', () => {
     expect(requestId).toMatch(/^[A-Za-z0-9_-]{1,128}$/)
   })
 
+  it('refreshes the deferred file-review queue only when the completed event arrives', async () => {
+    const conversationId = createConversation()
+    const run = await startAgent(conversationId)
+    const store = useAiAssistantStore()
+    const listApprovals = (window as any).electronAPI.agent.listApprovals
+    listApprovals.mockResolvedValue({
+      success: true,
+      data: [{
+        approvalId: 'approval-final', artifactId: 'artifact-final', taskId: 'task-1', runId: 'run-final',
+        workspaceId: 'workspace-1', callId: 'call-final', path: 'note.md', operation: 'update', diff: '-old\n+new',
+        additions: 1, deletions: 1, createdAt: 1, deadlineAt: Date.now() + 60_000,
+      }],
+    })
+
+    expect(listApprovals).not.toHaveBeenCalled()
+    store.handleAgentStreamEvent({
+      requestId: run.requestId,
+      type: 'done',
+      runId: 'run-final',
+      status: 'completed',
+      answer: '完成',
+      agentEvents: [
+        canonicalEvent('run-final', 1, 'artifact', 'artifact_created', {
+          artifactId: 'artifact-final', callId: 'call-final', kind: 'file_patch', path: 'note.md',
+          beforeHash: 'before', afterHash: 'after', operation: 'update', diff: '-old\n+new',
+          additions: 1, deletions: 1, createdAt: 1, expiresAt: Date.now() + 60_000,
+        }),
+        canonicalEvent('run-final', 2, 'artifact', 'approval_required', {
+          approvalId: 'approval-final', callId: 'call-final', artifactId: 'artifact-final', deadlineAt: Date.now() + 60_000,
+        }),
+        canonicalEvent('run-final', 3, 'execution', 'run_completed', { answerMessageId: 'message-final' }),
+      ],
+    })
+
+    await vi.waitFor(() => expect(listApprovals).toHaveBeenCalledWith('workspace-1'))
+    await vi.waitFor(() => expect(store.pendingFileReviewsByWorkspaceId['workspace-1']).toEqual([
+      expect.objectContaining({ approvalId: 'approval-final', status: 'pending' }),
+    ]))
+  })
+
   it('reloads an open editor buffer after an approved file_patch is materialized', async () => {
     const workspace = useWorkspaceStore()
     workspace.workspaces = [{ id: 'workspace-1', name: 'Notes', path: 'C:\\Notes', createdAt: 1, lastOpenedAt: 1 }]

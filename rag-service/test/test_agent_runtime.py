@@ -220,7 +220,7 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             history=[],
             config=AgentConfig(
                 enabled_tools=["workspace_search", "rag_search"],
-                max_steps=4,
+                max_iterations=1,
             ),
         )
         elapsed = asyncio.get_running_loop().time() - started
@@ -236,8 +236,8 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             min(index for index, item in enumerate(events) if item["type"] == "tool_result"),
         )
         followup = provider.calls[1][0]
-        assistant = followup[-3]
-        tool_messages = followup[-2:]
+        assistant = next(message for message in followup if message.tool_calls)
+        tool_messages = [message for message in followup if message.role == "tool"]
         self.assertEqual(
             [call.id for call in assistant.tool_calls], ["call_a", "call_b"]
         )
@@ -247,6 +247,49 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(assistant.reasoning_content, "PRIVATE_BATCH_REASONING")
         self.assertNotIn("PRIVATE_BATCH_REASONING", json.dumps(events, ensure_ascii=False))
+        self.assertEqual(events[-1]["status"], "completed")
+        self.assertIn("1 次内循环上限", events[-1]["answer"])
+
+    async def test_duplicate_calls_in_same_batch_reuse_first_success(self):
+        tool = FakeTool(result={"entries": ["学习笔记", "灵光一闪"]})
+        first = AgentToolCall(
+            type="tool_call", thought_summary="第一次列表",
+            tool="workspace_search", arguments={"value": "same"},
+        )
+        duplicate = AgentToolCall(
+            type="tool_call", thought_summary="第二次列表",
+            tool="workspace_search", arguments={"value": "same"},
+        )
+        provider = FakeProvider([
+            AgentToolBatch(type="tool_calls", calls=[first, duplicate]),
+            AgentFinalAnswer(type="final", answer="已使用列表"),
+        ])
+
+        events = await collect(
+            build_runtime(provider, tool), input="问", history=[],
+            config=AgentConfig(enabled_tools=["workspace_search"]),
+        )
+
+        self.assertEqual(tool.calls, 1)
+        results = [e["result"] for e in events if e["type"] == "tool_result"]
+        self.assertEqual(len(results), 2)
+        self.assertTrue(results[0]["success"])
+        self.assertTrue(results[1]["success"])
+        self.assertIsNone(results[1]["error"])
+        self.assertEqual(
+            results[1]["modelContext"]["structuredData"]["status"],
+            "reused_previous_success",
+        )
+        self.assertEqual(
+            results[1]["modelContext"]["structuredData"]["previousResult"],
+            {"entries": ["学习笔记", "灵光一闪"]},
+        )
+        timelines = [
+            e for e in events
+            if e["type"] == "timeline" and e.get("step") == 2
+        ]
+        self.assertEqual(timelines[-1]["status"], "completed")
+        self.assertEqual(events[-1]["answer"], "已使用列表")
 
     async def test_invalid_call_in_batch_does_not_cancel_valid_sibling(self):
         valid_tool = FakeTool()
@@ -398,6 +441,24 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(error["technical_detail"], "AgentEmptyDecisionError")
         self.assertTrue(error["retryable"])
 
+    async def test_context_exhaustion_has_specific_actionable_error(self):
+        from agent.decision_parser import AgentContextExhaustedError
+
+        provider = FakeProvider([AgentContextExhaustedError()])
+        events = await collect(
+            build_runtime(provider),
+            input="问",
+            history=[],
+            config=AgentConfig(enabled_tools=[]),
+        )
+
+        self.assertEqual([event["type"] for event in events], ["run_started", "error"])
+        error = events[-1]["error"]
+        self.assertEqual(error["code"], "decision_context_exhausted")
+        self.assertIn("模型上下文已满", error["message"])
+        self.assertEqual(error["technical_detail"], "AgentContextExhaustedError")
+        self.assertFalse(error["retryable"])
+
     async def test_tool_timeout_cancels_tool_and_model_can_recover(self):
         tool = FakeTool(delay=1)
         provider = FakeProvider([
@@ -415,19 +476,6 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["error"]["retryable"])
         self.assertTrue(tool.cancelled)
         self.assertEqual(events[-1]["status"], "completed")
-
-    async def test_total_timeout_is_terminal_sanitized_error(self):
-        provider = FakeProvider([], delay=1)
-        events = await collect(
-            build_runtime(provider),
-            input="问",
-            history=[],
-            config=AgentConfig(enabled_tools=[], run_timeout_seconds=1),
-        )
-        self.assertEqual([e["type"] for e in events], ["run_started", "error"])
-        self.assertEqual(events[-1]["error"]["code"], "agent_timeout")
-        self.assertTrue(events[-1]["error"]["retryable"])
-        self.assertTrue(provider.cancelled)
 
     async def test_explicit_cancel_interrupts_provider_and_emits_cancelled_done(self):
         provider = FakeProvider([], delay=10)
@@ -472,10 +520,11 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             await task
         self.assertTrue(provider.cancelled)
 
-    async def test_duplicate_successful_tool_call_is_reported_and_agent_continues(self):
-        tool = FakeTool()
+    async def test_duplicate_successful_tool_call_reuses_result_without_state_corruption(self):
+        tool = FakeTool(result={"value": "original"})
         repeated = AgentToolCall(type="tool_call", thought_summary="重复", tool="workspace_search", arguments={"value": "same"})
         provider = FakeProvider([
+            repeated,
             repeated,
             repeated,
             AgentFinalAnswer(type="final", answer="使用已有结果完成"),
@@ -485,13 +534,33 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             config=AgentConfig(enabled_tools=["workspace_search"]),
         )
         self.assertEqual(tool.calls, 1)
-        duplicate_result = [e["result"] for e in events if e["type"] == "tool_result"][-1]
-        self.assertEqual(duplicate_result["error"]["code"], "repeated_tool_call")
-        self.assertFalse(duplicate_result["error"]["retryable"])
+        results = [e["result"] for e in events if e["type"] == "tool_result"]
+        self.assertEqual(len(results), 3)
+        for duplicate_result in results[1:]:
+            self.assertTrue(duplicate_result["success"])
+            self.assertIsNone(duplicate_result["error"])
+            self.assertEqual(
+                duplicate_result["modelContext"]["structuredData"]["status"],
+                "reused_previous_success",
+            )
+            self.assertEqual(
+                duplicate_result["modelContext"]["structuredData"]["previousResult"],
+                {"value": "original"},
+            )
+        duplicate_timelines = [
+            event for event in events
+            if event["type"] == "timeline"
+            and "复用已有结果" in event.get("summary", "")
+        ]
+        self.assertEqual([event["status"] for event in duplicate_timelines], ["completed", "completed"])
         self.assertEqual(events[-1]["type"], "done")
         self.assertEqual(events[-1]["status"], "completed")
         self.assertEqual(events[-1]["answer"], "使用已有结果完成")
-        self.assertIn("已经成功执行", provider.calls[2][0][-1].content)
+        observation = json.loads(provider.calls[3][0][-1].content)
+        self.assertEqual(
+            observation["modelContext"]["structuredData"]["instruction"],
+            "请使用 previousResult 继续决策；不要再次使用相同工具和参数。",
+        )
 
     async def test_failed_tool_call_with_same_arguments_can_retry(self):
         class FlakyTool(FakeTool):
@@ -590,10 +659,15 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(tool.calls, 1)
         duplicate_result = [e["result"] for e in events if e["type"] == "tool_result"][-1]
-        self.assertEqual(duplicate_result["error"]["code"], "repeated_tool_call")
+        self.assertTrue(duplicate_result["success"])
+        self.assertIsNone(duplicate_result["error"])
+        self.assertEqual(
+            duplicate_result["modelContext"]["structuredData"]["status"],
+            "reused_previous_success",
+        )
         self.assertEqual(events[-1]["answer"], "没有重复写入")
 
-    async def test_max_steps_forces_final_without_tools(self):
+    async def test_max_iterations_forces_final_without_tools_and_notifies_user(self):
         tool = FakeTool()
         provider = FakeProvider([
             AgentToolCall(type="tool_call", thought_summary="调用", tool="workspace_search", arguments={"value": "one"}),
@@ -601,13 +675,17 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         ])
         events = await collect(
             build_runtime(provider, tool), input="问", history=[],
-            config=AgentConfig(enabled_tools=["workspace_search"], max_steps=1),
+            config=AgentConfig(enabled_tools=["workspace_search"], max_iterations=1),
         )
         self.assertEqual(provider.calls[1][1], [])
         self.assertIn("不得再调用工具", provider.calls[1][0][-1].content)
         self.assertEqual(events[-1]["status"], "completed")
+        self.assertEqual(
+            events[-1]["answer"],
+            "强制总结\n\n> 提示：本次 Agent 已达到 1 次内循环上限，模型已停止调用工具并基于现有信息输出最终答案。",
+        )
 
-    async def test_max_steps_forced_final_failure_is_terminal_error(self):
+    async def test_max_iterations_forced_final_failure_is_terminal_error(self):
         tool = FakeTool()
         provider = FakeProvider([
             AgentToolCall(type="tool_call", thought_summary="调用", tool="workspace_search", arguments={"value": "one"}),
@@ -615,9 +693,9 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         ])
         events = await collect(
             build_runtime(provider, tool), input="问", history=[],
-            config=AgentConfig(enabled_tools=["workspace_search"], max_steps=1),
+            config=AgentConfig(enabled_tools=["workspace_search"], max_iterations=1),
         )
-        self.assertEqual(events[-1]["error"]["code"], "max_steps_exceeded")
+        self.assertEqual(events[-1]["error"]["code"], "max_iterations_exceeded")
         self.assertNotIn("API_KEY", json.dumps(events[-1]))
 
     async def test_policy_filters_disabled_and_write_tool_schemas(self):
@@ -706,7 +784,7 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(approval["proposal"]["unified_diff"], proposal["unified_diff"])
         result = next(event["result"] for event in events if event["type"] == "tool_result")
         self.assertTrue(result["success"])
-        self.assertEqual(result["modelContext"]["structuredData"]["status"], "pending_approval")
+        self.assertEqual(result["modelContext"]["structuredData"]["status"], "staged_for_end_of_run_review")
         self.assertNotIn("proposed_content", json.dumps(result, ensure_ascii=False))
         self.assertEqual(events[-1]["answer"], "已提交审查")
 

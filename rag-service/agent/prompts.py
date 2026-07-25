@@ -46,8 +46,8 @@ def observation_prompt(result: ToolResult, max_chars: int = MAX_OBSERVATION_CHAR
     return '{"truncated":true}'
 
 
-def final_only_prompt() -> str:
+def final_only_prompt(max_iterations: int) -> str:
     return (
-        "已达到本次运行允许的最大工具步数。不得再调用工具。"
+        f"本次 Agent 已达到 {max_iterations} 次内循环上限。不得再调用工具。"
         "请仅基于已有对话与工具观察返回 final 决策和最终答案。"
     )

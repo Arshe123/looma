@@ -52,7 +52,6 @@ export interface RuntimeCheckpoint {
   messageCursor: string
   messageTranscriptHash: string
   nextStep: number
-  remainingToolSteps: number
   completedCallDigests: string[]
   pendingApprovalRef?: {
     approvalId: string

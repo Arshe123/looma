@@ -11,6 +11,16 @@ from schemas import AIConfig, KnowledgeConfig, ToolName
 ToolRiskLevel = Literal["read", "write", "network", "terminal"]
 
 
+class ToolExecutionError(ValueError):
+    """Expected tool failure whose bounded message is safe to show to the model."""
+
+    def __init__(self, code: str, message: str, *, retryable: bool = True) -> None:
+        super().__init__(code)
+        self.code = code
+        self.safe_message = message
+        self.retryable = retryable
+
+
 class StrictToolArgs(BaseModel):
     """Base for tool arguments that rejects undeclared input fields."""
 

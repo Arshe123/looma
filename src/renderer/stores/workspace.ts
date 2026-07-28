@@ -353,6 +353,10 @@ export const useWorkspaceStore = defineStore('workspace', {
     expandedDirs: [] as string[],
     noteOrder: {} as Record<string, string[]>,
     dirEntries: {} as Record<string, FsEntry[]>,
+    dirLoadStates: {} as Record<string, 'idle' | 'loading' | 'loaded' | 'error'>,
+    dirLoadErrors: {} as Record<string, string>,
+    dirLoadRequestIds: {} as Record<string, number>,
+    nextDirLoadRequestId: 0 as number,
     isBusy: false as boolean,
     busyText: '' as string,
     isWorkspaceTransitioning: false as boolean,
@@ -1490,6 +1494,9 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.expandedDirs = []
       this.noteOrder = {}
       this.dirEntries = {}
+      this.dirLoadStates = {}
+      this.dirLoadErrors = {}
+      this.dirLoadRequestIds = {}
       this.undoStack = []
       this.redoStack = []
 
@@ -1527,6 +1534,9 @@ export const useWorkspaceStore = defineStore('workspace', {
         await window.electronAPI.fs.watchStop(prev)
       }
       this.dirEntries = {}
+      this.dirLoadStates = {}
+      this.dirLoadErrors = {}
+      this.dirLoadRequestIds = {}
       this.undoStack = []
       this.redoStack = []
       this.activeWorkspaceId = null // clear ID during transition to block watchers/snapshots from saving incorrectly
@@ -1545,12 +1555,16 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       await this.loadWorkspaceMeta(id)
 
-      await window.electronAPI.fs.watchStart(id)
-      this.watchedWorkspaceId = id
       this.attachFsEvents()
+      window.electronAPI.fs.watchStart(id).then(() => {
+        if (this.activeWorkspaceId === id) this.watchedWorkspaceId = id
+      }).catch(() => {})
 
-      await this.loadDir(id, '')
-      this.loadRestoredDirsInBackground(id).catch(() => {})
+      this.loadDir(id, '').then(() => {
+        if (this.activeWorkspaceId === id) {
+          this.loadRestoredDirsInBackground(id).catch(() => {})
+        }
+      }).catch(() => {})
     },
 
     async loadWorkspaceMeta(id: string) {
@@ -1567,8 +1581,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.openedTextFileContents = {}
         this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
         this.resetAiAssistantState()
-        await this.loadAiAssistantState(id)
         this.fileSessions = {}
+        this.loadAiAssistantState(id).catch(() => {})
         return
       }
       this.expandedDirs = Array.isArray(metaResult.data.expandedDirs) ? metaResult.data.expandedDirs : []
@@ -1588,7 +1602,6 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.syncLegacyTabState()
 
       this.fileSessions = metaResult.data.fileSessions || {}
-      await this.loadAiAssistantState(id)
       this.openedTextFileContents = {}
       this.activeSidebarPanel = resolveActiveSidebarPanel(
         metaResult.data.activeSidebarPanel,
@@ -1599,16 +1612,20 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (this.activeTabId) {
         this.activateTab(this.activeTabId)
       }
+      this.resetAiAssistantState()
+      this.loadAiAssistantState(id).catch(() => {})
     },
 
     async loadAiAssistantState(id: string) {
       const aiResult = await window.electronAPI.workspaceAi.get(id)
+      if (this.activeWorkspaceId !== id) return
       if (!aiResult.success || !aiResult.data) {
         this.resetAiAssistantState()
         return
       }
       this.aiAssistant = normalizeAiAssistantState(aiResult.data)
       const { useAiAssistantStore } = await import('./ai-assistant')
+      if (this.activeWorkspaceId !== id) return
       await useAiAssistantStore().hydrateAgentHistory(id, this.aiAssistant.conversations)
     },
 
@@ -1683,23 +1700,38 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async loadDir(workspaceId: string, dirRelativePath: string) {
       const dir = normalizeDir(dirRelativePath)
+      const requestId = ++this.nextDirLoadRequestId
+      this.dirLoadRequestIds[dir] = requestId
+      this.dirLoadStates[dir] = 'loading'
+      this.dirLoadErrors[dir] = ''
       const r = await window.electronAPI.fs.listDir(workspaceId, dir || '.')
+      if (this.activeWorkspaceId !== workspaceId || this.dirLoadRequestIds[dir] !== requestId) return
       if (!r.success || !r.data) {
         if (isMissingDirectoryResult(r)) {
-          if (dir === '') return
+          if (dir === '') {
+            this.dirLoadStates[dir] = 'error'
+            this.dirLoadErrors[dir] = r.error || '工作空间目录不存在'
+            return
+          }
           this.expandedDirs = this.expandedDirs.filter((p) => p !== dir)
           this.selectedPaths = this.selectedPaths.filter((p) => p !== dir && !p.startsWith(dir + '/'))
           if (this.activeFileRelativePath && this.activeFileRelativePath.startsWith(dir + '/')) {
             this.resetActiveFileState()
           }
           delete this.dirEntries[dir]
+          delete this.dirLoadStates[dir]
+          delete this.dirLoadErrors[dir]
           await this.saveWorkspaceMeta()
         } else {
+          this.dirLoadStates[dir] = 'error'
+          this.dirLoadErrors[dir] = r.error || 'Failed to list directory'
           this.setError(r.error || 'Failed to list directory')
         }
         return
       }
       this.dirEntries[dir] = r.data
+      this.dirLoadStates[dir] = 'loaded'
+      this.dirLoadErrors[dir] = ''
       window.electronAPI.fs.watchAdd?.(workspaceId, [dir || '.']).catch(() => {})
     },
 
@@ -1801,6 +1833,7 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async loadTextFileContent(relativePath: string) {
       const rel = normalizeDir(relativePath)
+      const workspaceId = this.activeWorkspaceId
       const absPath = this.resolveAbsolutePath(rel)
       const existing = this.openedTextFileContents[rel]
       if (existing && existing.content !== existing.loadedContent) {
@@ -1817,6 +1850,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
 
       const r = await window.electronAPI.file.readMarkdown(absPath)
+      if (!workspaceId || this.activeWorkspaceId !== workspaceId || this.resolveAbsolutePath(rel) !== absPath) return
       if (!r.success || r.data === undefined) {
         this.setError(r.error || 'Failed to load file')
         if (rel === this.activeFileRelativePath) {

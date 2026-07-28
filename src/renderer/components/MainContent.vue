@@ -60,7 +60,7 @@ const isActiveRagIndexTab = computed(() => activeTab.value?.kind === 'system' &&
 const isActiveAiHistoryTab = computed(() => activeTab.value?.kind === 'system' && activeTab.value.page === 'ai-history')
 const isActiveAgentDiffTab = computed(() => activeTab.value?.kind === 'system' && activeTab.value.page === 'agent-diff')
 const isActiveFileTab = computed(() => activeTab.value?.kind === 'file')
-const activeExt = computed(() => getExt(workspaceStore.activeFilePath))
+const activeExt = computed(() => getExt(activeTab.value?.kind === 'file' ? activeTab.value.relativePath : ''))
 const currentEditor = computed(() => (editorByExt as any)[activeExt.value] || null)
 const isActiveMedia = computed(() => isActiveFileTab.value && isMediaPath(workspaceStore.activeFilePath))
 const isSupportedFile = computed(() => isActiveMedia.value || Boolean(currentEditor.value))

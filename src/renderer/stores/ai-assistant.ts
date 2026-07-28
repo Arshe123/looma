@@ -378,20 +378,22 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
 
     async hydrateAgentHistory(workspaceId: string, conversations: Array<{ id: string; messages: AiAssistantMessage[] }>) {
       const workspaceStore = useWorkspaceStore()
+      const activeWorkspaceAtStart = workspaceStore.activeWorkspaceId
+      const isCurrentWorkspace = () => activeWorkspaceAtStart === null || workspaceStore.activeWorkspaceId === workspaceId
       const getRun = (window as any).electronAPI?.agent?.getRun
-      if (typeof getRun !== 'function') return
+      const getRuns = (window as any).electronAPI?.agent?.getRuns
+      if (typeof getRun !== 'function' && typeof getRuns !== 'function') return
       const entries = conversations.flatMap(conversation => conversation.messages
         .filter(message => message.mode === 'agent' && typeof message.runId === 'string' && Boolean(message.runId))
         .map(message => ({ conversationId: conversation.id, message })))
-      await Promise.all(entries.map(async ({ conversationId, message }) => {
-        const result = await (window as any).electronAPI.agent.getRun(workspaceId, message.runId)
-        if (!result?.success || !result.data) return
+      const applyRunHistory = (conversationId: string, message: AiAssistantMessage, data: any) => {
+        if (!isCurrentWorkspace() || !data) return
         const key = getAgentDisplayMessageKey(conversationId, message.id)
-        this.agentEventsByMessageKey[key] = result.data.events
-        this.agentSourcesByMessageKey[key] = result.data.sources
-        const projection = projectAgentRunView(result.data.events, result.data.sources)
-        if (['failed', 'cancelled'].includes(projection.state.status) && !isArtifactBackedFilePatchBridgeInterruption(result.data.events)) {
-          this.agentRecoveryByMessageKey[key] = result.data.recovery
+        this.agentEventsByMessageKey[key] = data.events
+        this.agentSourcesByMessageKey[key] = data.sources
+        const projection = projectAgentRunView(data.events, data.sources)
+        if (['failed', 'cancelled'].includes(projection.state.status) && !isArtifactBackedFilePatchBridgeInterruption(data.events)) {
+          this.agentRecoveryByMessageKey[key] = data.recovery
         } else {
           delete this.agentRecoveryByMessageKey[key]
         }
@@ -400,8 +402,8 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
           touchConversation: false,
         })
         workspaceStore.updateAiAssistantMessageMetaInConversation(conversationId, message.id, {
-          taskId: result.data.run.taskId,
-          runId: result.data.run.id,
+          taskId: data.run.taskId,
+          runId: data.run.id,
           agentSummary: {
             status: projection.state.status === 'failed'
               ? 'error'
@@ -415,6 +417,25 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
             ...(projection.state.status === 'failed' ? { error: { message: projection.state.currentStep } } : {}),
           },
         }, { persist: false, touchConversation: false })
+      }
+
+      if (typeof getRuns === 'function' && entries.length > 0) {
+        const runIds = [...new Set(entries.map(({ message }) => message.runId as string))]
+        const result = await getRuns(workspaceId, runIds)
+        if (!isCurrentWorkspace()) return
+        if (result?.success && result.data?.runs) {
+          for (const { conversationId, message } of entries) {
+            applyRunHistory(conversationId, message, result.data.runs[message.runId as string])
+          }
+          return
+        }
+      }
+
+      if (typeof getRun !== 'function') return
+      await Promise.all(entries.map(async ({ conversationId, message }) => {
+        const result = await getRun(workspaceId, message.runId)
+        if (!result?.success || !result.data) return
+        applyRunHistory(conversationId, message, result.data)
       }))
     },
 

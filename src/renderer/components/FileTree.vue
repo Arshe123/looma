@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
-import { ChevronRight } from 'lucide-vue-next'
+import { ChevronRight, LoaderCircle, RefreshCw } from 'lucide-vue-next'
 import { useWorkspaceStore, type FsEntry } from '../stores/workspace'
 import {
   FILE_TREE_CREATE_FILE_EVENT,
@@ -20,6 +20,11 @@ import { appendTreeGuides, type TreeGuidedRow } from '@/shared/utils/tree-row-gu
 const workspaceStore = useWorkspaceStore()
 const expanded = computed(() => workspaceStore.activeExpandedSet)
 const activeFileRel = computed(() => workspaceStore.activeFileRelativePath)
+const rootDirKey = computed(() => workspaceStore.keyOfDir(''))
+const rootLoadState = computed(() => workspaceStore.dirLoadStates[rootDirKey.value] || 'idle')
+const rootLoadError = computed(() => workspaceStore.dirLoadErrors[rootDirKey.value] || '')
+const hasRootSnapshot = computed(() => Object.prototype.hasOwnProperty.call(workspaceStore.dirEntries, rootDirKey.value))
+const isInitialRootLoading = computed(() => !hasRootSnapshot.value && (rootLoadState.value === 'idle' || rootLoadState.value === 'loading'))
 
 type InlineEditMode = 'create-file' | 'create-folder' | 'rename'
 type InlineEditState = {
@@ -374,6 +379,12 @@ const onRevealActiveFileRequest = () => {
   revealActiveFileRow(activeFileRel.value).catch(console.error)
 }
 
+const retryRootLoad = () => {
+  const workspaceId = workspaceStore.activeWorkspaceId
+  if (!workspaceId) return
+  workspaceStore.loadDir(workspaceId, '').catch(console.error)
+}
+
 onMounted(() => {
   window.addEventListener('pointerdown', onGlobalPointerDown)
   window.addEventListener('keydown', onGlobalKeyDown)
@@ -427,7 +438,28 @@ onUnmounted(() => {
       @dragover.self="allowDrop"
       @drop.self="(e) => onDropToDir(e, '')"
     >
-      <div v-if="flattened.length === 0" class="px-2 py-2 rounded-md text-sm text-text-subtle">
+      <div v-if="isInitialRootLoading" class="flex items-center gap-2 px-2 py-3 text-sm text-text-muted" role="status">
+        <LoaderCircle :size="16" class="shrink-0 animate-spin text-accent" />
+        <span>正在加载文件…</span>
+      </div>
+
+      <div v-else-if="rootLoadState === 'error'" class="mx-1 rounded-lg border border-danger/25 bg-danger/5 px-3 py-3">
+        <div class="text-sm font-medium text-text-main">文件加载失败</div>
+        <div class="mt-1 text-xs text-text-muted">请检查工作空间是否仍可访问，然后重试。</div>
+        <button
+          class="mt-3 inline-flex items-center gap-1.5 rounded-md bg-accent px-2.5 py-1.5 text-xs text-white hover:bg-accent-hover"
+          @click="retryRootLoad"
+        >
+          <RefreshCw :size="13" />
+          重新加载
+        </button>
+        <details v-if="rootLoadError" class="mt-2 text-xs text-text-subtle">
+          <summary class="cursor-pointer">技术详情</summary>
+          <div class="mt-1 break-all">{{ rootLoadError }}</div>
+        </details>
+      </div>
+
+      <div v-else-if="rootLoadState === 'loaded' && flattened.length === 0" class="px-2 py-2 rounded-md text-sm text-text-subtle">
         空文件夹
       </div>
 

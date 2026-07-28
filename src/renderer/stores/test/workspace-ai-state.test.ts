@@ -240,6 +240,7 @@ describe('workspace ai assistant temporary conversation state', () => {
     }
     ;(window.electronAPI.workspaceAi.get as any).mockResolvedValue({ success: true, data: persistedState })
 
+    store.activeWorkspaceId = 'workspace-1'
     await store.loadAiAssistantState('workspace-1')
     const [legacyMessage, agentMessage] = store.aiAssistant.conversations[0].messages
 
@@ -292,6 +293,7 @@ describe('workspace ai assistant temporary conversation state', () => {
       },
     })
 
+    store.activeWorkspaceId = 'workspace-1'
     await store.loadAiAssistantState('workspace-1')
 
     const message = store.aiAssistant.conversations[0].messages[0]
@@ -299,6 +301,31 @@ describe('workspace ai assistant temporary conversation state', () => {
     expect(message.text).toBe('')
     expect(message.timeline?.[0]).toMatchObject({ status: 'active' })
     expect(message.timeline?.[0].endedAt).toBeUndefined()
+  })
+
+  it('hydrates multiple Agent runs through one batched ledger request', async () => {
+    const workspaceStore = useWorkspaceStore()
+    const aiStore = useAiAssistantStore()
+    workspaceStore.activeWorkspaceId = 'workspace-1'
+    const getRun = vi.fn()
+    const getRuns = vi.fn().mockResolvedValue({
+      success: true,
+      data: { runs: { 'run-1': null, 'run-2': null } },
+    })
+    ;(window.electronAPI.agent as any).getRun = getRun
+    ;(window.electronAPI.agent as any).getRuns = getRuns
+
+    await aiStore.hydrateAgentHistory('workspace-1', [{
+      id: 'conversation-1',
+      messages: [
+        { id: 1, role: 'assistant', text: '', createdAt: 1, mode: 'agent', runId: 'run-1' },
+        { id: 2, role: 'assistant', text: '', createdAt: 2, mode: 'agent', runId: 'run-2' },
+      ],
+    }])
+
+    expect(getRuns).toHaveBeenCalledTimes(1)
+    expect(getRuns).toHaveBeenCalledWith('workspace-1', ['run-1', 'run-2'])
+    expect(getRun).not.toHaveBeenCalled()
   })
 
 })

@@ -236,6 +236,14 @@ interface AgentErrorPayload {
   technical_detail?: string | null;
   retryable: boolean;
 }
+interface AgentRunHistoryPayload {
+  task: AgentTask | null;
+  run: AgentRun;
+  events: AgentEvent[];
+  sources: AgentSource[];
+  auditIssues: Array<{ code: string; runId?: string; callId?: string; detail: string }>;
+  recovery: { recoverable: boolean; checkpointAvailable: boolean; reason: string };
+}
 type AgentStreamEventData =
   | { requestId: string; type: 'run_started'; runId: string; startedAt: string }
   | { requestId: string; type: 'timeline'; runId: string; step: number; stepId: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; summary: string }
@@ -333,14 +341,8 @@ interface ElectronAPI {
     deleteIndex: (workspaceId: string) => Promise<Result<void>>;
   };
   agent: {
-    getRun: (workspaceId: string, runId: string) => Promise<Result<{
-      task: AgentTask | null
-      run: AgentRun
-      events: AgentEvent[]
-      sources: AgentSource[]
-      auditIssues: Array<{ code: string; runId?: string; callId?: string; detail: string }>
-      recovery: { recoverable: boolean; checkpointAvailable: boolean; reason: string }
-    }>>;
+    getRun: (workspaceId: string, runId: string) => Promise<Result<AgentRunHistoryPayload>>;
+    getRuns: (workspaceId: string, runIds: string[]) => Promise<Result<{ runs: Record<string, AgentRunHistoryPayload | null> }>>;
     resumeRun: (requestId: string, workspaceId: string, parentRunId: string) => Promise<Result<{ taskId: string; runId: string; parentRunId: string }>>;
     summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) => Promise<Result<{ answer: string }>>;
     listApprovals: (workspaceId: string) => Promise<Result<AgentPendingFileReview[]>>;

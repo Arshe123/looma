@@ -662,6 +662,47 @@ ipcMain.handle('agent:approvals:list', async (_event, workspaceId: unknown) => {
   }
 })
 
+const buildAgentRunHistory = async (
+  ledger: AgentLedgerStore,
+  view: Awaited<ReturnType<AgentLedgerStore['materialize']>>,
+  auditIssues: Awaited<ReturnType<AgentLedgerStore['audit']>>,
+  runId: string,
+) => {
+  const run = view.runs[runId]
+  if (!run) return null
+  const runEvents = view.events.filter(agentEvent => agentEvent.runId === runId)
+  const runSources = view.sources.filter(source => source.runId === runId)
+  const runAuditIssues = auditIssues.filter(issue => issue.runId === runId || (issue.callId && runEvents.some(agentEvent => (
+    (agentEvent.type === 'tool_call_requested' || agentEvent.type === 'tool_result_recorded') && agentEvent.payload.callId === issue.callId
+  ))))
+  const state = foldAgentState(runEvents)
+  const throughSequence = runEvents.length ? Math.max(...runEvents.map(agentEvent => agentEvent.sequence)) : 0
+  const prefixHash = await ledger.eventLogPrefixHash(runId, throughSequence)
+  const checkpoint = throughSequence > 0 ? await ledger.readCheckpoint(runId, prefixHash) : null
+  const task = view.tasks[run.taskId] || null
+  const hasPendingApproval = state.status === 'waiting_approval'
+  const alreadyContinued = Boolean(task?.latestRunId && task.latestRunId !== runId)
+  const recoverable = ['failed', 'cancelled'].includes(state.status) && !hasPendingApproval && !alreadyContinued
+  return {
+    task,
+    run,
+    events: runEvents,
+    sources: runSources,
+    auditIssues: runAuditIssues,
+    recovery: {
+      recoverable,
+      checkpointAvailable: Boolean(checkpoint),
+      reason: alreadyContinued
+        ? '任务已在新的后续运行中继续。'
+        : hasPendingApproval
+          ? '请先处理待审批的文件修改。'
+          : recoverable
+            ? checkpoint ? '安全检查点可用。' : '将从已确认的事件和消息继续。'
+            : '当前运行状态不支持继续。',
+    },
+  }
+}
+
 ipcMain.handle('agent:ledger:getRun', async (_event, workspaceId: unknown, runId: unknown) => {
   if (!validIdentifier(workspaceId) || !validIdentifier(runId)) {
     return { success: false, error: 'Invalid Agent ledger request' }
@@ -670,43 +711,31 @@ ipcMain.handle('agent:ledger:getRun', async (_event, workspaceId: unknown, runId
   if (!workspacePath) return { success: false, error: 'Workspace not found' }
   try {
     const ledger = new AgentLedgerStore(path.join(workspacePath, '.looma', 'agent-ledger'))
-    const [view, auditIssues] = await Promise.all([ledger.materialize(), ledger.audit()])
-    const run = view.runs[runId]
-    if (!run) return { success: false, error: 'Agent run not found' }
-    const runEvents = view.events.filter(agentEvent => agentEvent.runId === runId)
-    const runSources = view.sources.filter(source => source.runId === runId)
-    const runAuditIssues = auditIssues.filter(issue => issue.runId === runId || (issue.callId && runEvents.some(agentEvent => (
-      (agentEvent.type === 'tool_call_requested' || agentEvent.type === 'tool_result_recorded') && agentEvent.payload.callId === issue.callId
-    ))))
-    const state = foldAgentState(runEvents)
-    const throughSequence = runEvents.length ? Math.max(...runEvents.map(agentEvent => agentEvent.sequence)) : 0
-    const prefixHash = await ledger.eventLogPrefixHash(runId, throughSequence)
-    const checkpoint = throughSequence > 0 ? await ledger.readCheckpoint(runId, prefixHash) : null
-    const task = view.tasks[run.taskId] || null
-    const hasPendingApproval = state.status === 'waiting_approval'
-    const alreadyContinued = Boolean(task?.latestRunId && task.latestRunId !== runId)
-    const recoverable = ['failed', 'cancelled'].includes(state.status) && !hasPendingApproval && !alreadyContinued
-    return {
-      success: true,
-      data: {
-        task,
-        run,
-        events: runEvents,
-        sources: runSources,
-        auditIssues: runAuditIssues,
-        recovery: {
-          recoverable,
-          checkpointAvailable: Boolean(checkpoint),
-          reason: alreadyContinued
-            ? '任务已在新的后续运行中继续。'
-            : hasPendingApproval
-              ? '请先处理待审批的文件修改。'
-              : recoverable
-                ? checkpoint ? '安全检查点可用。' : '将从已确认的事件和消息继续。'
-                : '当前运行状态不支持继续。',
-        },
-      },
-    }
+    const view = await ledger.materialize()
+    const auditIssues = await ledger.audit(view)
+    const data = await buildAgentRunHistory(ledger, view, auditIssues, runId)
+    return data ? { success: true, data } : { success: false, error: 'Agent run not found' }
+  } catch {
+    return { success: false, error: 'Unable to read Agent ledger' }
+  }
+})
+
+ipcMain.handle('agent:ledger:getRuns', async (_event, workspaceId: unknown, runIds: unknown) => {
+  if (!validIdentifier(workspaceId) || !Array.isArray(runIds) || runIds.length > 200 || !runIds.every(validIdentifier)) {
+    return { success: false, error: 'Invalid Agent ledger request' }
+  }
+  const workspacePath = await getWorkspacePathById(workspaceId)
+  if (!workspacePath) return { success: false, error: 'Workspace not found' }
+  try {
+    const ledger = new AgentLedgerStore(path.join(workspacePath, '.looma', 'agent-ledger'))
+    const view = await ledger.materialize()
+    const auditIssues = await ledger.audit(view)
+    const runs: Record<string, Awaited<ReturnType<typeof buildAgentRunHistory>>> = {}
+    const uniqueRunIds = [...new Set(runIds as string[])]
+    await Promise.all(uniqueRunIds.map(async (runId) => {
+      runs[runId] = await buildAgentRunHistory(ledger, view, auditIssues, runId)
+    }))
+    return { success: true, data: { runs } }
   } catch {
     return { success: false, error: 'Unable to read Agent ledger' }
   }

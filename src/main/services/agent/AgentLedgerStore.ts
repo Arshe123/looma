@@ -224,8 +224,8 @@ export class AgentLedgerStore {
     return view
   }
 
-  async audit(): Promise<AgentLedgerAuditIssue[]> {
-    const view = await this.materialize()
+  async audit(existingView?: AgentLedgerView): Promise<AgentLedgerAuditIssue[]> {
+    const view = existingView ?? await this.materialize()
     const issues: AgentLedgerAuditIssue[] = []
     const pendingCalls = new Set(Object.values(view.outbox).filter(entry => entry.status === 'pending').map(entry => entry.callId))
     for (const issue of validateAgentMessageTranscript(view.messages)) {

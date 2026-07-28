@@ -120,6 +120,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   agent: {
     getRun: (workspaceId: string, runId: string) => ipcRenderer.invoke('agent:ledger:getRun', workspaceId, runId),
+    getRuns: (workspaceId: string, runIds: string[]) => ipcRenderer.invoke('agent:ledger:getRuns', workspaceId, runIds),
     resumeRun: (requestId: string, workspaceId: string, parentRunId: string) => ipcRenderer.invoke('agent:runStream:resume', requestId, workspaceId, parentRunId),
     summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) =>
       ipcRenderer.invoke('agent:summarizeConversation', messages, maxChars),

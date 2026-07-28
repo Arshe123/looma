@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { AiAssistantConversation } from '../workspace-types'
 import {
   getAiAssistantConversationTitle,
+  normalizeAiAssistantFavoriteCategory,
   normalizeAiAssistantSourcePath,
   sortAiAssistantConversations,
+  sortAiAssistantConversationsByUpdatedAt,
   getAiAssistantHistoryGroup,
 } from '../workspace-ai-utils'
 
@@ -53,6 +55,27 @@ describe('workspace ai assistant utilities', () => {
       'normal-new',
       'normal-old',
     ])
+  })
+
+  it('sorts history strictly by latest update time regardless of pin state', () => {
+    const conversations = [
+      makeConversation({ id: 'latest', updatedAt: 3_000 }),
+      makeConversation({ id: 'pinned-old', updatedAt: 1_000, pinned: true, pinnedAt: 4_000 }),
+      makeConversation({ id: 'middle', updatedAt: 2_000 }),
+    ]
+
+    expect(sortAiAssistantConversationsByUpdatedAt(conversations).map(item => item.id)).toEqual([
+      'latest',
+      'middle',
+      'pinned-old',
+    ])
+  })
+
+  it('keeps a cancelled favorite dialog distinct from an empty category', () => {
+    expect(normalizeAiAssistantFavoriteCategory(null)).toBeNull()
+    expect(normalizeAiAssistantFavoriteCategory(undefined)).toBeNull()
+    expect(normalizeAiAssistantFavoriteCategory('  ')).toBe('默认收藏')
+    expect(normalizeAiAssistantFavoriteCategory(' 项目 ')).toBe('项目')
   })
 
   it('groups conversations into requested history timeline buckets', () => {

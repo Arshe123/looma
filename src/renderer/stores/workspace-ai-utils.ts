@@ -20,6 +20,15 @@ export const sortAiAssistantConversations = (conversations: AiAssistantConversat
   })
 )
 
+export const sortAiAssistantConversationsByUpdatedAt = (conversations: AiAssistantConversation[]) => (
+  [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)
+)
+
+export const normalizeAiAssistantFavoriteCategory = (value: string | null | undefined) => {
+  if (value === null || value === undefined) return null
+  return value.trim() || '默认收藏'
+}
+
 export const getAiAssistantHistoryGroup = (timestamp: number, now = Date.now()): AiAssistantHistoryGroup => {
   if (!Number.isFinite(timestamp)) return '更早'
   const ageDays = Math.floor(Math.max(0, now - timestamp) / DAY_MS)

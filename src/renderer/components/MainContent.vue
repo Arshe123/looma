@@ -67,20 +67,21 @@ const isSupportedFile = computed(() => isActiveMedia.value || Boolean(currentEdi
 const mediaPreviewTabs = computed(() => getMediaPreviewTabs(fileTabPaths.value, workspaceStore.activeWorkspace?.path || ''))
 const hasOpenTabs = computed(() => workspaceStore.tabs.length > 0)
 const hasFileTabs = computed(() => fileTabPaths.value.length > 0)
-const textEditorTabs = computed(() => {
+const activeTextEditor = computed(() => {
+  if (activeTab.value?.kind !== 'file' || !isEditableTextPath(activeTab.value.relativePath)) return null
   const workspacePath = workspaceStore.activeWorkspace?.path || ''
-  return fileTabPaths.value
-    .filter(isEditableTextPath)
-    .map((relativePath) => {
-      const ext = getExt(relativePath)
-      return {
-        relativePath,
-        filePath: resolveWorkspaceFilePath(workspacePath, relativePath),
-        component: (editorByExt as any)[ext] || null,
-        content: workspaceStore.openedTextFileContents[relativePath]?.content || '',
-      }
-    })
-    .filter((tab) => tab.component && tab.filePath)
+  const relativePath = activeTab.value.relativePath
+  const state = workspaceStore.openedTextFileContents[relativePath]
+  const component = (editorByExt as any)[getExt(relativePath)] || null
+  const filePath = resolveWorkspaceFilePath(workspacePath, relativePath)
+  if (!component || !filePath) return null
+  return {
+    relativePath,
+    filePath,
+    component,
+    content: state?.content || '',
+    state,
+  }
 })
 
 const editorRefs = ref<Record<string, any>>({})
@@ -112,23 +113,12 @@ const jumpToHeading = (event: Event) => {
 watch(
   () => workspaceStore.activeFileRelativePath,
   (_newRel, oldRel) => {
-    if (oldRel && currentEditorRef.value && typeof currentEditorRef.value.saveSnapshot === 'function' && !workspaceStore.isWorkspaceTransitioning) {
-      currentEditorRef.value.saveSnapshot(true)
+    const previousEditor = oldRel ? editorRefs.value[oldRel] : null
+    if (previousEditor && typeof previousEditor.saveSnapshot === 'function' && !workspaceStore.isWorkspaceTransitioning) {
+      previousEditor.saveSnapshot(true)
     }
   },
-  { immediate: true },
-)
-
-watch(
-  () => [workspaceStore.activeWorkspace?.path || '', fileTabPaths.value.join('\0')] as const,
-  () => {
-    for (const relPath of fileTabPaths.value) {
-      if (isEditableTextPath(relPath)) {
-        workspaceStore.loadTextFileContent(relPath).catch(() => {})
-      }
-    }
-  },
-  { immediate: true },
+  { immediate: true, flush: 'sync' },
 )
 
 const saveCurrentSnapshot = (e?: Event) => {
@@ -212,23 +202,29 @@ onUnmounted(() => {
           <p class="max-w-md text-sm opacity-80 mb-4">该文件格式暂时无法在编辑器中打开。</p>
         </div>
 
-        <template v-if="textEditorTabs.length > 0">
+        <KeepAlive :max="3">
           <component
-            v-for="tab in textEditorTabs"
-            v-show="!isActiveMedia && tab.relativePath === workspaceStore.activeFileRelativePath"
+            v-if="activeTextEditor && !isActiveMedia"
             class="absolute inset-0 h-full w-full"
-            :is="tab.component"
-            :key="`${tab.relativePath}:${editorReloadNonce}`"
-            :ref="(el) => setEditorRef(tab.relativePath, el)"
-            :filePath="tab.filePath"
-            :relativeFilePath="tab.relativePath"
-            :content="tab.content"
-            :saveTrigger="tab.relativePath === workspaceStore.activeFileRelativePath ? saveTrigger : 0"
-            @update:content="(v) => workspaceStore.setActiveFileContent(v, tab.relativePath)"
-            @save="(v) => handleSave(v, tab.relativePath)"
+            :is="activeTextEditor.component"
+            :key="`${activeTextEditor.relativePath}:${editorReloadNonce}`"
+            :ref="(el) => setEditorRef(activeTextEditor!.relativePath, el)"
+            :filePath="activeTextEditor.filePath"
+            :relativeFilePath="activeTextEditor.relativePath"
+            :content="activeTextEditor.content"
+            :saveTrigger="saveTrigger"
+            :isPartial="activeTextEditor.state?.isPartial || false"
+            :isLoading="activeTextEditor.state?.isLoading || false"
+            :isLoadingMore="activeTextEditor.state?.isLoadingMore || false"
+            :totalBytes="activeTextEditor.state?.totalBytes || 0"
+            :useChunkedPreview="activeTextEditor.state?.useChunkedPreview || false"
+            @load-more="workspaceStore.loadNextTextFileChunk(activeTextEditor!.relativePath)"
+            @ensure-loaded="workspaceStore.ensureTextFileFullyLoaded(activeTextEditor!.relativePath)"
+            @update:content="(v) => workspaceStore.setActiveFileContent(v, activeTextEditor!.relativePath)"
+            @save="(v) => handleSave(v, activeTextEditor!.relativePath)"
             @retry="onEditorRetry"
           />
-        </template>
+        </KeepAlive>
 
         <MediaPreview
           v-for="tab in mediaPreviewTabs"

@@ -38,6 +38,8 @@ type OllamaModelPullProgressPayload = OllamaDownloadProgressPayload & {
 contextBridge.exposeInMainWorld('electronAPI', {
   file: {
     readMarkdown: (filePath: string) => ipcRenderer.invoke('file:readMarkdown', filePath),
+    readTextChunk: (filePath: string, offset: number, length: number) =>
+      ipcRenderer.invoke('file:readTextChunk', filePath, offset, length),
     readFileBase64: (filePath: string) => ipcRenderer.invoke('file:readFileBase64', filePath),
     getFileStats: (filePath: string) => ipcRenderer.invoke('file:getFileStats', filePath),
     writeMarkdown: (filePath: string, content: string, expectedContent?: string) =>

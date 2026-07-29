@@ -6,6 +6,10 @@ ipcMain.handle('file:readMarkdown', async (_, filePath: string) => {
   return await fileService.readMarkdown(filePath);
 });
 
+ipcMain.handle('file:readTextChunk', async (_, filePath: string, offset: number, length: number) => {
+  return await fileService.readTextChunk(filePath, offset, length);
+});
+
 ipcMain.handle('file:readFileBase64', async (_, filePath: string) => {
   return await fileService.readFileBase64(filePath);
 });

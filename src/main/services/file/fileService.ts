@@ -2,6 +2,30 @@ import fs from 'fs/promises';
 import type { Result } from '../../../shared/types/Result';
 import { withFileWriteLock } from './fileWriteLock';
 
+export interface TextFileChunk {
+  content: string;
+  offset: number;
+  nextOffset: number;
+  totalBytes: number;
+  done: boolean;
+}
+
+const MAX_TEXT_CHUNK_BYTES = 1024 * 1024;
+
+const getCompleteUtf8Length = (buffer: Buffer, requestedLength: number, reachedEnd: boolean) => {
+  if (reachedEnd || requestedLength <= 0) return requestedLength;
+
+  let sequenceStart = requestedLength - 1;
+  while (sequenceStart >= 0 && (buffer[sequenceStart] & 0xc0) === 0x80) sequenceStart -= 1;
+  if (sequenceStart < 0) return requestedLength;
+
+  const lead = buffer[sequenceStart];
+  const sequenceLength = lead < 0x80 ? 1 : lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc0 ? 2 : 1;
+  const sequenceEnd = sequenceStart + sequenceLength;
+  if (sequenceEnd <= requestedLength) return requestedLength;
+  return sequenceEnd <= buffer.length ? sequenceEnd : sequenceStart;
+};
+
 export const fileService = {
   async readMarkdown(filePath: string): Promise<Result<string>> {
     try {
@@ -9,6 +33,42 @@ export const fileService = {
       return { success: true, data: content };
     } catch (error: any) {
       return { success: false, error: `Failed to read file: ${error.message}` };
+    }
+  },
+
+  async readTextChunk(filePath: string, offset = 0, length = 256 * 1024): Promise<Result<TextFileChunk>> {
+    const safeOffset = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
+    const safeLength = Number.isSafeInteger(length)
+      ? Math.min(Math.max(length, 1), MAX_TEXT_CHUNK_BYTES)
+      : 256 * 1024;
+    let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+
+    try {
+      handle = await fs.open(filePath, 'r');
+      const stats = await handle.stat();
+      const start = Math.min(safeOffset, stats.size);
+      const bytesToRead = Math.min(safeLength + 3, stats.size - start);
+      const buffer = Buffer.allocUnsafe(bytesToRead);
+      const { bytesRead } = await handle.read(buffer, 0, bytesToRead, start);
+      const requestedBytes = Math.min(safeLength, bytesRead);
+      const reachedEnd = start + requestedBytes >= stats.size;
+      const completeLength = getCompleteUtf8Length(buffer, requestedBytes, reachedEnd);
+      const nextOffset = start + completeLength;
+
+      return {
+        success: true,
+        data: {
+          content: buffer.subarray(0, completeLength).toString('utf8'),
+          offset: start,
+          nextOffset,
+          totalBytes: stats.size,
+          done: nextOffset >= stats.size,
+        },
+      };
+    } catch (error: any) {
+      return { success: false, error: `Failed to read file chunk: ${error.message}` };
+    } finally {
+      await handle?.close().catch(() => {});
     }
   },
 

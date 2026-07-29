@@ -13,10 +13,11 @@ const closeTab = async (e: Event | null, tabId: string) => {
 }
 
 const selectTab = (tab: WorkspaceTab) => {
-  if (workspaceStore.activeTabId !== tab.id) {
+  const wasActive = workspaceStore.activeTabId === tab.id
+  if (!wasActive) {
     workspaceStore.activateTab(tab.id)
   }
-  if (tab.kind === 'file') {
+  if (wasActive && tab.kind === 'file') {
     window.dispatchEvent(new CustomEvent(FILE_TREE_REVEAL_ACTIVE_FILE_EVENT))
   }
 }

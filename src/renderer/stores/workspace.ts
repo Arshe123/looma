@@ -35,6 +35,7 @@ import {
 } from './workspace-tab-utils'
 import type { AgentDiffViewState, AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantState, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceTab } from './workspace-types'
 import { getAiAssistantConversationTitle, normalizeAiAssistantSourcePath, sortAiAssistantConversations } from './workspace-ai-utils'
+import { LARGE_NOTE_BYTES, NOTE_INITIAL_CHUNK_BYTES, NOTE_NEXT_CHUNK_BYTES } from '@/shared/utils/markdown-chunks'
 export type { AgentDiffViewState, AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, AiAssistantTimelineOutput, AiAssistantTimelineOutputType, AiAssistantTimelineStep, AiAssistantTimelineStepStatus, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceMeta, WorkspaceTab } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
@@ -339,6 +340,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeFileIsSaving: false as boolean,
     activeFileSaveError: '' as string,
     openedTextFileContents: {} as Record<string, OpenTextFileState>,
+    nextTextFileLoadRequestId: 0 as number,
     openedFiles: [] as string[],
     openedSystemPages: [] as SystemPageId[],
     tabs: [] as WorkspaceTab[],
@@ -387,6 +389,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!state.activeFilePath) return false
       if (!this.isSupportedActiveFile) return false
       if (!isEditableTextPath(state.activeFilePath)) return false // Media files don't have unsaved changes
+      if (state.openedTextFileContents[state.activeFileRelativePath]?.isPartial) return false
       return state.activeFileContent !== state.activeFileLoadedContent
     },
     activeTab(state): WorkspaceTab | null {
@@ -996,7 +999,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     isFileDirty(relativePath: string) {
       const rel = normalizeDir(relativePath)
       const state = this.openedTextFileContents[rel]
-      if (!state) return false
+      if (!state || state.isPartial) return false
       return state.content !== state.loadedContent
     },
 
@@ -1198,7 +1201,9 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
 
       for (const dir of ancestors) {
-        await this.loadDir(ws, dir)
+        if (this.dirLoadStates[dir] !== 'loaded' && this.dirLoadStates[dir] !== 'loading') {
+          await this.loadDir(ws, dir)
+        }
       }
 
       if (changed) {
@@ -1816,7 +1821,17 @@ export const useWorkspaceStore = defineStore('workspace', {
       const rel = normalizeDir(relativePath ?? this.activeFileRelativePath)
       if (!rel) return
       const existing = this.openedTextFileContents[rel]
+      if (existing?.isPartial) return
       this.openedTextFileContents[rel] = {
+        ...(existing || {
+          isPartial: false,
+          isLoading: false,
+          isLoadingMore: false,
+          nextOffset: 0,
+          totalBytes: 0,
+          loadRequestId: 0,
+          useChunkedPreview: false,
+        }),
         content,
         loadedContent: existing?.loadedContent ?? '',
         isSaving: existing?.isSaving ?? false,
@@ -1836,9 +1851,17 @@ export const useWorkspaceStore = defineStore('workspace', {
       const workspaceId = this.activeWorkspaceId
       const absPath = this.resolveAbsolutePath(rel)
       const existing = this.openedTextFileContents[rel]
+      if (existing?.isLoading || existing?.isPartial) {
+        this.mirrorActiveTextFileState(rel)
+        return { success: true as const }
+      }
       if (existing && existing.content !== existing.loadedContent) {
         this.mirrorActiveTextFileState(rel)
-        return
+        return { success: true as const }
+      }
+      if (existing && !existing.saveError) {
+        this.mirrorActiveTextFileState(rel)
+        return { success: true as const }
       }
       if (!absPath || !isSupportedPath(absPath) || !isEditableTextPath(absPath)) {
         if (rel === this.activeFileRelativePath) {
@@ -1846,26 +1869,142 @@ export const useWorkspaceStore = defineStore('workspace', {
           this.activeFileLoadedContent = ''
           this.activeFileSaveError = ''
         }
-        return
+        return { success: true as const }
       }
 
-      const r = await window.electronAPI.file.readMarkdown(absPath)
+      if (!absPath.toLowerCase().endsWith('.md')) {
+        const r = await window.electronAPI.file.readMarkdown(absPath)
+        if (!workspaceId || this.activeWorkspaceId !== workspaceId || this.resolveAbsolutePath(rel) !== absPath) return { success: true as const }
+        if (!r.success || r.data === undefined) {
+          this.setError(r.error || 'Failed to load file')
+          return r
+        }
+        this.openedTextFileContents[rel] = {
+          content: r.data,
+          loadedContent: r.data,
+          isSaving: false,
+          saveError: '',
+          isPartial: false,
+          isLoading: false,
+          isLoadingMore: false,
+          nextOffset: new Blob([r.data]).size,
+          totalBytes: new Blob([r.data]).size,
+          loadRequestId: 0,
+          useChunkedPreview: false,
+        }
+        this.mirrorActiveTextFileState(rel)
+        return r
+      }
+
+      const loadRequestId = ++this.nextTextFileLoadRequestId
+      this.openedTextFileContents[rel] = {
+        content: '',
+        loadedContent: '',
+        isSaving: false,
+        saveError: '',
+        isPartial: true,
+        isLoading: true,
+        isLoadingMore: false,
+        nextOffset: 0,
+        totalBytes: 0,
+        loadRequestId,
+        useChunkedPreview: false,
+      }
+      this.mirrorActiveTextFileState(rel)
+      const r = await window.electronAPI.file.readTextChunk(absPath, 0, NOTE_INITIAL_CHUNK_BYTES)
       if (!workspaceId || this.activeWorkspaceId !== workspaceId || this.resolveAbsolutePath(rel) !== absPath) return
+      if (this.openedTextFileContents[rel]?.loadRequestId !== loadRequestId) return { success: true as const }
       if (!r.success || r.data === undefined) {
         this.setError(r.error || 'Failed to load file')
+        const failedState = this.openedTextFileContents[rel]
+        if (failedState) {
+          failedState.isLoading = false
+          failedState.isPartial = false
+          failedState.saveError = r.error || 'Failed to load file'
+        }
         if (rel === this.activeFileRelativePath) {
           this.activeFileContent = ''
           this.activeFileLoadedContent = ''
         }
-        return
+        return r
       }
+      const isPartial = !r.data.done
       this.openedTextFileContents[rel] = {
-        content: r.data,
-        loadedContent: r.data,
+        content: r.data.content,
+        loadedContent: isPartial ? '' : r.data.content,
         isSaving: false,
         saveError: '',
+        isPartial,
+        isLoading: false,
+        isLoadingMore: false,
+        nextOffset: r.data.nextOffset,
+        totalBytes: r.data.totalBytes,
+        loadRequestId,
+        useChunkedPreview: r.data.totalBytes >= LARGE_NOTE_BYTES,
       }
       this.mirrorActiveTextFileState(rel)
+      return r
+    },
+
+    async loadNextTextFileChunk(relativePath: string) {
+      const rel = normalizeDir(relativePath)
+      const state = this.openedTextFileContents[rel]
+      const workspaceId = this.activeWorkspaceId
+      const absPath = this.resolveAbsolutePath(rel)
+      if (!state || !state.isPartial || state.isLoading || state.isLoadingMore || !workspaceId || !absPath) {
+        return { success: true as const }
+      }
+
+      const requestId = state.loadRequestId
+      const offset = state.nextOffset
+      state.isLoadingMore = true
+      const result = await window.electronAPI.file.readTextChunk(absPath, offset, NOTE_NEXT_CHUNK_BYTES)
+      const current = this.openedTextFileContents[rel]
+      if (!current || current.loadRequestId !== requestId || this.activeWorkspaceId !== workspaceId || this.resolveAbsolutePath(rel) !== absPath) {
+        return { success: true as const }
+      }
+      current.isLoadingMore = false
+      if (!result.success || !result.data) {
+        current.saveError = result.error || 'Failed to load more content'
+        this.setError(current.saveError)
+        return result
+      }
+      if (result.data.offset !== offset || result.data.nextOffset <= offset) {
+        current.saveError = '分块读取未能继续，请重新打开文件。'
+        return { success: false as const, error: current.saveError }
+      }
+
+      current.content += result.data.content
+      current.nextOffset = result.data.nextOffset
+      current.totalBytes = result.data.totalBytes
+      current.isPartial = !result.data.done
+      if (result.data.done) current.loadedContent = current.content
+      this.mirrorActiveTextFileState(rel)
+      return result
+    },
+
+    async ensureTextFileFullyLoaded(relativePath: string) {
+      const rel = normalizeDir(relativePath)
+      let state = this.openedTextFileContents[rel]
+      if (!state) {
+        const initial = await this.loadTextFileContent(rel)
+        if (initial && !initial.success) return initial
+        state = this.openedTextFileContents[rel]
+      }
+
+      while (state?.isPartial) {
+        if (state.isLoading || state.isLoadingMore) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 16))
+        } else {
+          const result = await this.loadNextTextFileChunk(rel)
+          if (!result.success) return result
+        }
+        state = this.openedTextFileContents[rel]
+      }
+      if (state?.saveError && !state.content && !state.loadedContent) {
+        return { success: false as const, error: state.saveError }
+      }
+      return { success: true as const }
     },
 
     async refreshOpenTextFileContentFromDisk(relativePath: string) {
@@ -1875,11 +2014,19 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!absPath || !isEditableTextPath(absPath)) return { success: true as const }
       const result = await window.electronAPI.file.readMarkdown(absPath)
       if (!result.success || result.data === undefined) return result
+      const totalBytes = new Blob([result.data]).size
       this.openedTextFileContents[rel] = {
         content: result.data,
         loadedContent: result.data,
         isSaving: false,
         saveError: '',
+        isPartial: false,
+        isLoading: false,
+        isLoadingMore: false,
+        nextOffset: totalBytes,
+        totalBytes,
+        loadRequestId: ++this.nextTextFileLoadRequestId,
+        useChunkedPreview: absPath.toLowerCase().endsWith('.md') && totalBytes >= LARGE_NOTE_BYTES,
       }
       this.mirrorActiveTextFileState(rel)
       return result
@@ -1893,19 +2040,29 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!isEditableTextPath(absPath)) return { success: true as const } // Don't save media files
       
       const currentState = this.openedTextFileContents[rel]
-      const next = content ?? currentState?.content ?? (rel === this.activeFileRelativePath ? this.activeFileContent : '')
+      const wasPartial = Boolean(currentState?.isPartial)
+      if (wasPartial) {
+        const loaded = await this.ensureTextFileFullyLoaded(rel)
+        if (!loaded.success) return loaded
+      }
+      const completeState = this.openedTextFileContents[rel]
+      const next = wasPartial
+        ? completeState?.content ?? ''
+        : content ?? completeState?.content ?? (rel === this.activeFileRelativePath ? this.activeFileContent : '')
       this.openedTextFileContents[rel] = {
+        ...(completeState || currentState),
         content: next,
-        loadedContent: currentState?.loadedContent ?? '',
+        loadedContent: completeState?.loadedContent ?? '',
         isSaving: true,
         saveError: '',
       }
       this.mirrorActiveTextFileState(rel)
-      const expectedContent = currentState?.loadedContent
+      const expectedContent = completeState?.loadedContent
       const r = await window.electronAPI.file.writeMarkdown(absPath, next, expectedContent)
       const latestState = this.openedTextFileContents[rel]
       if (!r.success) {
         this.openedTextFileContents[rel] = {
+          ...latestState,
           content: latestState?.content ?? next,
           loadedContent: latestState?.loadedContent ?? '',
           isSaving: false,
@@ -1915,6 +2072,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         return r
       }
       this.openedTextFileContents[rel] = {
+        ...latestState,
         content: next,
         loadedContent: next,
         isSaving: false,
@@ -2121,9 +2279,22 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (this.fsUnsub) return
       this.fsUnsub = window.electronAPI.fs.onEvent((payload) => {
         if (payload.workspaceId !== this.activeWorkspaceId) return
-        const affected = normalizeDir(pathDir(payload.relativePath))
+        const relativePath = normalizeDir(payload.relativePath)
+        const affected = normalizeDir(pathDir(relativePath))
         const key = affected
         if (this.dirEntries[key]) this.loadDir(payload.workspaceId, affected)
+        const openState = this.openedTextFileContents[relativePath]
+        if (
+          payload.event === 'change'
+          && openState
+          && !openState.isSaving
+          && (openState.isPartial || openState.content === openState.loadedContent)
+        ) {
+          delete this.openedTextFileContents[relativePath]
+          if (relativePath === this.activeFileRelativePath) {
+            this.loadTextFileContent(relativePath).catch(() => {})
+          }
+        }
       })
     },
 

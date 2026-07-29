@@ -3,6 +3,14 @@ import type { AgentEvent, AgentPendingFileReview, AgentSource } from '../shared/
 import type { AgentRun, AgentTask } from '../shared/types/agent-state'
 import type { AppSettings as AppSettingsPayload } from '../shared/utils/app-settings'
 
+interface TextFileChunkPayload {
+  content: string;
+  offset: number;
+  nextOffset: number;
+  totalBytes: number;
+  done: boolean;
+}
+
 type SidebarPanelId = 'files' | 'outline' | 'ai';
 
 interface SidebarPanelState {
@@ -275,6 +283,7 @@ interface OllamaModelPullProgressPayload extends OllamaDownloadProgressPayload {
 interface ElectronAPI {
   file: {
     readMarkdown: (filePath: string) => Promise<Result<string>>;
+    readTextChunk: (filePath: string, offset: number, length: number) => Promise<Result<TextFileChunkPayload>>;
     readFileBase64: (filePath: string) => Promise<Result<string>>;
     getFileStats: (filePath: string) => Promise<Result<{ size: number }>>;
     writeMarkdown: (filePath: string, content: string, expectedContent?: string) => Promise<Result<void>>;

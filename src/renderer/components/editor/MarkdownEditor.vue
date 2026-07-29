@@ -1,30 +1,41 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Columns, Edit3, Eye } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
-import TiptapPreview from '../preview/TiptapPreview.vue'
-import Editor from './Editor.vue'
+import type TiptapPreviewComponent from '../preview/TiptapPreview.vue'
+import type EditorComponent from './Editor.vue'
 import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
+
+const Editor = defineAsyncComponent(() => import('./Editor.vue'))
+const TiptapPreview = defineAsyncComponent(() => import('../preview/TiptapPreview.vue'))
+const ChunkedMarkdownPreview = defineAsyncComponent(() => import('../preview/ChunkedMarkdownPreview.vue'))
 
 const props = defineProps<{
   filePath: string
   relativeFilePath: string
   content: string
   saveTrigger: number
+  isPartial: boolean
+  isLoading: boolean
+  isLoadingMore: boolean
+  totalBytes: number
+  useChunkedPreview: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'update:content', value: string): void
   (e: 'save', value: string): void
+  (e: 'load-more'): void
 }>()
 
 const workspaceStore = useWorkspaceStore()
 const viewMode = ref<'split' | 'editor' | 'preview'>('preview')
 const splitRatio = ref(0.5)
 const splitContainerRef = ref<HTMLElement | null>(null)
-const editorRef = ref<InstanceType<typeof Editor> | null>(null)
-const previewRef = ref<InstanceType<typeof TiptapPreview> | null>(null)
+const editorRef = ref<InstanceType<typeof EditorComponent> | null>(null)
+const previewRef = ref<InstanceType<typeof TiptapPreviewComponent> | null>(null)
+const isPreparingFullContent = ref(false)
 let isResizingSplit = false
 let previousBodyCursor = ''
 let previousBodyUserSelect = ''
@@ -99,8 +110,14 @@ const syncVisibleViewsFrom = (state?: ScrollSyncState | null) => {
   })
 }
 
-const setViewMode = (nextMode: 'split' | 'editor' | 'preview') => {
+const setViewMode = async (nextMode: 'split' | 'editor' | 'preview') => {
   if (viewMode.value === nextMode) return
+  if (nextMode !== 'preview' && (props.isPartial || props.isLoading)) {
+    isPreparingFullContent.value = true
+    const result = await workspaceStore.ensureTextFileFullyLoaded(props.relativeFilePath)
+    isPreparingFullContent.value = false
+    if (!result.success) return
+  }
   const state = getCurrentScrollState()
   viewMode.value = nextMode
   nextTick(() => {
@@ -108,11 +125,17 @@ const setViewMode = (nextMode: 'split' | 'editor' | 'preview') => {
   })
 }
 
-onMounted(() => {
+onMounted(async () => {
   const session = workspaceStore.fileSessions[props.relativeFilePath]
   if (session) {
     if (session.markdown?.viewMode) viewMode.value = session.markdown.viewMode
     if (typeof session.markdown?.splitRatio === 'number') splitRatio.value = clampSplitRatio(session.markdown.splitRatio)
+    if (viewMode.value !== 'preview' && (props.isPartial || props.isLoading)) {
+      isPreparingFullContent.value = true
+      const result = await workspaceStore.ensureTextFileFullyLoaded(props.relativeFilePath)
+      isPreparingFullContent.value = false
+      if (!result.success) viewMode.value = 'preview'
+    }
     if (session.codemirror && editorRef.value) {
       setTimeout(() => editorRef.value?.applySnapshot(session.codemirror!), 50)
     }
@@ -129,9 +152,13 @@ watch(viewMode, () => {
 
 watch(
   () => props.saveTrigger,
-  () => {
+  async () => {
+    if (props.isPartial || props.isLoading) {
+      const result = await workspaceStore.ensureTextFileFullyLoaded(props.relativeFilePath)
+      if (!result.success) return
+    }
     const flushedContent = previewRef.value?.flushPendingMarkdownEmit?.()
-    emit('save', flushedContent ?? props.content)
+    emit('save', flushedContent ?? workspaceStore.openedTextFileContents[props.relativeFilePath]?.content ?? props.content)
   },
 )
 
@@ -165,7 +192,7 @@ defineExpose({
 <template>
   <div ref="splitContainerRef" class="h-full w-full relative flex overflow-hidden">
     <div
-      v-show="viewMode !== 'preview'"
+      v-if="viewMode !== 'preview' && !isPartial && !isLoading"
       class="overflow-hidden"
       :class="viewMode === 'split' ? 'shrink-0' : 'flex-1'"
       :style="viewMode === 'split' ? { flexBasis: `${splitRatio * 100}%` } : undefined"
@@ -184,8 +211,21 @@ defineExpose({
       style="-webkit-app-region: no-drag"
       @pointerdown="startSplitResize"
     />
-    <div v-show="viewMode !== 'editor'" class="flex-1 overflow-hidden" :class="{ 'border-l border-border-soft': viewMode === 'split' }">
+    <div v-if="viewMode !== 'editor'" class="flex-1 overflow-hidden" :class="{ 'border-l border-border-soft': viewMode === 'split' }">
+      <div v-if="isLoading" class="h-full flex items-center justify-center text-sm text-text-muted">
+        正在加载笔记首屏内容...
+      </div>
+      <ChunkedMarkdownPreview
+        v-else-if="useChunkedPreview"
+        :content="props.content"
+        :filePath="props.filePath"
+        :isPartial="isPartial"
+        :isLoadingMore="isLoadingMore"
+        :totalBytes="totalBytes"
+        @load-more="emit('load-more')"
+      />
       <TiptapPreview
+        v-else
         ref="previewRef"
         :content="props.content"
         :filePath="props.filePath"
@@ -197,6 +237,7 @@ defineExpose({
     <div class="absolute bottom-6 right-6 flex items-center gap-1 bg-panel/90 backdrop-blur-xs p-1.5 rounded-xl border border-border-soft shadow-lg z-20">
       <button
         @click="setViewMode('editor')"
+        :disabled="isPreparingFullContent"
         :class="[
           'p-2 rounded-lg transition-all duration-200',
           viewMode === 'editor' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'
@@ -207,6 +248,7 @@ defineExpose({
       </button>
       <button
         @click="setViewMode('split')"
+        :disabled="isPreparingFullContent"
         :class="[
           'p-2 rounded-lg transition-all duration-200',
           viewMode === 'split' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'

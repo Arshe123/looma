@@ -30,6 +30,13 @@ export interface OpenTextFileState {
   loadedContent: string
   isSaving: boolean
   saveError: string
+  isPartial?: boolean
+  isLoading?: boolean
+  isLoadingMore?: boolean
+  nextOffset?: number
+  totalBytes?: number
+  loadRequestId?: number
+  useChunkedPreview?: boolean
 }
 
 export type AiAssistantMessageRole = 'assistant' | 'user' | 'system'

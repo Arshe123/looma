@@ -24,6 +24,7 @@ import ContextMenu from './ContextMenu.vue'
 import TableToolbar from './TableToolbar.vue'
 import CodeBlockView from './CodeBlockView.vue'
 import LocalImageView from './LocalImageView.vue'
+import ImageInsertDialog from './ImageInsertDialog.vue'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import { replaceExternalMarkdownContent } from '@/shared/utils/tiptap-content-sync'
 import { destroyTiptapEditorSafely } from '@/shared/utils/tiptap-editor-lifecycle'
@@ -39,6 +40,7 @@ import {
   prepareMarkdownForRichText,
   serializeMarkdownAst,
 } from '@/shared/utils/markdown-rich-text'
+import { renderCurrentMarkdownImage } from '@/shared/utils/tiptap-image-insertion'
 
 const props = defineProps<{
   content: string
@@ -60,6 +62,7 @@ let pendingHeadingClearTimer: number | null = null
 const markdownSerializationGate = createMarkdownSerializationGate()
 
 const editor = shallowRef<Editor | null>(null)
+const imageInsertDialogOpen = shallowRef(false)
 const previewContainerRef = shallowRef<HTMLElement | null>(null)
 const lowlight = createLowlight(common)
 const PREVIEW_IMAGE_SETTLED_EVENT = 'looma:preview-image-settled'
@@ -543,6 +546,10 @@ onMounted(() => {
         autocorrect: 'off',
         autocapitalize: 'off',
       },
+      handleKeyDown: (_view, event) => {
+        if (event.key !== 'Enter' || !editor.value) return false
+        return renderCurrentMarkdownImage(editor.value)
+      },
     },
     onUpdate: ({ editor }) => {
       if (isUnmounting || editor.isDestroyed) return
@@ -627,9 +634,16 @@ defineExpose({
   <div ref="previewContainerRef" class="h-full w-full bg-panel overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar">
     <editor-content v-if="editor" :editor="editor" class="h-full" />
     
-    <InlineMenu v-if="editor" :editor="editor" />
-    <ContextMenu v-if="editor" :editor="editor" />
+    <InlineMenu v-if="editor" :editor="editor" @insert-image="imageInsertDialogOpen = true" />
+    <ContextMenu v-if="editor" :editor="editor" @insert-image="imageInsertDialogOpen = true" />
     <TableToolbar v-if="editor" :editor="editor" />
+    <ImageInsertDialog
+      v-if="editor"
+      :open="imageInsertDialogOpen"
+      :editor="editor"
+      :file-path="filePath"
+      @close="imageInsertDialogOpen = false"
+    />
   </div>
 </template>
 

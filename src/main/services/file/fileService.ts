@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import path from 'path';
 import type { Result } from '../../../shared/types/Result';
 import { withFileWriteLock } from './fileWriteLock';
 
@@ -11,6 +12,7 @@ export interface TextFileChunk {
 }
 
 const MAX_TEXT_CHUNK_BYTES = 1024 * 1024;
+const SUPPORTED_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 
 const getCompleteUtf8Length = (buffer: Buffer, requestedLength: number, reachedEnd: boolean) => {
   if (reachedEnd || requestedLength <= 0) return requestedLength;
@@ -105,6 +107,57 @@ export const fileService = {
       return { success: true, data: { size: stats.size } };
     } catch (error: any) {
       return { success: false, error: `Failed to read file stats: ${error.message}` };
+    }
+  },
+
+  async copyImageToNoteAssets(noteFilePath: string, sourceFilePath: string): Promise<Result<{ relativePath: string; fileName: string }>> {
+    try {
+      if (!noteFilePath || !sourceFilePath) {
+        return { success: false, error: 'Note path and image path are required.' };
+      }
+
+      const extension = path.extname(sourceFilePath).toLowerCase();
+      if (!SUPPORTED_IMAGE_EXTENSIONS.has(extension)) {
+        return { success: false, error: `Unsupported image type: ${extension || 'unknown'}` };
+      }
+
+      const sourceStats = await fs.stat(sourceFilePath);
+      if (!sourceStats.isFile()) {
+        return { success: false, error: 'Selected image path is not a file.' };
+      }
+
+      const noteDirectory = path.dirname(noteFilePath);
+      const assetsDirectory = path.join(noteDirectory, 'assets');
+      await fs.mkdir(assetsDirectory, { recursive: true });
+
+      const originalName = path.basename(sourceFilePath);
+      const baseName = path.basename(originalName, extension);
+      let fileName = originalName;
+      let destination = path.join(assetsDirectory, fileName);
+      let suffix = 1;
+
+      while (true) {
+        if (path.resolve(sourceFilePath) === path.resolve(destination)) break;
+        try {
+          await fs.copyFile(sourceFilePath, destination, 1);
+          break;
+        } catch (error: any) {
+          if (error?.code !== 'EEXIST') throw error;
+          fileName = `${baseName}-${suffix}${extension}`;
+          destination = path.join(assetsDirectory, fileName);
+          suffix += 1;
+        }
+      }
+
+      return {
+        success: true,
+        data: {
+          relativePath: path.relative(noteDirectory, destination).split(path.sep).join('/'),
+          fileName,
+        },
+      };
+    } catch (error: any) {
+      return { success: false, error: `Failed to import image: ${error.message}` };
     }
   },
 

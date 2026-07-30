@@ -286,6 +286,7 @@ interface ElectronAPI {
     readTextChunk: (filePath: string, offset: number, length: number) => Promise<Result<TextFileChunkPayload>>;
     readFileBase64: (filePath: string) => Promise<Result<string>>;
     getFileStats: (filePath: string) => Promise<Result<{ size: number }>>;
+    selectAndCopyImage: (noteFilePath: string) => Promise<Result<{ relativePath: string; fileName: string } | null>>;
     writeMarkdown: (filePath: string, content: string, expectedContent?: string) => Promise<Result<void>>;
   };
   app: {

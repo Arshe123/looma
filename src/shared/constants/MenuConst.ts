@@ -9,6 +9,7 @@ export const DEFAULT_INLINE_MENU_ACTION_IDS = [
   'taskList',
   'blockquote',
   'codeBlock',
+  'image',
   'table',
   'horizontalRule',
 ] as const

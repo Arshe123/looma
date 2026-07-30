@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron';
 import { fileService } from '../services/file/fileService';
 
 // IPC Handlers for File Service
@@ -16,6 +16,24 @@ ipcMain.handle('file:readFileBase64', async (_, filePath: string) => {
 
 ipcMain.handle('file:getFileStats', async (_, filePath: string) => {
   return await fileService.getFileStats(filePath);
+});
+
+ipcMain.handle('file:selectAndCopyImage', async (event, noteFilePath: string) => {
+  const options: OpenDialogOptions = {
+    title: '选择要插入的图片',
+    properties: ['openFile'],
+    filters: [
+      { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] },
+    ],
+  };
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const selected = owner
+    ? await dialog.showOpenDialog(owner, options)
+    : await dialog.showOpenDialog(options);
+  if (selected.canceled || !selected.filePaths[0]) {
+    return { success: true, data: null };
+  }
+  return await fileService.copyImageToNoteAssets(noteFilePath, selected.filePaths[0]);
 });
 
 ipcMain.handle('file:writeMarkdown', async (_, filePath: string, content: string, expectedContent?: string) => {

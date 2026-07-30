@@ -14,6 +14,7 @@ export type MenuActionId =
   | 'taskList'
   | 'blockquote'
   | 'codeBlock'
+  | 'image'
   | 'table'
   | 'horizontalRule'
   | 'bold'
@@ -49,4 +50,11 @@ type TablePickerMenuAction = {
   icon: Component
 }
 
-export type MenuAction = RunnableMenuAction | TablePickerMenuAction
+type ImageMenuAction = {
+  id: 'image'
+  kind: 'image'
+  label: string
+  icon: Component
+}
+
+export type MenuAction = RunnableMenuAction | TablePickerMenuAction | ImageMenuAction

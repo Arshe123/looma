@@ -13,6 +13,7 @@ import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import { FILE_TREE_CREATE_FILE_EVENT } from '@/shared/utils/file-tree-utils'
 import { isTextEditingTarget } from '@/shared/utils/editing-target'
 import { isEditableTextPath } from '@/renderer/stores/workspace-utils'
+import { createKeyedTemplateRefSetters } from '@/shared/utils/component-ref-utils'
 
 const workspaceStore = useWorkspaceStore()
 let keyHandler: ((e: KeyboardEvent) => void) | null = null
@@ -94,6 +95,12 @@ const setEditorRef = (relativePath: string, el: any) => {
     delete editorRefs.value[relativePath]
   }
 }
+
+const editorRefSetters = createKeyedTemplateRefSetters<any>(setEditorRef)
+
+watch(fileTabPaths, (paths) => {
+  editorRefSetters.retain(paths)
+}, { immediate: true })
 
 const handleSave = async (newContent: string, relativePath = workspaceStore.activeFileRelativePath) => {
   workspaceStore.setActiveFileContent(newContent, relativePath)
@@ -208,7 +215,7 @@ onUnmounted(() => {
             class="absolute inset-0 h-full w-full"
             :is="activeTextEditor.component"
             :key="`${activeTextEditor.relativePath}:${editorReloadNonce}`"
-            :ref="(el) => setEditorRef(activeTextEditor!.relativePath, el)"
+            :ref="editorRefSetters.get(activeTextEditor.relativePath)"
             :filePath="activeTextEditor.filePath"
             :relativeFilePath="activeTextEditor.relativePath"
             :content="activeTextEditor.content"

@@ -76,6 +76,7 @@ const moveInlineMenuItem = (toIndex: number) => {
             <component :is="item.icon" :size="16" class="shrink-0 text-text-muted" />
             <span class="min-w-0 flex-1 truncate">{{ inlineMenuActionLabel(item.id) }}</span>
             <button
+              v-if="item.id !== 'image'"
               type="button"
               class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-danger/10 hover:text-danger"
               title="删除"
@@ -84,6 +85,7 @@ const moveInlineMenuItem = (toIndex: number) => {
             >
               <Trash2 :size="14" />
             </button>
+            <span v-else class="shrink-0 text-[10px] text-text-subtle">必备</span>
           </div>
         </TransitionGroup>
 

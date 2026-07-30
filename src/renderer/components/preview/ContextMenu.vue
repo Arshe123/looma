@@ -18,6 +18,10 @@ const props = defineProps<{
   editor: Editor
 }>()
 
+const emit = defineEmits<{
+  (e: 'insert-image'): void
+}>()
+
 type ContextMenuItem = {
   id: string
   label: string
@@ -43,7 +47,7 @@ const getEditor = () => {
 
 const textStyleIcons = resolveMenuActions(['bold', 'italic', 'strike', 'inlineCode', 'highlight'])
 
-const blockStyleIcons = resolveMenuActions(['blockquote', 'bulletList', 'orderedList', 'taskList', 'codeBlock', 'table'])
+const blockStyleIcons = resolveMenuActions(['blockquote', 'bulletList', 'orderedList', 'taskList', 'codeBlock', 'image', 'table'])
 
 const tableMenuItems = getTableMenuActions()
 
@@ -160,6 +164,13 @@ const handleAction = (item?: MenuAction) => {
   if (item.kind === 'tablePicker') {
     tablePickerVisible.value = !tablePickerVisible.value
     activeSubMenu.value = null
+    return
+  }
+  if (item.kind === 'image') {
+    visible.value = false
+    activeSubMenu.value = null
+    tablePickerVisible.value = false
+    emit('insert-image')
     return
   }
   item.run(editor)

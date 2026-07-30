@@ -18,6 +18,10 @@ const props = defineProps<{
   editor: Editor
 }>()
 
+const emit = defineEmits<{
+  (e: 'insert-image'): void
+}>()
+
 const settingsStore = useSettingsStore()
 const menuVisible = ref(false)
 const panelVisible = ref(false)
@@ -264,6 +268,13 @@ const handleFormatAction = (item: MenuAction) => {
 
   if (item.kind === 'tablePicker') {
     tablePickerVisible.value = !tablePickerVisible.value
+    return
+  }
+
+  if (item.kind === 'image') {
+    panelVisible.value = false
+    tablePickerVisible.value = false
+    emit('insert-image')
     return
   }
 

@@ -60,18 +60,15 @@ describe('workspace large note loading', () => {
   })
 
   it('refreshes a clean cached note only after a filesystem change event', async () => {
-    let fsListener: ((payload: { workspaceId: string; event: string; relativePath: string }) => void) | undefined
+    let fsListener: ((payload: { workspaceId: string; event: string; relativePath: string; origin?: 'editor' | 'external' }) => void) | undefined
     const readTextChunk = vi.fn()
       .mockResolvedValueOnce({
         success: true,
         data: { content: 'cached', offset: 0, nextOffset: 6, totalBytes: 6, done: true },
       })
-      .mockResolvedValueOnce({
-        success: true,
-        data: { content: 'changed on disk', offset: 0, nextOffset: 15, totalBytes: 15, done: true },
-      })
+    const readMarkdown = vi.fn().mockResolvedValue({ success: true, data: 'changed on disk' })
     ;(window as any).electronAPI = {
-      file: { readTextChunk },
+      file: { readTextChunk, readMarkdown },
       fs: {
         onEvent: vi.fn((listener) => {
           fsListener = listener
@@ -92,8 +89,103 @@ describe('workspace large note loading', () => {
     store.attachFsEvents()
     fsListener?.({ workspaceId: workspace.id, event: 'change', relativePath: 'note.md' })
     await vi.waitFor(() => {
-      expect(readTextChunk).toHaveBeenCalledTimes(2)
+      expect(readTextChunk).toHaveBeenCalledTimes(1)
+      expect(readMarkdown).toHaveBeenCalledTimes(1)
       expect(store.openedTextFileContents['note.md'].content).toBe('changed on disk')
+    })
+  })
+
+  it('keeps the open note state intact for a change caused by the editor save', async () => {
+    let fsListener: ((payload: { workspaceId: string; event: string; relativePath: string; origin?: 'editor' | 'external' }) => void) | undefined
+    const readMarkdown = vi.fn()
+    ;(window as any).electronAPI = {
+      file: { readMarkdown },
+      fs: {
+        onEvent: vi.fn((listener) => {
+          fsListener = listener
+          return vi.fn()
+        }),
+      },
+    }
+
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.activeFileRelativePath = 'note.md'
+    store.activeFilePath = 'E:\\notes\\note.md'
+    store.openedTextFileContents['note.md'] = {
+      content: 'saved content',
+      loadedContent: 'saved content',
+      isSaving: false,
+      saveError: '',
+      isPartial: false,
+      isLoading: false,
+      isLoadingMore: false,
+      nextOffset: 13,
+      totalBytes: 13,
+      loadRequestId: 1,
+      useChunkedPreview: false,
+    }
+    const stateBeforeEvent = store.openedTextFileContents['note.md']
+
+    store.attachFsEvents()
+    fsListener?.({
+      workspaceId: workspace.id,
+      event: 'change',
+      relativePath: 'note.md',
+      origin: 'editor',
+    })
+
+    await Promise.resolve()
+    expect(readMarkdown).not.toHaveBeenCalled()
+    expect(store.openedTextFileContents['note.md']).toBe(stateBeforeEvent)
+  })
+
+  it('keeps the current content visible until an external refresh completes', async () => {
+    let fsListener: ((payload: { workspaceId: string; event: string; relativePath: string; origin?: 'editor' | 'external' }) => void) | undefined
+    let resolveRead!: (value: any) => void
+    const readMarkdown = vi.fn(() => new Promise(resolve => { resolveRead = resolve }))
+    ;(window as any).electronAPI = {
+      file: { readMarkdown },
+      fs: {
+        onEvent: vi.fn((listener) => {
+          fsListener = listener
+          return vi.fn()
+        }),
+      },
+    }
+
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.activeFileRelativePath = 'note.md'
+    store.activeFilePath = 'E:\\notes\\note.md'
+    store.openedTextFileContents['note.md'] = {
+      content: 'visible content',
+      loadedContent: 'visible content',
+      isSaving: false,
+      saveError: '',
+      isPartial: false,
+      isLoading: false,
+      isLoadingMore: false,
+      nextOffset: 15,
+      totalBytes: 15,
+      loadRequestId: 1,
+      useChunkedPreview: false,
+    }
+
+    store.attachFsEvents()
+    fsListener?.({
+      workspaceId: workspace.id,
+      event: 'change',
+      relativePath: 'note.md',
+      origin: 'external',
+    })
+
+    expect(store.openedTextFileContents['note.md'].content).toBe('visible content')
+    resolveRead({ success: true, data: 'changed externally' })
+    await vi.waitFor(() => {
+      expect(store.openedTextFileContents['note.md'].content).toBe('changed externally')
     })
   })
 

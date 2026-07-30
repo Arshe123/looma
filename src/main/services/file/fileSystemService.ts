@@ -11,6 +11,13 @@ export type WatchState = {
   workspacePath: string
   watcher: FSWatcher
   watchedTargets: Set<string>
+  pendingEditorWrites: Map<string, PendingEditorWrite>
+}
+
+type PendingEditorWrite = {
+  token: string
+  expectedSha256: string
+  expiresAt: number
 }
 
 export interface AgentFileProposal {
@@ -399,6 +406,7 @@ export const fileSystemService = {
 }
 
 const watchers = new Map<number, WatchState>()
+const EDITOR_WRITE_EVENT_TTL_MS = 5000
 
 const defaultWatchIgnored = [
   '**/.git/**',
@@ -409,6 +417,27 @@ const defaultWatchIgnored = [
 ]
 
 export const fileWatchService = {
+  registerEditorWrite(webContents: WebContents, filePath: string, content: string) {
+    const state = watchers.get(webContents.id)
+    if (!state) return null
+    const absolutePath = path.resolve(filePath)
+    if (!isWithin(path.resolve(state.workspacePath), absolutePath)) return null
+    const token = randomUUID()
+    state.pendingEditorWrites.set(absolutePath, {
+      token,
+      expectedSha256: sha256(Buffer.from(content, 'utf8')),
+      expiresAt: Date.now() + EDITOR_WRITE_EVENT_TTL_MS,
+    })
+    return token
+  },
+
+  cancelEditorWrite(webContents: WebContents, filePath: string, token: string | null) {
+    if (!token) return
+    const pendingWrites = watchers.get(webContents.id)?.pendingEditorWrites
+    const absolutePath = path.resolve(filePath)
+    if (pendingWrites?.get(absolutePath)?.token === token) pendingWrites.delete(absolutePath)
+  },
+
   start(workspaceId: string, workspacePath: string, webContents: WebContents) {
     const existing = watchers.get(webContents.id)
     if (existing) {
@@ -423,22 +452,45 @@ export const fileWatchService = {
       ignored: defaultWatchIgnored,
     })
 
-    const send = (event: string, absPath: string) => {
+    const resolveOrigin = async (event: string, absPath: string) => {
+      if (event !== 'change') return 'external' as const
+      const absolutePath = path.resolve(absPath)
+      const pending = pendingEditorWrites.get(absolutePath)
+      if (!pending) return 'external' as const
+      if (pending.expiresAt < Date.now()) {
+        pendingEditorWrites.delete(absolutePath)
+        return 'external' as const
+      }
+      try {
+        const current = await fs.readFile(absolutePath)
+        return sha256(current) === pending.expectedSha256 ? 'editor' as const : 'external' as const
+      } catch {
+        return 'external' as const
+      } finally {
+        pendingEditorWrites.delete(absolutePath)
+      }
+    }
+
+    const send = async (event: string, absPath: string) => {
       const rel = toPosix(path.relative(workspacePath, absPath))
-      webContents.send('fs:event', { workspaceId, event, relativePath: rel })
+      const origin = await resolveOrigin(event, absPath)
+      if (!webContents.isDestroyed()) {
+        webContents.send('fs:event', { workspaceId, event, relativePath: rel, origin })
+      }
     }
 
     watcher
-      .on('add', (p) => send('add', p))
-      .on('addDir', (p) => send('addDir', p))
-      .on('change', (p) => send('change', p))
-      .on('unlink', (p) => send('unlink', p))
-      .on('unlinkDir', (p) => send('unlinkDir', p))
+      .on('add', (p) => { void send('add', p) })
+      .on('addDir', (p) => { void send('addDir', p) })
+      .on('change', (p) => { void send('change', p) })
+      .on('unlink', (p) => { void send('unlink', p) })
+      .on('unlinkDir', (p) => { void send('unlinkDir', p) })
 
     const watchedTargets = new Set<string>()
     watchedTargets.add(path.resolve(workspacePath))
+    const pendingEditorWrites = new Map<string, PendingEditorWrite>()
 
-    watchers.set(webContents.id, { workspacePath, watcher, watchedTargets })
+    watchers.set(webContents.id, { workspacePath, watcher, watchedTargets, pendingEditorWrites })
 
     webContents.once('destroyed', async () => {
       await this.stop(webContents)

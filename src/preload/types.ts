@@ -377,7 +377,7 @@ interface ElectronAPI {
     watchStop: (workspaceId: string) => Promise<Result<void>>;
     showItemInFolder: (workspaceId: string, relativePath: string) => Promise<Result<void>>;
     isFile: (workspaceId: string, targetRelativePath: string) => Promise<Result<boolean>>;
-    onEvent: (listener: (payload: { workspaceId: string; event: string; relativePath: string }) => void) => () => void;
+    onEvent: (listener: (payload: { workspaceId: string; event: string; relativePath: string; origin: 'editor' | 'external' }) => void) => () => void;
   };
   window: {
     minimize: () => Promise<void>;

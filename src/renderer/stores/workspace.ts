@@ -2009,11 +2009,23 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async refreshOpenTextFileContentFromDisk(relativePath: string) {
       const rel = normalizeDir(relativePath)
-      if (!rel || !this.openedTextFileContents[rel]) return { success: true as const }
+      const stateBeforeRead = this.openedTextFileContents[rel]
+      if (!rel || !stateBeforeRead) return { success: true as const }
+      const workspaceId = this.activeWorkspaceId
       const absPath = this.resolveAbsolutePath(rel)
       if (!absPath || !isEditableTextPath(absPath)) return { success: true as const }
+      const refreshRequestId = ++this.nextTextFileLoadRequestId
       const result = await window.electronAPI.file.readMarkdown(absPath)
       if (!result.success || result.data === undefined) return result
+      const current = this.openedTextFileContents[rel]
+      if (
+        !workspaceId
+        || this.activeWorkspaceId !== workspaceId
+        || this.resolveAbsolutePath(rel) !== absPath
+        || !current
+        || (!current.isPartial && current.content !== current.loadedContent)
+      ) return { success: true as const }
+      if (!current.isPartial && result.data === current.loadedContent) return result
       const totalBytes = new Blob([result.data]).size
       this.openedTextFileContents[rel] = {
         content: result.data,
@@ -2025,7 +2037,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         isLoadingMore: false,
         nextOffset: totalBytes,
         totalBytes,
-        loadRequestId: ++this.nextTextFileLoadRequestId,
+        loadRequestId: refreshRequestId,
         useChunkedPreview: absPath.toLowerCase().endsWith('.md') && totalBytes >= LARGE_NOTE_BYTES,
       }
       this.mirrorActiveTextFileState(rel)
@@ -2286,14 +2298,12 @@ export const useWorkspaceStore = defineStore('workspace', {
         const openState = this.openedTextFileContents[relativePath]
         if (
           payload.event === 'change'
+          && payload.origin !== 'editor'
           && openState
           && !openState.isSaving
           && (openState.isPartial || openState.content === openState.loadedContent)
         ) {
-          delete this.openedTextFileContents[relativePath]
-          if (relativePath === this.activeFileRelativePath) {
-            this.loadTextFileContent(relativePath).catch(() => {})
-          }
+          this.refreshOpenTextFileContentFromDisk(relativePath).catch(() => {})
         }
       })
     },

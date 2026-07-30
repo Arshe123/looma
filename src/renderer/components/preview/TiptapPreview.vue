@@ -592,7 +592,8 @@ watch(
       }
     }
     if (newContent === lastEmittedContent) return
-    
+
+    const scrollState = getPreviewScrollState()
     isUpdatingFromExternal = true
     clearPendingCodeHighlight()
     const { from, to } = editor.value.state.selection
@@ -607,7 +608,10 @@ watch(
     }
     
     nextTick(() => {
-      isUpdatingFromExternal = false
+      requestAnimationFrame(() => {
+        applyPreviewScrollState(scrollState)
+        isUpdatingFromExternal = false
+      })
     })
   }
 )

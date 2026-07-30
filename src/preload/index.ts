@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-type FsEventPayload = { workspaceId: string; event: string; relativePath: string };
+type FsEventPayload = { workspaceId: string; event: string; relativePath: string; origin: 'editor' | 'external' };
 type RagStreamEventPayload =
   | { requestId: string; type: 'timeline'; stepId?: string; status?: 'pending' | 'active' | 'completed' | 'error'; title?: string; description?: string; detail?: string; outputs?: unknown[]; step?: Record<string, unknown> }
   | { requestId: string; type: 'progress'; stepId: string; current: number; total?: number; message?: string }

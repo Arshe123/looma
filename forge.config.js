@@ -9,6 +9,9 @@ export default {
     name: 'looma',
     asar: true,
     icon: './resources/icon',
+    extraResource: [
+      './build/python-service/looma-agent-service',
+    ],
   },
   rebuildConfig: {},
   makers: [

@@ -64,6 +64,14 @@ npm test
 npm run build
 ```
 
+生成自带 Python Agent/RAG 服务的 Windows 安装包：
+
+```bash
+npm run make
+```
+
+`package` 和 `make` 会先通过 `uv + PyInstaller` 构建独立的 Python 服务，再由 Electron Forge 将其放入应用的 `resources/looma-agent-service`。发布版启动时会自动选择本地端口、启动服务并在退出时关闭服务，因此用户不需要预装 Python 或项目依赖。首次打包需要可联网下载 Python 依赖，并要求构建机已安装 `uv`。
+
 ## 常用命令
 
 | 命令                     | 说明                                  |
@@ -72,6 +80,8 @@ npm run build
 | `npm run dev:renderer` | 启动 Vite 渲染进程开发服务            |
 | `npm run preview`      | 预览 Vite 构建结果                    |
 | `npm run check`        | 运行 TypeScript/Vue 类型检查          |
+| `npm run build:python` | 构建可独立运行的 Python Agent 服务    |
+| `npm run build:release` | 构建 Python 服务和 Electron 应用     |
 | `npm run lint`         | 运行 ESLint                           |
 | `npm run lint:fix`     | 自动修复可修复的 ESLint 问题          |
 | `npm test`             | 运行 Vitest 测试                      |

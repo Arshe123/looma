@@ -25,6 +25,7 @@ dist-electron
 .vite
 .trae
 out/
+build/
 .looma
 
 # local config

@@ -5,6 +5,7 @@ import { workspaceService } from './services/workspace/workspaceService';
 import { fileSystemService } from './services/file/fileSystemService';
 import { abortAllAgentRuns } from './ipc/agentIpc';
 import { setWindowTitleForWorkspace } from './ipc/workspaceIpc';
+import { startBundledRagService, stopBundledRagService } from './services/rag/ragServiceProcess';
 import './ipc/appSettingsIpc';
 import './ipc/ragIpc';
 import './ipc/appIpc';
@@ -165,7 +166,10 @@ if (!gotLock) {
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    await startBundledRagService().catch((error) => {
+      console.error(`[python-service] ${error instanceof Error ? error.message : String(error)}`);
+    });
     workspaceService
       .getState()
       .then(async (r) => {
@@ -187,6 +191,7 @@ app.on('before-quit', async (e) => {
   isQuitting = true;
 
   abortAllAgentRuns();
+  await stopBundledRagService();
   
   try {
     const state = await workspaceService.getState();

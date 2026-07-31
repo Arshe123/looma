@@ -9,7 +9,9 @@
   "main": "dist-electron/index.js",
   "scripts": {
     "build:preload": "node scripts/build-preload.mjs",
+    "build:python": "node scripts/build-python-service.mjs",
     "build": "npm run build:preload && vite build",
+    "build:release": "npm run build:python && npm run build",
     "dev:renderer": "vite",
     "dev": "npm run build:preload && node scripts/dev.mjs",
     "preview": "vite preview",
@@ -17,8 +19,8 @@
     "lint": "eslint . --ext .ts,.vue",
     "lint:fix": "eslint . --ext .ts,.vue --fix",
     "test": "vitest",
-    "prepackage": "npm run build",
-    "premake": "npm run build",
+    "prepackage": "npm run build:release",
+    "premake": "npm run build:release",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make"

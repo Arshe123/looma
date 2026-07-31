@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Result } from '../../../shared/types/Result'
 
-const RAG_BASE_URL = process.env.RAG_SERVICE_URL || 'http://127.0.0.1:8765'
+const getRagBaseUrl = () => process.env.RAG_SERVICE_URL || 'http://127.0.0.1:8765'
 
 type AiProvider = 'ollama' | 'openai' | 'openai-compatible' | 'deepseek' | 'qwen' | 'custom'
 
@@ -486,7 +486,7 @@ const toIndexBuildBody = (workspacePath: string, mode: RagIndexBuildMode = 'incr
 
 const requestJson = async <T>(path: string, method: 'POST' | 'DELETE', body: unknown): Promise<Result<T>> => {
   try {
-    const response = await fetch(`${RAG_BASE_URL}${path}`, {
+    const response = await fetch(`${getRagBaseUrl()}${path}`, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -514,7 +514,7 @@ const streamNdjson = async <T>(
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
   let reachedEof = false
   try {
-    const response = await fetch(`${RAG_BASE_URL}${path}`, {
+    const response = await fetch(`${getRagBaseUrl()}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -597,7 +597,7 @@ const streamNdjson = async <T>(
 export const aiService: AIService = {
   async health(): Promise<Result<{ status: string; service: string }>> {
     try {
-      const response = await fetch(`${RAG_BASE_URL}/health`)
+      const response = await fetch(`${getRagBaseUrl()}/health`)
       const data = await response.json().catch(() => null)
       if (!response.ok) return { success: false, error: `RAG 服务不可用: HTTP ${response.status}` }
       return { success: true, data }

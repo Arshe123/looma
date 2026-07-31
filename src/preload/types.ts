@@ -369,6 +369,13 @@ interface ElectronAPI {
     createFolder: (workspaceId: string, parentDirRelativePath: string, name: string) => Promise<Result<string>>;
     createFile: (workspaceId: string, parentDirRelativePath: string, name: string) => Promise<Result<string>>;
     move: (workspaceId: string, fromRelativePath: string, toRelativePath: string) => Promise<Result<void>>;
+    copyExternal: (workspaceId: string, sourcePaths: string[], targetDirRelativePath: string) => Promise<Result<{
+      copied: Array<{ name: string; relativePath: string; isDirectory: boolean }>;
+    }>>;
+    importImage: (workspaceId: string, noteRelativePath: string, sourceFilePath: string) => Promise<Result<{
+      relativePath: string;
+      fileName: string;
+    }>>;
     delete: (workspaceId: string, targetRelativePath: string) => Promise<Result<{ trashRelativePath: string }>>;
     restore: (workspaceId: string, trashRelativePath: string, restoreToRelativePath: string) => Promise<Result<void>>;
     emptyTrash: (workspaceId: string) => Promise<Result<void>>;

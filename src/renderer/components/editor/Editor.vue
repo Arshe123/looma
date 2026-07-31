@@ -12,10 +12,14 @@ import {
   setScrollRatio,
 } from '@/shared/utils/editor-scroll-sync';
 import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
+import { getDroppedFilePaths, isSupportedDroppedImagePath } from '@/shared/utils/external-file-drop'
+import { formatMarkdownImage } from '@/shared/utils/tiptap-image-insertion'
+import EditorDropAlert from './EditorDropAlert.vue'
 
 const props = withDefaults(defineProps<{
   initialContent: string;
   filePath: string;
+  relativeFilePath?: string;
   mode?: 'markdown' | 'plaintext';
   fontSize?: number;
   wordWrap?: boolean;
@@ -32,6 +36,8 @@ const emit = defineEmits<{
 
 const editorContainer = ref<HTMLElement | null>(null);
 const workspaceStore = useWorkspaceStore();
+const dropErrorMessage = ref('');
+const dropTechnicalDetail = ref('');
 let editor: EditorView | null = null;
 let saveTimeout: any = null;
 let applyingExternalUpdate = false;
@@ -185,6 +191,66 @@ const ensureCursorComfort = (view: EditorView) => {
   }
 }
 
+const importDroppedImages = async (event: DragEvent, insertAt: number) => {
+  event.preventDefault()
+  dropErrorMessage.value = ''
+  dropTechnicalDetail.value = ''
+  const workspaceId = workspaceStore.activeWorkspaceId
+  if (!editor || !workspaceId || !props.relativeFilePath) return
+
+  const sourcePaths = getDroppedFilePaths(event.dataTransfer?.files)
+  if (sourcePaths.length === 0) {
+    dropErrorMessage.value = '无法读取拖入图片，请从系统文件资源管理器重新拖入。'
+    dropTechnicalDetail.value = 'Electron did not expose native paths for the dropped File objects.'
+    return
+  }
+  const unsupported = sourcePaths.filter(path => !isSupportedDroppedImagePath(path))
+  if (unsupported.length > 0) {
+    dropErrorMessage.value = '这里只能拖入 PNG、JPG、GIF、WebP 或 SVG 图片。'
+    dropTechnicalDetail.value = `Unsupported paths: ${unsupported.join(', ')}`
+    return
+  }
+
+  const imported: Array<{ relativePath: string; fileName: string }> = []
+  const failures: string[] = []
+  workspaceStore.setBusy(true, sourcePaths.length > 1 ? `正在导入 ${sourcePaths.length} 张图片...` : '正在导入图片...')
+  try {
+    for (const sourcePath of sourcePaths) {
+      const result = await window.electronAPI.fs.importImage(workspaceId, props.relativeFilePath, sourcePath)
+      if (result.success && result.data) imported.push(result.data)
+      else failures.push(result.error || sourcePath)
+    }
+    if (editor && imported.length > 0) {
+      const markdownImages = imported.map(image => formatMarkdownImage({
+        alt: image.fileName,
+        src: image.relativePath,
+      })).join('\n\n')
+      const safePosition = Math.min(Math.max(insertAt, 0), editor.state.doc.length)
+      editor.dispatch({
+        changes: { from: safePosition, insert: markdownImages },
+        selection: { anchor: safePosition + markdownImages.length },
+      })
+      editor.focus()
+    }
+    if (failures.length > 0) {
+      dropErrorMessage.value = imported.length > 0
+        ? '部分图片未能导入，其余图片已插入。'
+        : '图片导入失败，请确认图片仍然存在且当前笔记目录可写。'
+      dropTechnicalDetail.value = failures.join('\n')
+    }
+  } catch (error) {
+    dropErrorMessage.value = '图片导入失败，请稍后重试。'
+    dropTechnicalDetail.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    workspaceStore.setBusy(false)
+  }
+}
+
+const clearDropError = () => {
+  dropErrorMessage.value = ''
+  dropTechnicalDetail.value = ''
+}
+
 const createEditor = () => {
   if (!editorContainer.value) return;
 
@@ -206,11 +272,23 @@ const createEditor = () => {
     }
   });
 
-  const blurHandler = EditorView.domEventHandlers({
+  const domEventHandlers = EditorView.domEventHandlers({
     blur: () => {
       if (!editor) return;
       const content = editor.state.doc.toString();
       emit('save', content);
+    },
+    dragover: (event) => {
+      if (!event.dataTransfer?.types.includes('Files')) return false
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'copy'
+      return true
+    },
+    drop: (event, view) => {
+      if (!event.dataTransfer?.types.includes('Files')) return false
+      const insertAt = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.selection.main.head
+      void importDroppedImages(event, insertAt)
+      return true
     },
   });
 
@@ -225,7 +303,7 @@ const createEditor = () => {
       customStyleCompartment.of(getCustomStyleExtension()),
       editorContentAttributes,
       updateListener,
-      blurHandler,
+      domEventHandlers,
     ],
   });
 
@@ -365,8 +443,14 @@ defineExpose({
 </script>
 
 <template>
-  <div class="h-full w-full bg-surface border-r border-border-soft flex flex-col">
+  <div class="relative h-full w-full bg-surface border-r border-border-soft flex flex-col">
     <div ref="editorContainer" class="flex-1 overflow-hidden h-full"></div>
+    <EditorDropAlert
+      :open="Boolean(dropErrorMessage)"
+      :message="dropErrorMessage"
+      :detail="dropTechnicalDetail"
+      @close="clearDropError"
+    />
   </div>
 </template>
 

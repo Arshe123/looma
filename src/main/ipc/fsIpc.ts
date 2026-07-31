@@ -33,6 +33,18 @@ ipcMain.handle('fs:move', async (_, workspaceId: string, fromRelativePath: strin
   return await fileSystemService.move(workspacePath, fromRelativePath, toRelativePath);
 });
 
+ipcMain.handle('fs:copyExternal', async (_, workspaceId: string, sourcePaths: string[], targetDirRelativePath: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  return await fileSystemService.copyExternalEntries(workspacePath, sourcePaths, targetDirRelativePath);
+});
+
+ipcMain.handle('fs:importImage', async (_, workspaceId: string, noteRelativePath: string, sourceFilePath: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  return await fileSystemService.importImageToNoteAssets(workspacePath, noteRelativePath, sourceFilePath);
+});
+
 ipcMain.handle('fs:delete', async (_, workspaceId: string, targetRelativePath: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };

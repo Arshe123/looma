@@ -151,6 +151,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('fs:rename', workspaceId, targetRelativePath, newName),
     move: (workspaceId: string, fromRelativePath: string, toRelativePath: string) =>
       ipcRenderer.invoke('fs:move', workspaceId, fromRelativePath, toRelativePath),
+    copyExternal: (workspaceId: string, sourcePaths: string[], targetDirRelativePath: string) =>
+      ipcRenderer.invoke('fs:copyExternal', workspaceId, sourcePaths, targetDirRelativePath),
+    importImage: (workspaceId: string, noteRelativePath: string, sourceFilePath: string) =>
+      ipcRenderer.invoke('fs:importImage', workspaceId, noteRelativePath, sourceFilePath),
     delete: (workspaceId: string, targetRelativePath: string) =>
       ipcRenderer.invoke('fs:delete', workspaceId, targetRelativePath),
     restore: (workspaceId: string, trashRelativePath: string, restoreToRelativePath: string) =>

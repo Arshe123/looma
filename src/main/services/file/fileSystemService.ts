@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'crypto'
 import type { WebContents } from 'electron'
 import type { Result } from '../../../shared/types/Result'
 import { withFileWriteLock } from './fileWriteLock'
+import { fileService } from './fileService'
 
 export type WatchState = {
   workspacePath: string
@@ -41,6 +42,12 @@ interface FsEntry {
   isDirectory: boolean
   size: number
   mtimeMs: number
+}
+
+export interface ExternalCopyEntry {
+  name: string
+  relativePath: string
+  isDirectory: boolean
 }
 
 const toPosix = (p: string) => p.split(path.sep).join('/')
@@ -304,6 +311,94 @@ export const fileSystemService = {
     }
   },
 
+  async copyExternalEntries(
+    workspacePath: string,
+    sourcePaths: string[],
+    targetDirRelativePath: string,
+  ): Promise<Result<{ copied: ExternalCopyEntry[] }>> {
+    try {
+      if (!Array.isArray(sourcePaths) || sourcePaths.length === 0) {
+        return { success: false, error: '没有可复制的外部文件' }
+      }
+
+      const targetDirResolved = resolveInWorkspace(workspacePath, targetDirRelativePath || '.')
+      if (!targetDirResolved.ok) return { success: false, error: targetDirResolved.error }
+      const targetDirStats = await fs.lstat(targetDirResolved.target)
+      if (!targetDirStats.isDirectory() || targetDirStats.isSymbolicLink()) {
+        return { success: false, error: '目标位置不是可写入的普通目录' }
+      }
+
+      const workspaceRoot = path.resolve(targetDirResolved.root)
+      const planned: Array<{
+        source: string
+        destination: string
+        entry: ExternalCopyEntry
+      }> = []
+      const destinationKeys = new Set<string>()
+
+      for (const rawSourcePath of sourcePaths) {
+        if (typeof rawSourcePath !== 'string' || !path.isAbsolute(rawSourcePath)) {
+          return { success: false, error: '外部文件缺少有效的本地绝对路径' }
+        }
+        const source = path.resolve(rawSourcePath)
+        const sourceStats = await fs.lstat(source)
+        if (sourceStats.isSymbolicLink() || (!sourceStats.isFile() && !sourceStats.isDirectory())) {
+          return { success: false, error: `不支持复制链接或特殊文件: ${path.basename(source)}` }
+        }
+        if (sourceStats.isDirectory() && isWithin(source, workspaceRoot)) {
+          return { success: false, error: '不能复制包含当前工作空间的目录' }
+        }
+
+        const name = path.basename(source)
+        if (!name) return { success: false, error: '无法识别外部文件名称' }
+        const destination = path.join(targetDirResolved.target, name)
+        if (source === destination || (sourceStats.isDirectory() && isWithin(source, destination))) {
+          return { success: false, error: `不能将 ${name} 复制到自身内部` }
+        }
+        const destinationKey = process.platform === 'win32' ? destination.toLowerCase() : destination
+        if (destinationKeys.has(destinationKey)) {
+          return { success: false, error: `拖入内容包含重名项: ${name}` }
+        }
+        destinationKeys.add(destinationKey)
+        if (await pathExists(destination)) {
+          return { success: false, error: `目标路径已存在: ${name}` }
+        }
+
+        planned.push({
+          source,
+          destination,
+          entry: {
+            name,
+            relativePath: toPosix(path.relative(workspaceRoot, destination)),
+            isDirectory: sourceStats.isDirectory(),
+          },
+        })
+      }
+
+      const copied: ExternalCopyEntry[] = []
+      const copiedDestinations: string[] = []
+      try {
+        for (const item of planned) {
+          await fs.cp(item.source, item.destination, {
+            recursive: true,
+            errorOnExist: true,
+            force: false,
+          })
+          copiedDestinations.push(item.destination)
+          copied.push(item.entry)
+        }
+      } catch (error) {
+        await Promise.allSettled(
+          copiedDestinations.reverse().map(destination => fs.rm(destination, { recursive: true, force: true })),
+        )
+        throw error
+      }
+      return { success: true, data: { copied } }
+    } catch (error: any) {
+      return { success: false, error: `复制外部文件失败: ${error?.message ?? String(error)}` }
+    }
+  },
+
   async rename(workspacePath: string, targetRelativePath: string, newName: string): Promise<Result<string>> {
     try {
       const targetResolved = resolveInWorkspace(workspacePath, targetRelativePath)
@@ -352,6 +447,27 @@ export const fileSystemService = {
       return { success: true, data: stats.isFile() }
     } catch (error: any) {
       return { success: false, error: `检查文件类型失败: ${error?.message ?? String(error)}` }
+    }
+  },
+
+  async importImageToNoteAssets(
+    workspacePath: string,
+    noteRelativePath: string,
+    sourceFilePath: string,
+  ): Promise<Result<{ relativePath: string; fileName: string }>> {
+    try {
+      const noteResolved = resolveInWorkspace(workspacePath, noteRelativePath)
+      if (!noteResolved.ok) return { success: false, error: noteResolved.error }
+      const noteStats = await fs.lstat(noteResolved.target)
+      if (!noteStats.isFile() || noteStats.isSymbolicLink()) {
+        return { success: false, error: '当前笔记不是可写入的普通文件' }
+      }
+      if (!sourceFilePath || !path.isAbsolute(sourceFilePath)) {
+        return { success: false, error: '图片缺少有效的本地绝对路径' }
+      }
+      return await fileService.copyImageToNoteAssets(noteResolved.target, sourceFilePath)
+    } catch (error: any) {
+      return { success: false, error: `导入图片失败: ${error?.message ?? String(error)}` }
     }
   },
 

@@ -201,6 +201,7 @@ defineExpose({
         ref="editorRef"
         :initialContent="props.content"
         :filePath="props.filePath"
+        :relativeFilePath="props.relativeFilePath"
         @change="(v) => emit('update:content', v)"
         @save="(v) => emit('save', v)"
       />

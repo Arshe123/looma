@@ -16,6 +16,7 @@ import {
 } from '@/shared/utils/file-tree-utils'
 import { handleFileTreeGlobalKeyDown } from '@/shared/utils/file-tree-shortcuts'
 import { appendTreeGuides, type TreeGuidedRow } from '@/shared/utils/tree-row-guides'
+import { captureFileTreeDrop } from '@/shared/utils/external-file-drop'
 
 const workspaceStore = useWorkspaceStore()
 const expanded = computed(() => workspaceStore.activeExpandedSet)
@@ -65,6 +66,9 @@ const selectedFile = ref<FsEntry | null>(null)
 const inlineEdit = ref<InlineEditState | null>(null)
 const inlineInput = ref<HTMLInputElement | null>(null)
 const rowElements = new Map<string, HTMLElement>()
+const externalDropRowKey = ref('')
+const dropErrorMessage = ref('')
+const dropTechnicalDetail = ref('')
 
 const inlineEditValue = computed({
   get: () => inlineEdit.value?.value ?? '',
@@ -250,22 +254,54 @@ const onDragStart = (event: DragEvent, entry: FsEntry) => {
 
 const onDropToDir = async (event: DragEvent, dirRelativePath: string) => {
   event.preventDefault()
+  externalDropRowKey.value = ''
+  const dropPayload = captureFileTreeDrop(event.dataTransfer)
+  const targetDir = await getParentDirFromPath(dirRelativePath)
+
+  if (dropPayload.kind === 'external') {
+    dropErrorMessage.value = ''
+    dropTechnicalDetail.value = ''
+    const sourcePaths = dropPayload.sourcePaths
+    if (sourcePaths.length === 0) {
+      dropErrorMessage.value = '无法读取拖入文件，请从系统文件资源管理器重新拖入。'
+      dropTechnicalDetail.value = 'Electron did not expose native paths for the dropped File objects.'
+      return
+    }
+    const workspaceId = workspaceStore.activeWorkspaceId
+    if (!workspaceId) return
+    workspaceStore.setBusy(true, sourcePaths.length > 1 ? `正在复制 ${sourcePaths.length} 个项目...` : '正在复制文件...')
+    try {
+      const result = await window.electronAPI.fs.copyExternal(workspaceId, sourcePaths, targetDir)
+      if (!result.success) {
+        dropErrorMessage.value = '文件复制失败，请检查目标目录、重名文件或文件占用情况。'
+        dropTechnicalDetail.value = result.error || 'Unknown external file copy error.'
+        return
+      }
+      await workspaceStore.loadDir(workspaceId, targetDir)
+      if (targetDir) await ensureDirExpanded(targetDir)
+    } catch (error) {
+      dropErrorMessage.value = '文件复制失败，请稍后重试。'
+      dropTechnicalDetail.value = error instanceof Error ? error.message : String(error)
+    } finally {
+      workspaceStore.setBusy(false)
+    }
+    return
+  }
+
   let draggedPaths: string[] = []
 
   try {
-    const data = event.dataTransfer?.getData('text/plain')
+    const data = dropPayload.text
     if (data) {
       const parsed = JSON.parse(data)
       if (Array.isArray(parsed)) draggedPaths = parsed
     }
   } catch {
-    const raw = event.dataTransfer?.getData('text/plain')
+    const raw = dropPayload.text
     if (raw) draggedPaths = [raw]
   }
 
   if (draggedPaths.length === 0) return
-  const targetDir = await getParentDirFromPath(dirRelativePath)
-
   const toMove = draggedPaths.filter((from) => {
     if (!from || from === targetDir) return false
     const name = from.split('/').pop() || from
@@ -280,7 +316,38 @@ const onDropToDir = async (event: DragEvent, dirRelativePath: string) => {
 
 const allowDrop = (event: DragEvent) => {
   event.preventDefault()
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = event.dataTransfer.types.includes('Files') ? 'copy' : 'move'
+  }
+}
+
+const handleDragOver = (event: DragEvent, rowKey: string) => {
+  allowDrop(event)
+  externalDropRowKey.value = event.dataTransfer?.types.includes('Files') ? rowKey : ''
+}
+
+const handleDragLeave = (event: DragEvent, rowKey: string) => {
+  const currentTarget = event.currentTarget
+  const relatedTarget = event.relatedTarget
+  if (currentTarget instanceof Node && relatedTarget instanceof Node && currentTarget.contains(relatedTarget)) return
+  if (externalDropRowKey.value === rowKey) externalDropRowKey.value = ''
+}
+
+const clearExternalDropState = () => {
+  externalDropRowKey.value = ''
+}
+
+const isInsideFileTreeRow = (target: EventTarget | null) =>
+  target instanceof Element && Boolean(target.closest('[data-file-tree-row]'))
+
+const handleRootDragOver = (event: DragEvent) => {
+  if (isInsideFileTreeRow(event.target)) return
+  handleDragOver(event, '__root__')
+}
+
+const handleRootDrop = (event: DragEvent) => {
+  if (isInsideFileTreeRow(event.target)) return
+  void onDropToDir(event, '')
 }
 
 const isCreatingInDir = (dirRelativePath: string) => {
@@ -311,6 +378,7 @@ const getRowClass = (row: FlatRow) => {
   return [
     workspaceStore.selectedPaths.includes(row.entry.relativePath) ? 'border-accent bg-accent-soft text-text-main' : '',
     (!workspaceStore.selectedPaths.includes(row.entry.relativePath) && !row.entry.isDirectory && activeFileRel.value === row.entry.relativePath) ? 'border-accent bg-accent-soft text-text-main' : '',
+    externalDropRowKey.value === row.key ? 'border-accent bg-accent-soft text-text-main' : '',
   ]
 }
 
@@ -388,6 +456,9 @@ const retryRootLoad = () => {
 onMounted(() => {
   window.addEventListener('pointerdown', onGlobalPointerDown)
   window.addEventListener('keydown', onGlobalKeyDown)
+  document.addEventListener('drop', clearExternalDropState, { capture: true })
+  document.addEventListener('dragend', clearExternalDropState, { capture: true })
+  window.addEventListener('blur', clearExternalDropState)
   window.addEventListener(FILE_TREE_CREATE_FILE_EVENT, onCreateFileRequest)
   window.addEventListener(FILE_TREE_REVEAL_ACTIVE_FILE_EVENT, onRevealActiveFileRequest)
 })
@@ -399,6 +470,9 @@ watch(activeFileRel, (relativePath) => {
 onUnmounted(() => {
   window.removeEventListener('pointerdown', onGlobalPointerDown)
   window.removeEventListener('keydown', onGlobalKeyDown)
+  document.removeEventListener('drop', clearExternalDropState, { capture: true })
+  document.removeEventListener('dragend', clearExternalDropState, { capture: true })
+  window.removeEventListener('blur', clearExternalDropState)
   window.removeEventListener(FILE_TREE_CREATE_FILE_EVENT, onCreateFileRequest)
   window.removeEventListener(FILE_TREE_REVEAL_ACTIVE_FILE_EVENT, onRevealActiveFileRequest)
   rowElements.clear()
@@ -433,11 +507,20 @@ onUnmounted(() => {
     <div
       v-if="workspaceStore.activeWorkspaceId"
       class="min-h-0 flex-1 overflow-y-auto px-2 pt-2 pb-2 focus-scrollbar"
+      :class="externalDropRowKey === '__root__' ? 'border-l-2 border-accent bg-accent-soft/40' : ''"
       @click.self="workspaceStore.clearSelection()"
       @contextmenu.self="(e) => { workspaceStore.clearSelection(); openMenu(e, { name: '', relativePath: '', isDirectory: true, size: 0, mtimeMs: 0 }) }"
-      @dragover.self="allowDrop"
-      @drop.self="(e) => onDropToDir(e, '')"
+      @dragover="handleRootDragOver"
+      @dragleave="(e) => handleDragLeave(e, '__root__')"
+      @drop="handleRootDrop"
     >
+      <div v-if="dropErrorMessage" class="mx-1 mb-2 rounded-lg border border-danger/25 bg-danger/5 px-3 py-2 text-xs text-danger">
+        <div>{{ dropErrorMessage }}</div>
+        <details v-if="dropTechnicalDetail" class="mt-1 text-text-muted">
+          <summary class="cursor-pointer">技术详情</summary>
+          <div class="mt-1 break-all font-mono text-[11px]">{{ dropTechnicalDetail }}</div>
+        </details>
+      </div>
       <div v-if="isInitialRootLoading" class="flex items-center gap-2 px-2 py-3 text-sm text-text-muted" role="status">
         <LoaderCircle :size="16" class="shrink-0 animate-spin text-accent" />
         <span>正在加载文件…</span>
@@ -466,6 +549,7 @@ onUnmounted(() => {
       <div
         v-for="row in flattened"
         :key="row.key"
+        data-file-tree-row
         :ref="(el) => row.kind === 'entry' && setRowElement(row.entry.relativePath, el)"
         class="group relative flex items-center gap-2 py-1.5 px-2 rounded-md border-l-2 border-transparent text-text-muted hover:bg-accent-soft hover:text-text-main"
         :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
@@ -476,7 +560,8 @@ onUnmounted(() => {
         @click.ctrl.exact="row.kind === 'entry' && handleRowClick($event, row.entry, true)"
         @click.meta.exact="row.kind === 'entry' && handleRowClick($event, row.entry, true)"
         @contextmenu="(e) => row.kind === 'entry' && handleRightClick(e, row.entry)"
-        @dragover.capture="(e) => row.kind === 'entry' && allowDrop(e)"
+        @dragover.capture="(e) => row.kind === 'entry' && handleDragOver(e, row.key)"
+        @dragleave.capture="(e) => row.kind === 'entry' && handleDragLeave(e, row.key)"
         @drop.capture.stop="(e) => row.kind === 'entry' && onDropToDir(e, row.entry.relativePath)"
       >
         <span

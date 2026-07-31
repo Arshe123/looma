@@ -25,6 +25,7 @@ import TableToolbar from './TableToolbar.vue'
 import CodeBlockView from './CodeBlockView.vue'
 import LocalImageView from './LocalImageView.vue'
 import ImageInsertDialog from './ImageInsertDialog.vue'
+import EditorDropAlert from '@/renderer/components/editor/EditorDropAlert.vue'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import { replaceExternalMarkdownContent } from '@/shared/utils/tiptap-content-sync'
 import { destroyTiptapEditorSafely } from '@/shared/utils/tiptap-editor-lifecycle'
@@ -41,12 +42,16 @@ import {
   serializeMarkdownAst,
 } from '@/shared/utils/markdown-rich-text'
 import { renderCurrentMarkdownImage } from '@/shared/utils/tiptap-image-insertion'
+import { getDroppedFilePaths, isSupportedDroppedImagePath } from '@/shared/utils/external-file-drop'
+import { useWorkspaceStore } from '@/renderer/stores/workspace'
 
 const props = defineProps<{
   content: string
   filePath: string
   relativeFilePath: string
 }>()
+
+const workspaceStore = useWorkspaceStore()
 
 const emit = defineEmits<{
   (e: 'update:content', value: string): void
@@ -64,6 +69,8 @@ const markdownSerializationGate = createMarkdownSerializationGate()
 const editor = shallowRef<Editor | null>(null)
 const imageInsertDialogOpen = shallowRef(false)
 const previewContainerRef = shallowRef<HTMLElement | null>(null)
+const dropErrorMessage = shallowRef('')
+const dropTechnicalDetail = shallowRef('')
 const lowlight = createLowlight(common)
 const PREVIEW_IMAGE_SETTLED_EVENT = 'looma:preview-image-settled'
 const HEADING_REANCHOR_WINDOW_MS = 1000
@@ -229,6 +236,72 @@ const LocalImage = Image.extend({
     return VueNodeViewRenderer(LocalImageView)
   },
 })
+
+const importDroppedImages = async (event: DragEvent) => {
+  event.preventDefault()
+  dropErrorMessage.value = ''
+  dropTechnicalDetail.value = ''
+  const currentEditor = editor.value
+  const workspaceId = workspaceStore.activeWorkspaceId
+  if (!currentEditor || currentEditor.isDestroyed || !workspaceId) return
+
+  const sourcePaths = getDroppedFilePaths(event.dataTransfer?.files)
+  if (sourcePaths.length === 0) {
+    dropErrorMessage.value = '无法读取拖入图片，请从系统文件资源管理器重新拖入。'
+    dropTechnicalDetail.value = 'Electron did not expose native paths for the dropped File objects.'
+    return
+  }
+  const unsupported = sourcePaths.filter(path => !isSupportedDroppedImagePath(path))
+  if (unsupported.length > 0) {
+    dropErrorMessage.value = '这里只能拖入 PNG、JPG、GIF、WebP 或 SVG 图片。'
+    dropTechnicalDetail.value = `Unsupported paths: ${unsupported.join(', ')}`
+    return
+  }
+
+  const dropPosition = currentEditor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+    ?? currentEditor.state.selection.from
+  const imported: Array<{ relativePath: string; fileName: string }> = []
+  const failures: string[] = []
+  workspaceStore.setBusy(true, sourcePaths.length > 1 ? `正在导入 ${sourcePaths.length} 张图片...` : '正在导入图片...')
+  try {
+    for (const sourcePath of sourcePaths) {
+      const result = await window.electronAPI.fs.importImage(workspaceId, props.relativeFilePath, sourcePath)
+      if (result.success && result.data) imported.push(result.data)
+      else failures.push(result.error || sourcePath)
+    }
+    if (imported.length > 0 && !currentEditor.isDestroyed) {
+      const content = imported.flatMap(image => [
+        { type: 'image', attrs: { src: image.relativePath, alt: image.fileName } },
+        { type: 'paragraph' },
+      ])
+      if (!currentEditor.chain().focus().insertContentAt(dropPosition, content).run()) {
+        failures.push(`图片已复制到 assets，但编辑器拒绝在位置 ${dropPosition} 插入。`)
+      }
+    }
+    if (failures.length > 0) {
+      dropErrorMessage.value = imported.length > 0
+        ? '部分图片未能导入，其余图片已插入。'
+        : '图片导入失败，请确认图片仍然存在且当前笔记目录可写。'
+      dropTechnicalDetail.value = failures.join('\n')
+    }
+  } catch (error) {
+    dropErrorMessage.value = '图片导入失败，请稍后重试。'
+    dropTechnicalDetail.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    workspaceStore.setBusy(false)
+  }
+}
+
+const handleExternalImageDragOver = (event: DragEvent) => {
+  if (!event.dataTransfer?.types.includes('Files')) return
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'copy'
+}
+
+const clearDropError = () => {
+  dropErrorMessage.value = ''
+  dropTechnicalDetail.value = ''
+}
 
 const isPassThroughImageSrc = (src: string) => /^(https?:|data:|blob:)/i.test(src.trim())
 
@@ -550,6 +623,11 @@ onMounted(() => {
         if (event.key !== 'Enter' || !editor.value) return false
         return renderCurrentMarkdownImage(editor.value)
       },
+      handleDrop: (_view, event) => {
+        if (!event.dataTransfer?.types.includes('Files')) return false
+        void importDroppedImages(event)
+        return true
+      },
     },
     onUpdate: ({ editor }) => {
       if (isUnmounting || editor.isDestroyed) return
@@ -635,7 +713,11 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="previewContainerRef" class="h-full w-full bg-panel overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar">
+  <div
+    ref="previewContainerRef"
+    class="h-full w-full bg-panel overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar"
+    @dragover="handleExternalImageDragOver"
+  >
     <editor-content v-if="editor" :editor="editor" class="h-full" />
     
     <InlineMenu v-if="editor" :editor="editor" @insert-image="imageInsertDialogOpen = true" />
@@ -647,6 +729,12 @@ defineExpose({
       :editor="editor"
       :file-path="filePath"
       @close="imageInsertDialogOpen = false"
+    />
+    <EditorDropAlert
+      :open="Boolean(dropErrorMessage)"
+      :message="dropErrorMessage"
+      :detail="dropTechnicalDetail"
+      @close="clearDropError"
     />
   </div>
 </template>

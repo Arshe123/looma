@@ -154,11 +154,6 @@ const normalizeInlineMenuItemsForSettings = (
     normalized.push(id)
   }
 
-  if (!seen.has('image')) {
-    const tableIndex = normalized.indexOf('table')
-    normalized.splice(tableIndex === -1 ? normalized.length : tableIndex, 0, 'image')
-  }
-
   return normalized
 }
 

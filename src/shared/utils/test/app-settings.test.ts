@@ -83,3 +83,29 @@ describe('normalizeAppSettings Agent-only migration', () => {
     expect(settings.ai).not.toHaveProperty('agent')
   })
 })
+
+describe('normalizeAppSettings inline menu customization', () => {
+  it('preserves a customized menu without the image action', () => {
+    const settings = normalizeAppSettings({
+      inlineMenu: {
+        items: ['h2', 'table', 'horizontalRule'],
+      },
+    })
+
+    expect(settings.inlineMenu.items).toEqual(['h2', 'table', 'horizontalRule'])
+  })
+
+  it('respects a hidden image action from legacy object settings', () => {
+    const settings = normalizeAppSettings({
+      inlineMenu: {
+        items: [
+          { id: 'h2', visible: true },
+          { id: 'image', visible: false },
+          { id: 'table', visible: true },
+        ],
+      },
+    })
+
+    expect(settings.inlineMenu.items).toEqual(['h2', 'table'])
+  })
+})

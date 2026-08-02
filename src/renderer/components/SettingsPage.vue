@@ -21,7 +21,7 @@ const settingSections = [
   {
     id: 'editor',
     title: '编辑器',
-    description: '配置 Markdown 编辑器的快捷插入菜单。',
+    description: '配置 Markdown 编辑器的快速插入菜单与快捷键。',
     icon: Code2,
   },
   {

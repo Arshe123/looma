@@ -13,6 +13,13 @@ import {
   resolveInlineMenuItems,
 } from '@/shared/utils/tiptap-menu-actions'
 import type { MenuAction } from '@/shared/types/MenuAction'
+import {
+  formatEditorShortcut,
+  getAdjustedHeadingLevel,
+  matchesEditorShortcut,
+  type HeadingDirection,
+  type HeadingLevel,
+} from '@/shared/utils/editor-shortcuts'
 
 const props = defineProps<{
   editor: Editor
@@ -198,9 +205,64 @@ const scrollToSelected = () => {
   }
 }
 
+const getCurrentHeadingLevel = (editor: Editor): HeadingLevel | null => {
+  for (let level = 1; level <= 6; level += 1) {
+    if (editor.isActive('heading', { level })) return level as HeadingLevel
+  }
+  return null
+}
+
+const adjustCurrentHeading = (editor: Editor, direction: HeadingDirection) => {
+  const currentLevel = getCurrentHeadingLevel(editor)
+  if (currentLevel === null) return false
+  const nextLevel = getAdjustedHeadingLevel(currentLevel, direction)
+  if (nextLevel === 'paragraph') return editor.chain().focus().setParagraph().run()
+  return editor.chain().focus().setHeading({ level: nextLevel }).run()
+}
+
+const runInlineMenuShortcut = (editor: Editor, index: number) => {
+  const item = defaultMenuItems.value[index]
+  if (!item) return false
+
+  if (item.kind === 'tablePicker') {
+    openPanel('default', 'selection')
+    tablePickerVisible.value = true
+    return true
+  }
+  if (item.kind === 'image') {
+    panelVisible.value = false
+    tablePickerVisible.value = false
+    emit('insert-image')
+    return true
+  }
+
+  item.run(editor)
+  panelVisible.value = false
+  tablePickerVisible.value = false
+  editor.commands.focus()
+  return true
+}
+
+const handleConfiguredShortcut = (event: KeyboardEvent, editor: Editor) => {
+  const shortcuts = settingsStore.editorShortcuts
+  if (matchesEditorShortcut(event, shortcuts.headingLevelUp)
+    && adjustCurrentHeading(editor, 'up')) return true
+  if (matchesEditorShortcut(event, shortcuts.headingLevelDown)
+    && adjustCurrentHeading(editor, 'down')) return true
+
+  const slotIndex = shortcuts.inlineMenuSlots.findIndex(shortcut => matchesEditorShortcut(event, shortcut))
+  return slotIndex >= 0 && runInlineMenuShortcut(editor, slotIndex)
+}
+
 const handleKeyDown = (event: KeyboardEvent) => {
   const editor = getEditor()
   if (!editor) return false
+
+  if (handleConfiguredShortcut(event, editor)) {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    return true
+  }
 
   if (event.key === 'Enter' && event.shiftKey && event.ctrlKey) {
     event.preventDefault()
@@ -354,7 +416,7 @@ onBeforeUnmount(() => {
     <div
       v-if="panelVisible"
       id="inline-panel"
-      class="absolute w-48 bg-panel border border-border-soft rounded-lg shadow-xl z-20 py-1 overflow-y-auto max-h-[220px]"
+      class="absolute w-56 bg-panel border border-border-soft rounded-lg shadow-xl z-20 py-1 overflow-y-auto max-h-[220px]"
       :style="{ top: `${panelPosition.top}px`, left: `${panelPosition.left}px` }"
     >
       <div
@@ -369,7 +431,13 @@ onBeforeUnmount(() => {
         @mouseenter="selectedIndex = index"
       >
         <component :is="item.icon" :size="16" />
-        <span>{{ item.label }}</span>
+        <span class="min-w-0 flex-1 truncate">{{ item.label }}</span>
+        <span
+          v-if="menuMode === 'default' && index < 9 && settingsStore.editorShortcuts.inlineMenuSlots[index]?.enabled"
+          class="shrink-0 rounded border border-border-soft bg-panel-soft px-1.5 py-0.5 text-[9px] text-text-muted"
+        >
+          {{ formatEditorShortcut(settingsStore.editorShortcuts.inlineMenuSlots[index]) }}
+        </span>
       </div>
 
       <div v-if="menuMode === 'default' && tablePickerVisible" class="px-3 py-2">

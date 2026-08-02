@@ -1,30 +1,212 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { Check, GripVertical, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import {
+  Check,
+  GripVertical,
+  Heading,
+  Keyboard,
+  ListTree,
+  Plus,
+  RotateCcw,
+  Trash2,
+} from 'lucide-vue-next'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import {
   getMenuActions,
   inlineMenuActionLabel,
   resolveInlineMenuItems,
 } from '@/shared/utils/tiptap-menu-actions'
+import {
+  createDefaultEditorShortcutSettings,
+  editorShortcutSignature,
+  formatEditorShortcut,
+  shortcutFromKeyboardEvent,
+  type EditorShortcutBinding,
+} from '@/shared/utils/editor-shortcuts'
+
+type ShortcutCategory = 'all' | 'heading' | 'menu' | 'modified'
+type ShortcutTarget = 'headingLevelUp' | 'headingLevelDown' | number
+type ShortcutRow = {
+  target: ShortcutTarget
+  command: string
+  description: string
+  scope: string
+  category: Exclude<ShortcutCategory, 'all' | 'modified'>
+  binding: EditorShortcutBinding
+  configured: boolean
+}
 
 const settingsStore = useSettingsStore()
+const activePanel = ref<'menu' | 'shortcuts'>('shortcuts')
+const activeShortcutCategory = ref<ShortcutCategory>('all')
 const draggedInlineMenuIndex = ref<number | null>(null)
+const recordingTarget = ref<ShortcutTarget | null>(null)
+const shortcutError = ref('')
 
 const currentInlineMenuActions = computed(() => resolveInlineMenuItems(settingsStore.inlineMenuItems))
 
 const isInlineMenuActionAdded = (id: string) => settingsStore.inlineMenuItems.includes(id)
+const targetKey = (target: ShortcutTarget) => typeof target === 'number' ? `menu-${target}` : target
+const isSameTarget = (left: ShortcutTarget, right: ShortcutTarget) => targetKey(left) === targetKey(right)
+
+const shortcutRows = computed<ShortcutRow[]>(() => {
+  const shortcuts = settingsStore.editorShortcuts
+  const menuActions = currentInlineMenuActions.value.slice(0, 9)
+  return [
+    {
+      target: 'headingLevelUp',
+      command: '提升标题级别',
+      description: 'H3 → H2 → H1，H1 保持不变',
+      scope: '标题段落',
+      category: 'heading',
+      binding: shortcuts.headingLevelUp,
+      configured: true,
+    },
+    {
+      target: 'headingLevelDown',
+      command: '降低标题级别',
+      description: 'H1 → H2 → … → H6 → 正文',
+      scope: '标题段落',
+      category: 'heading',
+      binding: shortcuts.headingLevelDown,
+      configured: true,
+    },
+    ...shortcuts.inlineMenuSlots.map((binding, index): ShortcutRow => {
+      const action = menuActions[index]
+      return {
+        target: index,
+        command: action ? `菜单第 ${index + 1} 项 · ${action.label}` : `菜单第 ${index + 1} 项 · 未配置`,
+        description: action ? '操作名称跟随快速插入菜单排序自动更新' : '当前快速插入菜单没有此位置',
+        scope: '编辑器',
+        category: 'menu',
+        binding,
+        configured: Boolean(action),
+      }
+    }),
+  ]
+})
+
+const defaultShortcutRows = computed(() => {
+  const defaults = createDefaultEditorShortcutSettings()
+  return [defaults.headingLevelUp, defaults.headingLevelDown, ...defaults.inlineMenuSlots]
+})
+
+const isRowModified = (row: ShortcutRow) => {
+  const index = shortcutRows.value.findIndex(item => isSameTarget(item.target, row.target))
+  const fallback = defaultShortcutRows.value[index]
+  return Boolean(fallback)
+    && (editorShortcutSignature(row.binding) !== editorShortcutSignature(fallback)
+      || row.binding.enabled !== fallback.enabled)
+}
+
+const visibleShortcutRows = computed(() => shortcutRows.value.filter((row) => {
+  if (activeShortcutCategory.value === 'all') return true
+  if (activeShortcutCategory.value === 'modified') return isRowModified(row)
+  return row.category === activeShortcutCategory.value
+}))
+
+const modifiedShortcutCount = computed(() => shortcutRows.value.filter(isRowModified).length)
+
+const shortcutCategories = computed(() => [
+  { id: 'all' as const, label: '全部快捷键', count: shortcutRows.value.length, icon: Keyboard },
+  { id: 'heading' as const, label: '标题编辑', count: 2, icon: Heading },
+  { id: 'menu' as const, label: '快速插入', count: 9, icon: ListTree },
+  { id: 'modified' as const, label: '已修改', count: modifiedShortcutCount.value, icon: RotateCcw },
+])
 
 const moveInlineMenuItem = (toIndex: number) => {
   if (draggedInlineMenuIndex.value === null) return
   settingsStore.moveInlineMenuItem(draggedInlineMenuIndex.value, toIndex)
   draggedInlineMenuIndex.value = null
 }
+
+const findShortcutConflict = (target: ShortcutTarget, binding: EditorShortcutBinding) =>
+  shortcutRows.value.find(row => !isSameTarget(row.target, target)
+    && editorShortcutSignature(row.binding) === editorShortcutSignature(binding))
+
+const startRecording = (target: ShortcutTarget) => {
+  shortcutError.value = ''
+  recordingTarget.value = target
+}
+
+const toggleShortcut = async (row: ShortcutRow) => {
+  shortcutError.value = ''
+  if (!row.binding.enabled) {
+    const conflict = findShortcutConflict(row.target, row.binding)
+    if (conflict?.binding.enabled) {
+      shortcutError.value = `无法启用：${formatEditorShortcut(row.binding)} 已用于“${conflict.command}”。`
+      return
+    }
+  }
+  await settingsStore.setEditorShortcut(row.target, {
+    ...row.binding,
+    enabled: !row.binding.enabled,
+  })
+}
+
+const handleShortcutRecording = async (event: KeyboardEvent) => {
+  const target = recordingTarget.value
+  if (target === null) return
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  if (event.key === 'Escape') {
+    recordingTarget.value = null
+    shortcutError.value = ''
+    return
+  }
+
+  const candidate = shortcutFromKeyboardEvent(event)
+  if (!candidate) {
+    shortcutError.value = '请按下包含 Ctrl、Alt 或 Meta 的组合键；不能使用单个字符或仅修饰键。'
+    return
+  }
+  const current = shortcutRows.value.find(row => isSameTarget(row.target, target))
+  if (!current) return
+  candidate.enabled = current.binding.enabled
+  const conflict = findShortcutConflict(target, candidate)
+  if (conflict) {
+    shortcutError.value = `${formatEditorShortcut(candidate)} 已用于“${conflict.command}”，请换一个组合键。`
+    return
+  }
+
+  await settingsStore.setEditorShortcut(target, candidate)
+  recordingTarget.value = null
+  shortcutError.value = ''
+}
+
+const resetEditorShortcuts = async () => {
+  recordingTarget.value = null
+  shortcutError.value = ''
+  await settingsStore.resetEditorShortcuts()
+}
+
+onMounted(() => window.addEventListener('keydown', handleShortcutRecording, { capture: true }))
+onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecording, { capture: true }))
 </script>
 
 <template>
   <div class="flex min-h-0 flex-col gap-4">
-    <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="flex shrink-0 items-center gap-5 border-b border-border-soft">
+      <button
+        type="button"
+        class="border-b-2 px-0.5 pb-3 text-sm transition-colors"
+        :class="activePanel === 'menu' ? 'border-accent font-medium text-text-main' : 'border-transparent text-text-muted hover:text-text-main'"
+        @click="activePanel = 'menu'"
+      >
+        快速插入菜单
+      </button>
+      <button
+        type="button"
+        class="border-b-2 px-0.5 pb-3 text-sm transition-colors"
+        :class="activePanel === 'shortcuts' ? 'border-accent font-medium text-text-main' : 'border-transparent text-text-muted hover:text-text-main'"
+        @click="activePanel = 'shortcuts'"
+      >
+        快捷键中心
+      </button>
+    </div>
+
+    <div v-if="activePanel === 'menu'" class="flex min-h-0 flex-col gap-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <div class="text-sm font-medium text-text-main">富文本编辑器快速插入菜单</div>
         <p class="mt-1 text-xs leading-5 text-text-muted">
@@ -43,10 +225,10 @@ const moveInlineMenuItem = (toIndex: number) => {
       </div>
     </div>
 
-    <div
-      class="grid grid-cols-2 min-h-0 w-max min-w-full gap-4"
-      data-testid="inline-menu-transfer-row"
-    >
+      <div
+        class="grid min-h-0 w-max min-w-full grid-cols-2 gap-4"
+        data-testid="inline-menu-transfer-row"
+      >
       <div class="flex-none rounded-lg border border-border-soft bg-surface/40 p-3">
         <div class="mb-3 flex items-center justify-between gap-3">
           <div>
@@ -123,6 +305,122 @@ const moveInlineMenuItem = (toIndex: number) => {
           </TransitionGroup>
         </div>
       </Transition>
+      </div>
+    </div>
+
+    <div v-else class="flex min-h-0 flex-1 flex-col gap-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div class="text-sm font-medium text-text-main">快捷键中心</div>
+          <p class="mt-1 text-xs leading-5 text-text-muted">
+            集中查看、启停和修改编辑器快捷键。点击组合键后直接按下新快捷键。
+          </p>
+          <p class="mt-1 text-xs leading-5 text-text-muted">
+            Ctrl + 1～9 始终对应当前快速插入菜单的前 9 项；调整菜单顺序后，命令名称与实际操作会自动更新。
+            冲突组合键不会覆盖原配置，按 Esc 可取消录入。
+          </p>
+        </div>
+        <button
+          type="button"
+          class="inline-flex items-center gap-2 rounded-md border border-border-soft bg-panel-soft px-3 py-2 text-xs text-text-main transition-colors hover:bg-accent-soft"
+          @click="resetEditorShortcuts"
+        >
+          <RotateCcw :size="14" />
+          <span>恢复默认快捷键</span>
+        </button>
+      </div>
+
+      <div
+        v-if="shortcutError"
+        class="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-5 text-text-main"
+        role="alert"
+      >
+        {{ shortcutError }}
+      </div>
+
+      <div class="grid min-h-[420px] overflow-hidden rounded-lg border border-border-soft lg:grid-cols-[190px_minmax(0,1fr)]">
+        <nav class="flex gap-1 overflow-x-auto border-b border-border-soft bg-panel-soft p-2 lg:flex-col lg:border-b-0 lg:border-r">
+          <button
+            v-for="category in shortcutCategories"
+            :key="category.id"
+            type="button"
+            class="flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-left text-xs transition-colors lg:w-full"
+            :class="activeShortcutCategory === category.id ? 'bg-panel text-text-main shadow-sm' : 'text-text-muted hover:bg-panel/70 hover:text-text-main'"
+            @click="activeShortcutCategory = category.id"
+          >
+            <component :is="category.icon" :size="15" class="shrink-0" />
+            <span class="min-w-0 flex-1">
+              <span class="block whitespace-nowrap font-medium">{{ category.label }}</span>
+              <span class="mt-0.5 block text-[10px] text-text-subtle">{{ category.count }} 个命令</span>
+            </span>
+          </button>
+        </nav>
+
+        <div class="min-w-0 overflow-auto p-3 lg:p-4">
+          <div class="min-w-[360px] md:min-w-[560px]">
+            <div class="hidden grid-cols-[minmax(180px,1fr)_100px_140px_54px] gap-3 px-3 pb-2 text-[10px] text-text-subtle md:grid">
+              <span>命令</span>
+              <span>作用范围</span>
+              <span>快捷键</span>
+              <span class="text-center">启用</span>
+            </div>
+
+            <div v-if="visibleShortcutRows.length" class="overflow-hidden rounded-lg border border-border-soft">
+              <div
+                v-for="row in visibleShortcutRows"
+                :key="targetKey(row.target)"
+                class="grid grid-cols-[minmax(120px,1fr)_112px_42px] items-center gap-3 border-b border-border-soft px-3 py-3 last:border-b-0 md:grid-cols-[minmax(180px,1fr)_100px_140px_54px]"
+                :class="!row.configured ? 'bg-panel-soft/50' : 'bg-panel'"
+              >
+                <div class="min-w-0">
+                  <div class="truncate text-xs font-medium" :class="row.configured ? 'text-text-main' : 'text-text-muted'">
+                    {{ row.command }}
+                  </div>
+                  <div class="mt-1 truncate text-[10px] text-text-muted">{{ row.description }}</div>
+                </div>
+                <span class="hidden w-fit rounded bg-panel-soft px-2 py-1 text-[10px] text-text-muted md:inline-flex">
+                  {{ row.scope }}
+                </span>
+                <button
+                  type="button"
+                  class="min-w-0 rounded-md border px-2 py-2 text-[10px] transition-colors"
+                  :class="isSameTarget(recordingTarget ?? 'headingLevelUp', row.target) && recordingTarget !== null
+                    ? 'border-accent bg-accent-soft text-accent'
+                    : 'border-border-soft bg-panel-soft text-text-main hover:border-accent/60'"
+                  :aria-label="`修改${row.command}快捷键`"
+                  @click="startRecording(row.target)"
+                >
+                  <span class="block truncate">
+                    {{ isSameTarget(recordingTarget ?? 'headingLevelUp', row.target) && recordingTarget !== null
+                      ? '请按组合键…'
+                      : formatEditorShortcut(row.binding) }}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="relative mx-auto h-[18px] w-8 rounded-full transition-colors"
+                  :class="row.binding.enabled ? 'bg-accent' : 'bg-text-subtle'"
+                  :aria-label="`${row.binding.enabled ? '禁用' : '启用'}${row.command}`"
+                  :aria-pressed="row.binding.enabled"
+                  @click="toggleShortcut(row)"
+                >
+                  <span
+                    class="absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-all"
+                    :class="row.binding.enabled ? 'left-[17px]' : 'left-0.5'"
+                  />
+                </button>
+              </div>
+            </div>
+
+            <div
+              v-else
+              class="rounded-lg border border-dashed border-border-soft px-4 py-12 text-center text-xs text-text-muted"
+            >
+              当前分类没有已修改的快捷键。
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>

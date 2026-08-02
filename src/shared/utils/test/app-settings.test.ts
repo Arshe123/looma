@@ -109,3 +109,45 @@ describe('normalizeAppSettings inline menu customization', () => {
     expect(settings.inlineMenu.items).toEqual(['h2', 'table'])
   })
 })
+
+describe('normalizeAppSettings editor shortcuts', () => {
+  it('adds default editor shortcuts to existing settings', () => {
+    const settings = normalizeAppSettings({ inlineMenu: { items: ['h2'] } })
+
+    expect(settings.editor.shortcuts.headingLevelUp).toMatchObject({
+      key: '=',
+      ctrl: true,
+      enabled: true,
+    })
+    expect(settings.editor.shortcuts.inlineMenuSlots).toHaveLength(9)
+  })
+
+  it('preserves customized and disabled shortcut bindings', () => {
+    const settings = normalizeAppSettings({
+      editor: {
+        shortcuts: {
+          headingLevelDown: {
+            key: 'j',
+            ctrl: true,
+            alt: true,
+            enabled: false,
+          },
+          inlineMenuSlots: [
+            { key: 'F1', ctrl: true, enabled: false },
+          ],
+        },
+      },
+    })
+
+    expect(settings.editor.shortcuts.headingLevelDown).toMatchObject({
+      key: 'J',
+      ctrl: true,
+      alt: true,
+      enabled: false,
+    })
+    expect(settings.editor.shortcuts.inlineMenuSlots[0]).toMatchObject({
+      key: 'F1',
+      enabled: false,
+    })
+  })
+})

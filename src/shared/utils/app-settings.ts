@@ -1,4 +1,9 @@
 import { DEFAULT_INLINE_MENU_ACTION_IDS } from '../constants/MenuConst'
+import {
+  createDefaultEditorShortcutSettings,
+  normalizeEditorShortcutSettings,
+  type EditorShortcutSettings,
+} from './editor-shortcuts'
 
 export type AiProvider = 'ollama' | 'openai' | 'deepseek' | 'qwen' | 'custom'
 
@@ -25,6 +30,9 @@ export type ConversationContextStrategy = 'sliding_window' | 'summary'
 export interface AppSettings {
   inlineMenu: {
     items: string[]
+  }
+  editor: {
+    shortcuts: EditorShortcutSettings
   }
   ai: {
     chat: ChatProviderConfig & {
@@ -164,6 +172,9 @@ const createDefaultAppSettings = (): AppSettings => {
   return {
     inlineMenu: {
       items: defaultInlineMenuItems(),
+    },
+    editor: {
+      shortcuts: createDefaultEditorShortcutSettings(),
     },
     ai: {
       chat: {
@@ -322,6 +333,7 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
   const items = inlineMenu && typeof inlineMenu === 'object'
     ? (inlineMenu as { items?: unknown }).items
     : undefined
+  const editor = asRecord((value as { editor?: unknown }).editor)
   const ai = (value as { ai?: unknown }).ai
   const rawAi = asRecord(ai)
 
@@ -356,6 +368,9 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
   return {
     inlineMenu: {
       items: normalizeInlineMenuItemsForSettings(items),
+    },
+    editor: {
+      shortcuts: normalizeEditorShortcutSettings(editor.shortcuts),
     },
     ai: {
       chat: {

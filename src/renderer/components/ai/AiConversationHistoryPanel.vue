@@ -154,8 +154,13 @@ const toggleFavorite = async (conversation: AiAssistantConversation) => {
   workspaceStore.toggleFavoriteAiAssistantConversation(conversation.id, category)
 }
 
-const deleteConversation = (conversation: AiAssistantConversation) => {
-  const ok = window.confirm(`删除对话「${conversation.title || '新对话'}」？此操作不可恢复。`)
+const deleteConversation = async (conversation: AiAssistantConversation) => {
+  const ok = await workspaceStore.requestConfirmation({
+    title: '删除对话',
+    message: `删除对话「${conversation.title || '新对话'}」？此操作不可恢复。`,
+    confirmText: '删除',
+    danger: true,
+  })
   if (!ok) return
   workspaceStore.deleteAiAssistantConversation(conversation.id)
   selectedIds.value = selectedIds.value.filter(id => id !== conversation.id)
@@ -184,8 +189,13 @@ const setSelectedArchived = (archived: boolean) => {
   clearSelection()
 }
 
-const deleteSelected = () => {
-  const ok = window.confirm(`删除已选择的 ${selectedIds.value.length} 个对话？此操作不可恢复。`)
+const deleteSelected = async () => {
+  const ok = await workspaceStore.requestConfirmation({
+    title: '批量删除对话',
+    message: `删除已选择的 ${selectedIds.value.length} 个对话？此操作不可恢复。`,
+    confirmText: '删除',
+    danger: true,
+  })
   if (!ok) return
   workspaceStore.deleteAiAssistantConversations(selectedIds.value)
   clearSelection()

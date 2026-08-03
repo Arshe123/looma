@@ -39,6 +39,15 @@ import { LARGE_NOTE_BYTES, NOTE_INITIAL_CHUNK_BYTES, NOTE_NEXT_CHUNK_BYTES } fro
 export type { AgentDiffViewState, AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, AiAssistantTimelineOutput, AiAssistantTimelineOutputType, AiAssistantTimelineStep, AiAssistantTimelineStepStatus, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceMeta, WorkspaceTab } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
+let pendingConfirmationResolve: ((confirmed: boolean) => void) | null = null
+
+export type ConfirmationDialogOptions = {
+  title: string
+  message: string
+  confirmText?: string
+  cancelText?: string
+  danger?: boolean
+}
 let systemThemeCleanup: (() => void) | null = null
 
 const createAiConversationId = () => `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -375,6 +384,12 @@ export const useWorkspaceStore = defineStore('workspace', {
     inputDialogTitle: '' as string,
     inputDialogPlaceholder: '' as string,
     inputDialogValue: '' as string,
+    confirmationDialogOpen: false as boolean,
+    confirmationDialogTitle: '' as string,
+    confirmationDialogMessage: '' as string,
+    confirmationDialogConfirmText: '确定' as string,
+    confirmationDialogCancelText: '取消' as string,
+    confirmationDialogDanger: false as boolean,
     commandPaletteOpen: false as boolean,
     commandPaletteQuery: '' as string,
   }),
@@ -441,6 +456,10 @@ export const useWorkspaceStore = defineStore('workspace', {
   },
   actions: {
     requestTextInput(title: string, defaultValue = '', placeholder = ''): Promise<string | null> {
+      this.closeCommandPalette()
+      if (pendingConfirmationResolve || this.confirmationDialogOpen) {
+        this.cancelConfirmation()
+      }
       if (pendingTextInputResolve) {
         pendingTextInputResolve(null)
         pendingTextInputResolve = null
@@ -473,6 +492,50 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.inputDialogPlaceholder = ''
       this.inputDialogValue = ''
       resolve?.(null)
+    },
+
+    requestConfirmation(options: ConfirmationDialogOptions): Promise<boolean> {
+      this.closeCommandPalette()
+      if (pendingTextInputResolve || this.inputDialogOpen) {
+        this.cancelTextInput()
+      }
+      if (pendingConfirmationResolve) {
+        pendingConfirmationResolve(false)
+        pendingConfirmationResolve = null
+      }
+      this.confirmationDialogTitle = options.title
+      this.confirmationDialogMessage = options.message
+      this.confirmationDialogConfirmText = options.confirmText?.trim() || '确定'
+      this.confirmationDialogCancelText = options.cancelText?.trim() || '取消'
+      this.confirmationDialogDanger = Boolean(options.danger)
+      this.confirmationDialogOpen = true
+      return new Promise((resolve) => {
+        pendingConfirmationResolve = resolve
+      })
+    },
+
+    acceptConfirmation() {
+      const resolve = pendingConfirmationResolve
+      pendingConfirmationResolve = null
+      this.confirmationDialogOpen = false
+      this.confirmationDialogTitle = ''
+      this.confirmationDialogMessage = ''
+      this.confirmationDialogConfirmText = '确定'
+      this.confirmationDialogCancelText = '取消'
+      this.confirmationDialogDanger = false
+      resolve?.(true)
+    },
+
+    cancelConfirmation() {
+      const resolve = pendingConfirmationResolve
+      pendingConfirmationResolve = null
+      this.confirmationDialogOpen = false
+      this.confirmationDialogTitle = ''
+      this.confirmationDialogMessage = ''
+      this.confirmationDialogConfirmText = '确定'
+      this.confirmationDialogCancelText = '取消'
+      this.confirmationDialogDanger = false
+      resolve?.(false)
     },
 
     toggleTheme() {
@@ -526,6 +589,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     openCommandPalette(initialQuery = '') {
+      if (this.inputDialogOpen || this.confirmationDialogOpen) return
       this.commandPaletteQuery = initialQuery
       this.commandPaletteOpen = true
     },

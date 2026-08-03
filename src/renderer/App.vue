@@ -6,6 +6,7 @@ import { useOllamaStore } from '@/renderer/stores/ollama';
 import { useDownloadsStore } from '@/renderer/stores/downloads';
 import TopBar from '@/renderer/components/TopBar.vue';
 import InputDialog from '@/renderer/components/InputDialog.vue';
+import ConfirmationDialog from '@/renderer/components/ConfirmationDialog.vue';
 import Sidebar from '@/renderer/components/Sidebar.vue';
 import MainContent from '@/renderer/components/MainContent.vue';
 import CommandPalette from '@/renderer/components/CommandPalette.vue';
@@ -91,6 +92,7 @@ onMounted(() => {
   window.addEventListener('resize', onWindowResize)
 
   keyHandler = (e: KeyboardEvent) => {
+    if (workspaceStore.inputDialogOpen || workspaceStore.confirmationDialogOpen) return
     if (e.ctrlKey && !e.shiftKey && (e.key === 'o' || e.key === 'O')) {
       e.preventDefault()
       workspaceStore.openWorkspaceInNewWindowFlow()
@@ -144,6 +146,7 @@ onUnmounted(() => {
       </div>
     </div>
     <InputDialog />
+    <ConfirmationDialog />
     <CommandPalette />
     <AppMessages />
   </div>

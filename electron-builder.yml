@@ -1,0 +1,49 @@
+appId: com.looma
+productName: Looma
+
+directories:
+  output: out/make/nsis
+  buildResources: resources
+
+asar: true
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - resources/icon.png
+  - package.json
+  - "!**/*.map"
+
+extraResources:
+  - from: build/python-service/looma-agent-service
+    to: looma-agent-service
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: icon.ico
+  artifactName: "${productName}-${version}-Setup.${ext}"
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Looma
+  installerIcon: icon.ico
+  uninstallerIcon: icon.ico
+  uninstallDisplayName: "${productName} ${version}"
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true

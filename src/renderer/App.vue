@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
-import { useWorkspaceStore } from '@/renderer/stores/workspace';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { useWorkspaceStore, type SidebarPanelId } from '@/renderer/stores/workspace';
 import { useSettingsStore } from '@/renderer/stores/settings';
 import { useOllamaStore } from '@/renderer/stores/ollama';
 import { useDownloadsStore } from '@/renderer/stores/downloads';
@@ -11,31 +11,35 @@ import Sidebar from '@/renderer/components/Sidebar.vue';
 import MainContent from '@/renderer/components/MainContent.vue';
 import CommandPalette from '@/renderer/components/CommandPalette.vue';
 import AppMessages from '@/renderer/components/AppMessages.vue';
+import {
+  DEFAULT_SIDEBAR_WIDTH,
+  MIN_EXPANDED_SIDEBAR_WIDTH,
+  SIDEBAR_WIDTH_STORAGE_KEY,
+  clampExpandedSidebarWidth,
+  parseStoredSidebarWidth,
+  shouldCloseSidebarOnResize,
+  shouldOpenSidebarOnResize,
+} from '@/renderer/utils/sidebar-layout';
 
 const workspaceStore = useWorkspaceStore();
 const settingsStore = useSettingsStore();
 const ollamaStore = useOllamaStore();
 const downloadsStore = useDownloadsStore();
 
-const SIDEBAR_WIDTH_KEY = 'looma.sidebarWidth'
-const defaultSidebarWidth = 320
-const minSidebarWidth = 56
-const minMainContentWidth = 360
-
 const readStoredSidebarWidth = () => {
-  if (typeof localStorage === 'undefined') return defaultSidebarWidth
-  const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
-  return Number.isFinite(stored) ? stored : defaultSidebarWidth
+  if (typeof localStorage === 'undefined') return DEFAULT_SIDEBAR_WIDTH
+  return parseStoredSidebarWidth(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY))
 }
 
 const clampSidebarWidth = (width: number) => {
-  const maxWidth = typeof window === 'undefined'
-    ? 720
-    : Math.max(minSidebarWidth, window.innerWidth - minMainContentWidth)
-  return Math.min(Math.max(width, minSidebarWidth), maxWidth)
+  const viewportWidth = typeof window === 'undefined'
+    ? MIN_EXPANDED_SIDEBAR_WIDTH + 720
+    : window.innerWidth
+  return clampExpandedSidebarWidth(width, viewportWidth)
 }
 
 const sidebarWidth = ref(clampSidebarWidth(readStoredSidebarWidth()))
+const lastOpenSidebarPanel = ref<SidebarPanelId>('files')
 let keyHandler: ((e: KeyboardEvent) => void) | null = null
 let cleanupAppCommand: null | (() => void) = null
 let isResizingSidebar = false
@@ -44,7 +48,7 @@ let previousBodyUserSelect = ''
 
 const persistSidebarWidth = () => {
   if (typeof localStorage === 'undefined') return
-  localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(sidebarWidth.value)))
+  localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(sidebarWidth.value)))
 }
 
 const stopSidebarResize = () => {
@@ -60,8 +64,28 @@ const stopSidebarResize = () => {
 
 const onSidebarResizeMove = (e: PointerEvent) => {
   if (!isResizingSidebar) return
+  const isOpen = workspaceStore.activeSidebarPanel !== null
+  if (shouldOpenSidebarOnResize(e.clientX, isOpen)) {
+    sidebarWidth.value = clampSidebarWidth(e.clientX)
+    workspaceStore.setActiveSidebarPanel(lastOpenSidebarPanel.value)
+    return
+  }
+  if (shouldCloseSidebarOnResize(e.clientX, isOpen)) {
+    sidebarWidth.value = MIN_EXPANDED_SIDEBAR_WIDTH
+    workspaceStore.setActiveSidebarPanel(null)
+    stopSidebarResize()
+    return
+  }
   sidebarWidth.value = clampSidebarWidth(e.clientX)
 }
+
+watch(
+  () => workspaceStore.activeSidebarPanel,
+  (panel) => {
+    if (panel) lastOpenSidebarPanel.value = panel
+  },
+  { immediate: true },
+)
 
 const onWindowResize = () => {
   const nextWidth = clampSidebarWidth(sidebarWidth.value)

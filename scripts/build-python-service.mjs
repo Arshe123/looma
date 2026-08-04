@@ -41,6 +41,10 @@ const args = [
   '--hidden-import', 'uvicorn.protocols.http.auto',
   '--hidden-import', 'uvicorn.protocols.websockets.auto',
   '--hidden-import', 'uvicorn.lifespan.on',
+  // llama-index-core does not require NLTK for Looma's vector-store paths,
+  // but PyInstaller discovers it as an optional dependency and installs an
+  // NLTK runtime hook that prevents the frozen service from starting.
+  '--exclude-module', 'nltk',
   entrypoint,
 ]
 

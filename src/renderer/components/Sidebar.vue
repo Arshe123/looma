@@ -4,6 +4,7 @@ import { Bot, Folders, GitBranch, Monitor, Moon, Sun, TableOfContents, UserRound
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import type { SidebarPanelId } from '@/renderer/stores/workspace'
 import type { LoginUser } from '@/renderer/services/authApi'
+import { SIDEBAR_TOOLBAR_WIDTH } from '@/renderer/utils/sidebar-layout'
 
 import AiAssistant from './ai/AiAssistant.vue'
 import AuthModal from './auth/AuthModal.vue'
@@ -29,7 +30,7 @@ const userMenuOpen = ref(false)
 const feedbackModalOpen = ref(false)
 const updateModalOpen = ref(false)
 const appVersion = ref('0.0.0')
-const toolbarWidth = 56
+const toolbarWidth = SIDEBAR_TOOLBAR_WIDTH
 const panelWidth = computed(() => Math.max(0, props.width - toolbarWidth))
 const isOpen = computed(() => workspaceStore.activeSidebarPanel !== null)
 const isMarkdownActive = computed(() => workspaceStore.activeFileRelativePath.toLowerCase().endsWith('.md'))

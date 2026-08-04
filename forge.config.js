@@ -4,11 +4,19 @@ import electronFuses from '@electron/fuses';
 const { FusesPlugin } = pluginFuses;
 const { FuseV1Options, FuseVersion } = electronFuses;
 
+const releaseOnlyIgnore = new RegExp(
+  `^[\\\\/](?:\\.agents|\\.codex|\\.hermes|\\.idea|\\.looma|\\.pytest_cache|\\.vscode|build|docs|out|public|rag-service|scripts|src)(?:[\\\\/]|$)`,
+  'i',
+);
+
 export default {
   packagerConfig: {
     name: 'looma',
     asar: true,
     icon: './resources/icon',
+    // Only compiled output and production dependencies belong in app.asar.
+    // The Python service is copied once via extraResource below.
+    ignore: [releaseOnlyIgnore, /\.map$/i],
     extraResource: [
       './build/python-service/looma-agent-service',
     ],

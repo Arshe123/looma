@@ -166,8 +166,11 @@ if (!gotLock) {
     }
   });
 
-  app.whenReady().then(async () => {
-    await startBundledRagService().catch((error) => {
+  app.whenReady().then(() => {
+    // The Python sidecar can take several seconds to cold-start. It is not
+    // required to render the workspace shell, so never put it on the window's
+    // critical startup path.
+    void startBundledRagService().catch((error) => {
       console.error(`[python-service] ${error instanceof Error ? error.message : String(error)}`);
     });
     workspaceService

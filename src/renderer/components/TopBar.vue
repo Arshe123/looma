@@ -2,8 +2,10 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Minus, Square, X, ChevronDown, FolderOpen, Plus, Command } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../stores/workspace'
+import { isMacPlatform } from '../../shared/utils/window-chrome'
 
 const workspaceStore = useWorkspaceStore()
+const isMac = isMacPlatform((window as any).electronAPI?.platform ?? '')
 
 const workspaceName = computed(() => workspaceStore.activeWorkspace?.name || '未打开工作空间')
 const recentWorkspaces = computed(() => {
@@ -91,7 +93,10 @@ onUnmounted(() => {
 
 <template>
   <header class="h-12 w-full" style="-webkit-app-region: drag">
-    <div class="h-full flex items-center justify-between gap-3 px-2">
+    <div
+      class="h-full flex items-center justify-between gap-3 px-2"
+      :style="isMac ? { paddingLeft: '78px' } : undefined"
+    >
       <div class="flex items-center gap-2 min-w-0" style="-webkit-app-region: no-drag">
         <div class="relative" data-workspace-menu>
           <button
@@ -144,7 +149,7 @@ onUnmounted(() => {
                 <FolderOpen :size="16" class="text-text-muted" />
                 打开工作空间
               </span>
-              <span class="text-[11px] text-text-subtle">Ctrl+O</span>
+              <span class="text-[11px] text-text-subtle">Ctrl/Cmd+O</span>
             </button>
 
             <button
@@ -155,7 +160,7 @@ onUnmounted(() => {
                 <Plus :size="16" class="text-text-muted" />
                 新建工作空间（选择创建的位置）
               </span>
-              <span class="text-[11px] text-text-subtle">Ctrl+Shift+N</span>
+              <span class="text-[11px] text-text-subtle">Ctrl/Cmd+Shift+N</span>
             </button>
 
             <button
@@ -166,13 +171,13 @@ onUnmounted(() => {
                 <Command :size="16" class="text-text-muted" />
                 打开命令面板
               </span>
-              <span class="text-[11px] text-text-subtle">Ctrl+Shift+P</span>
+              <span class="text-[11px] text-text-subtle">Ctrl/Cmd+Shift+P</span>
             </button>
           </div>
         </div>
       </div>
 
-      <div class="flex items-center gap-1" style="-webkit-app-region: no-drag">
+      <div v-if="!isMac" class="flex items-center gap-1" style="-webkit-app-region: no-drag">
         <button
           class="w-9 h-9 inline-flex items-center justify-center rounded-md text-text-muted hover:bg-accent-soft"
           title="最小化"

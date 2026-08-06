@@ -117,17 +117,18 @@ onMounted(() => {
 
   keyHandler = (e: KeyboardEvent) => {
     if (workspaceStore.inputDialogOpen || workspaceStore.confirmationDialogOpen) return
-    if (e.ctrlKey && !e.shiftKey && (e.key === 'o' || e.key === 'O')) {
+    const commandKey = e.ctrlKey || e.metaKey
+    if (commandKey && !e.shiftKey && (e.key === 'o' || e.key === 'O')) {
       e.preventDefault()
       workspaceStore.openWorkspaceInNewWindowFlow()
       return
     }
-    if (e.ctrlKey && e.shiftKey && (e.key === 'n' || e.key === 'N')) {
+    if (commandKey && e.shiftKey && (e.key === 'n' || e.key === 'N')) {
       e.preventDefault()
       workspaceStore.newWorkspaceInNewWindowFlow()
       return
     }
-    if (e.ctrlKey && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+    if (commandKey && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
       e.preventDefault()
       if (workspaceStore.commandPaletteOpen) workspaceStore.closeCommandPalette()
       else workspaceStore.openCommandPalette()

@@ -3,13 +3,27 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from config import default_ai_config, load_global_ai_config, load_global_knowledge_config
+from config import _settings_path_candidates, default_ai_config, load_global_ai_config, load_global_knowledge_config
 from rag.index_manager import current_metadata, validate_metadata_compatibility
 from schemas import AIConfig, ChatModelConfig, EmbeddingModelConfig, IndexRequest, KnowledgeConfig, WorkspaceContext
 
 
 class ChunkingStrategyRegressionTest(unittest.TestCase):
+    def test_global_settings_uses_macos_application_support_fallback(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("config.platform.system", return_value="Darwin"),
+            patch("config.Path.home", return_value=Path("/Users/tester")),
+        ):
+            candidates = _settings_path_candidates()
+
+        self.assertEqual(
+            candidates[0],
+            Path("/Users/tester/Library/Application Support/workspace-meta/looma/settings.json"),
+        )
+
     def test_knowledge_config_accepts_markdown_chunking_strategy(self):
         knowledge = KnowledgeConfig(chunking_strategy="markdown")
 

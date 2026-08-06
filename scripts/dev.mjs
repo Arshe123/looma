@@ -3,11 +3,18 @@ import { createRequire } from 'node:module'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
+import { resolveRagPython } from './python-runtime.mjs'
+import { childSignalForParentSignal, isChildRunning } from './shutdown-policy.mjs'
 
 const require = createRequire(import.meta.url)
 const electronBinary = require('electron')
-const pythonBinary = process.env.RAG_PYTHON || 'E:\\anaconda3\\python.exe'
+const projectRoot = path.resolve(import.meta.dirname, '..')
+const pythonBinary = resolveRagPython({
+  projectRoot,
+  existsSync: fsSync.existsSync,
+})
 let devServerUrl = null
 let electron = null
 let renderer = null
@@ -15,8 +22,6 @@ let ragService = null
 let shuttingDown = false
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-
-const isRunning = (child) => child && child.exitCode == null && !child.killed
 
 const forceKillProcessTree = (child) => {
   if (!child?.pid || process.platform !== 'win32') return Promise.resolve()
@@ -31,19 +36,30 @@ const forceKillProcessTree = (child) => {
 }
 
 const stopChild = async (child, signal = 'SIGTERM') => {
-  if (!isRunning(child)) return
+  if (!isChildRunning(child)) return
 
   const exited = new Promise((resolve) => {
     child.once('exit', () => resolve())
   })
 
-  try {
-    child.kill(signal)
-  } catch {}
+  if (signal) {
+    try {
+      child.kill(signal)
+    } catch {}
+  }
 
   await Promise.race([exited, wait(2500)])
-  if (isRunning(child)) {
-    await forceKillProcessTree(child)
+  if (isChildRunning(child)) {
+    if (!signal) {
+      try {
+        child.kill('SIGTERM')
+      } catch {}
+      await Promise.race([exited, wait(1000)])
+    }
+    if (isChildRunning(child)) {
+      if (process.platform === 'win32') await forceKillProcessTree(child)
+      else child.kill('SIGKILL')
+    }
   }
 }
 
@@ -122,8 +138,11 @@ const ragPort = useExternalRagService
 const ragServiceUrl = useExternalRagService && process.env.RAG_SERVICE_URL
   ? process.env.RAG_SERVICE_URL
   : `http://127.0.0.1:${ragPort}`
+const defaultAppDataPath = process.platform === 'darwin'
+  ? path.join(os.homedir(), 'Library', 'Application Support')
+  : process.env.APPDATA
 const loomaSettingsPath = process.env.LOOMA_SETTINGS_PATH
-  || (process.env.APPDATA ? path.join(process.env.APPDATA, 'workspace-meta', 'looma', 'settings.json') : '')
+  || (defaultAppDataPath ? path.join(defaultAppDataPath, 'workspace-meta', 'looma', 'settings.json') : '')
 
 if (useExternalRagService) {
   process.stdout.write(`[rag] using external service ${ragServiceUrl}\n`)
@@ -272,7 +291,7 @@ renderer?.on('error', (err) => {
 })
 
 process.on('SIGINT', () => {
-  shutdown(0, 'SIGINT').catch(() => process.exit(1))
+  shutdown(0, childSignalForParentSignal('SIGINT')).catch(() => process.exit(1))
 })
 
 process.on('SIGTERM', () => {

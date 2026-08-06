@@ -6,6 +6,8 @@ import { fileSystemService } from './services/file/fileSystemService';
 import { abortAllAgentRuns } from './ipc/agentIpc';
 import { setWindowTitleForWorkspace } from './ipc/workspaceIpc';
 import { startBundledRagService, stopBundledRagService } from './services/rag/ragServiceProcess';
+import { prepareWindowsForQuit } from './services/app/quitCoordinator';
+import { getWindowChromeOptions } from '../shared/utils/window-chrome';
 import './ipc/appSettingsIpc';
 import './ipc/ragIpc';
 import './ipc/appIpc';
@@ -14,9 +16,11 @@ import './ipc/fsIpc';
 import './ipc/ollamaIpc';
 
 let mainWindow: BrowserWindow | null = null;
+let quitInProgress = false;
+let quitAllowed = false;
 
 app.setAppUserModelId('com.looma')
-app.setName('looma');
+app.setName('Looma');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,12 +32,12 @@ const buildAppMenu = (win: BrowserWindow) => {
       submenu: [
         {
           label: '打开工作空间（新窗口）…',
-          accelerator: 'Ctrl+O',
+          accelerator: 'CommandOrControl+O',
           click: () => win.webContents.send('app:command', { id: 'workspace.switch' }),
         },
         {
           label: '新建工作空间（新窗口）…',
-          accelerator: 'Ctrl+Shift+N',
+          accelerator: 'CommandOrControl+Shift+N',
           click: () => win.webContents.send('app:command', { id: 'workspace.new' }),
         },
         { type: 'separator' },
@@ -66,6 +70,22 @@ const buildAppMenu = (win: BrowserWindow) => {
       ],
     },
   ];
+  if (process.platform === 'darwin') {
+    template.unshift({
+      label: app.name,
+      submenu: [
+        { role: 'about', label: `关于 ${app.name}` },
+        { type: 'separator' },
+        { role: 'services', label: '服务' },
+        { type: 'separator' },
+        { role: 'hide', label: `隐藏 ${app.name}` },
+        { role: 'hideOthers', label: '隐藏其他' },
+        { role: 'unhide', label: '全部显示' },
+        { type: 'separator' },
+        { role: 'quit', label: `退出 ${app.name}` },
+      ],
+    });
+  }
   return Menu.buildFromTemplate(template);
 };
 
@@ -107,6 +127,7 @@ function createWindow(initialWorkspaceId?: string) {
   };
 
   const position = getWindowPosition(defaultWidth, defaultHeight);
+  const windowChromeOptions = getWindowChromeOptions(process.platform);
   const preloadPath = process.env.VITE_DEV_SERVER_URL
     ? path.join(process.cwd(), 'dist-electron', 'preload.cjs')
     : path.join(__dirname, 'preload.cjs');
@@ -116,13 +137,12 @@ function createWindow(initialWorkspaceId?: string) {
     height: defaultHeight,
     x: position.x,
     y: position.y,
-    frame: false,
+    ...windowChromeOptions,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
     },
-    titleBarStyle: 'hidden',
   });
 
   mainWindow = win;
@@ -184,19 +204,19 @@ if (!gotLock) {
         createWindow();
       });
   });
+
+  app.on('activate', () => {
+    if (!quitInProgress && BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
 }
 
-let isQuitting = false;
-
-app.on('before-quit', async (e) => {
-  if (isQuitting) return;
-  e.preventDefault();
-  isQuitting = true;
-
+const finishAppQuit = async () => {
   abortAllAgentRuns();
-  await stopBundledRagService();
-  
+
   try {
+    await prepareWindowsForQuit(BrowserWindow.getAllWindows());
+    await stopBundledRagService();
+
     const state = await workspaceService.getState();
     if (state.success && state.data) {
       for (const ws of state.data.workspaces) {
@@ -204,10 +224,22 @@ app.on('before-quit', async (e) => {
       }
     }
   } catch (error) {
-    // Ignore errors during quit
+    console.error(`[quit] ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    // The second app.quit() must not be intercepted. Any renderer that did not
+    // acknowledge the save request has already been closed by the coordinator's
+    // timeout fallback.
+    quitAllowed = true;
+    app.quit();
   }
-  
-  app.quit();
+};
+
+app.on('before-quit', (e) => {
+  if (quitAllowed) return;
+  e.preventDefault();
+  if (quitInProgress) return;
+  quitInProgress = true;
+  void finishAppQuit();
 });
 
 // 关闭所有窗口时退出应用 (Windows & Linux)

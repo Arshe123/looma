@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,8 @@ def _settings_path_candidates() -> list[Path]:
         candidates.append(Path(appdata) / "workspace-meta" / "looma" / "settings.json")
 
     home = Path.home()
+    if platform.system() == "Darwin":
+        candidates.append(home / "Library" / "Application Support" / "workspace-meta" / "looma" / "settings.json")
     candidates.append(home / "AppData" / "Roaming" / "workspace-meta" / "looma" / "settings.json")
     candidates.append(home / ".config" / "looma" / "settings.json")
     return candidates

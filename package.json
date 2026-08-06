@@ -21,9 +21,13 @@
     "test": "vitest",
     "prepackage": "npm run build:release",
     "premake": "npm run build:release",
+    "premake:win": "npm run build:release",
+    "premake:mac": "npm run build:release",
     "start": "electron-forge start",
     "package": "electron-forge package",
-    "make": "electron-builder --win nsis"
+    "make": "electron-builder",
+    "make:win": "electron-builder --win nsis",
+    "make:mac": "electron-builder --mac dmg zip"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.2.4",

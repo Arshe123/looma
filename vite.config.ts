@@ -29,6 +29,9 @@ export default defineConfig(({ mode }) => {
               {
                 // Main process entry
                 entry: 'src/main/index.ts',
+                // scripts/dev.mjs owns the Electron process so it can shut down
+                // Electron, Vite, and the Python sidecar as one process tree.
+                onstart: () => {},
               },
             ]),
             renderer(),

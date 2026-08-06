@@ -10,8 +10,8 @@ const workRoot = path.join(projectRoot, 'build', 'pyinstaller-work')
 const requirements = path.join(serviceRoot, 'requirements.txt')
 const entrypoint = path.join(serviceRoot, 'service_entry.py')
 
-if (process.platform !== 'win32') {
-  throw new Error('当前 Python 服务打包脚本只配置了 Windows 目标，请在对应平台补充并验证 PyInstaller 产物。')
+if (!['win32', 'darwin'].includes(process.platform)) {
+  throw new Error(`当前 Python 服务打包脚本尚未支持 ${process.platform}。`)
 }
 
 fs.rmSync(outputRoot, { recursive: true, force: true })
@@ -65,7 +65,10 @@ child.on('exit', (code) => {
     return
   }
 
-  const executable = path.join(outputRoot, 'looma-agent-service', 'looma-agent-service.exe')
+  const executableName = process.platform === 'win32'
+    ? 'looma-agent-service.exe'
+    : 'looma-agent-service'
+  const executable = path.join(outputRoot, 'looma-agent-service', executableName)
   if (!fs.existsSync(executable)) {
     console.error(`[python-service] 打包完成但未找到服务程序: ${executable}`)
     process.exitCode = 1

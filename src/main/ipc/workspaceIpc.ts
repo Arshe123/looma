@@ -88,8 +88,8 @@ ipcMain.handle('workspace:new', async (_, parentDir: string, name: string, templ
         '',
         '这是一个新的工作空间。',
         '',
-        '- Ctrl+O：切换工作空间',
-        '- Ctrl+Shift+N：新建工作空间',
+        '- Ctrl/Cmd+O：切换工作空间',
+        '- Ctrl/Cmd+Shift+N：新建工作空间',
         '',
       ].join('\n');
       await fs.writeFile(path.join(dest, 'Welcome.md'), md, 'utf-8');

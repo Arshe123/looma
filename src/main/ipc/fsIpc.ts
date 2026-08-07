@@ -39,6 +39,16 @@ ipcMain.handle('fs:copyExternal', async (_, workspaceId: string, sourcePaths: st
   return await fileSystemService.copyExternalEntries(workspacePath, sourcePaths, targetDirRelativePath);
 });
 
+ipcMain.handle('fs:copyEntries', async (_, workspaceId: string, fromRelativePaths: string[], targetDirRelativePath: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  return await fileSystemService.copyEntries(workspacePath, fromRelativePaths, targetDirRelativePath);
+});
+
+ipcMain.handle('fs:clipboardReadFiles', async () => {
+  return await fileSystemService.readClipboardFilePaths();
+});
+
 ipcMain.handle('fs:importImage', async (_, workspaceId: string, noteRelativePath: string, sourceFilePath: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
@@ -76,7 +86,7 @@ ipcMain.handle('fs:watchAdd', async (event, workspaceId: string, dirRelativePath
   return { success: true };
 });
 
-ipcMain.handle('fs:watchStop', async (event, workspaceId: string) => {
+ipcMain.handle('fs:watchStop', async (event, _workspaceId: string) => {
   await fileWatchService.stop(event.sender);
   return { success: true };
 });

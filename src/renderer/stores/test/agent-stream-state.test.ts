@@ -22,7 +22,7 @@ const agentApi = {
 }
 
 const installElectronApiStub = () => {
-  ;(globalThis as any).window = globalThis.window || globalThis
+  (globalThis as any).window = globalThis.window || globalThis
   ;(globalThis as any).window.electronAPI = {
     workspaceAi: { set: vi.fn().mockResolvedValue({ success: true }) },
     file: {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Bot, Folders, GitBranch, Monitor, Moon, Sun, TableOfContents, UserRound, Settings } from 'lucide-vue-next'
+import { Bot, Folders, Monitor, Moon, Sun, TableOfContents, Settings } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import type { SidebarPanelId } from '@/renderer/stores/workspace'
 import type { LoginUser } from '@/renderer/services/authApi'
@@ -8,7 +8,6 @@ import { SIDEBAR_TOOLBAR_WIDTH } from '@/renderer/utils/sidebar-layout'
 
 import AiAssistant from './ai/AiAssistant.vue'
 import AuthModal from './auth/AuthModal.vue'
-import UserMenu from './auth/UserMenu.vue'
 import FeedbackModal from './feedback/FeedbackModal.vue'
 import UpdateModal from './update/UpdateModal.vue'
 import FileTree from './FileTree.vue'
@@ -55,11 +54,14 @@ const openAuthModal = (mode: 'login' | 'register') => {
   authModalOpen.value = true
 }
 
+// 以下函数与模板中被注释的用户入口/反馈/更新弹窗配套，功能恢复时启用
+// eslint-disable-next-line no-unused-vars
 const toggleUserEntry = () => {
   authModalOpen.value = false
   userMenuOpen.value = !userMenuOpen.value
 }
 
+// eslint-disable-next-line no-unused-vars
 const openFeedbackModal = () => {
   closeUserMenu()
   feedbackModalOpen.value = true
@@ -74,6 +76,7 @@ const handleFeedbackRequireLogin = () => {
   openAuthModal('login')
 }
 
+// eslint-disable-next-line no-unused-vars
 const openUpdateModal = () => {
   closeUserMenu()
   updateModalOpen.value = true
@@ -83,6 +86,7 @@ const closeUpdateModal = () => {
   updateModalOpen.value = false
 }
 
+// eslint-disable-next-line no-unused-vars
 const handleLogout = () => {
   authUser.value = null
   authEmail.value = ''

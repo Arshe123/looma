@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Code2, Cpu, Monitor } from 'lucide-vue-next'
+import { Code2, Cpu } from 'lucide-vue-next'
 import { useWorkspaceStore, type SettingsSectionId } from '../stores/workspace'
 import AiSettings from './settings/AiSettings.vue'
-import AppearanceSettings from './settings/AppearanceSettings.vue'
 import EditorSettings from './settings/EditorSettings.vue'
 import SettingsSectionNav from './settings/SettingsSectionNav.vue'
 

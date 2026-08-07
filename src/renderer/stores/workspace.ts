@@ -2212,6 +2212,30 @@ export const useWorkspaceStore = defineStore('workspace', {
       await this.loadDir(ws, currentDir)
     },
 
+    async copyEntries(fromRelativePaths: string[], targetDirRelativePath: string) {
+      const ws = this.activeWorkspaceId
+      if (!ws || fromRelativePaths.length === 0) return
+      
+      this.setBusy(true, '复制中...')
+      
+      const r = await window.electronAPI.fs.copyEntries(ws, fromRelativePaths.map(normalizeDir), normalizeDir(targetDirRelativePath) || '.')
+      this.setBusy(false)
+      
+      if (!r.success) {
+        this.setError(r.error || '复制失败')
+        return
+      }
+      
+      if (r.data && r.data.copied.length > 0) {
+        await this.refreshDirs(ws, [this.getCurrentDir(), targetDirRelativePath])
+        this.undoStack.unshift({
+          type: 'copy',
+          items: r.data.copied.map((c) => ({ to: c.relativePath, sourceName: c.name, isDirectory: c.isDirectory }))
+        })
+        this.redoStack = []
+      }
+    },
+
     async deleteEntries(relativePaths: string[]) {
       const ws = this.activeWorkspaceId
       if (!ws || relativePaths.length === 0) return

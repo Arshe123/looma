@@ -12,6 +12,7 @@ const prepareWindowForQuit = (win: QuitWindow, timeoutMs: number) => {
 
   return new Promise<void>((resolve) => {
     let settled = false
+    // eslint-disable-next-line prefer-const -- timer 在闭包注册后延迟赋值，保持 undefined 初始态（TDZ 安全）
     let timer: ReturnType<typeof setTimeout> | undefined
 
     const finish = () => {

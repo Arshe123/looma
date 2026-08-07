@@ -11,7 +11,6 @@ const ollamaWindowsInstallerUrl = 'https://ollama.com/download/OllamaSetup.exe'
 
 let isDownloadingOllamaInstaller = false
 let ollamaDownloadAbortController: AbortController | null = null
-let activeInstallerPath = ''
 const activeModelPulls = new Map<string, AbortController>()
 
 export const normalizeOllamaBaseUrl = (baseUrl: string) => {
@@ -131,7 +130,6 @@ const downloadInstaller = async (event: IpcMainInvokeEvent) => {
 
   isDownloadingOllamaInstaller = true
   const installerPath = path.join(app.getPath('downloads') || app.getPath('temp'), 'OllamaSetup.exe')
-  activeInstallerPath = installerPath
   ollamaDownloadAbortController = new AbortController()
   let wasCancelled = false
   let receivedBytes = 0
@@ -212,7 +210,6 @@ const downloadInstaller = async (event: IpcMainInvokeEvent) => {
     }
     isDownloadingOllamaInstaller = false
     ollamaDownloadAbortController = null
-    activeInstallerPath = ''
   }
 }
 

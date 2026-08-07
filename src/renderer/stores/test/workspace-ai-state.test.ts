@@ -4,7 +4,7 @@ import { useWorkspaceStore } from '../workspace'
 import { useAiAssistantStore } from '../ai-assistant'
 
 const installElectronApiStub = () => {
-  ;(globalThis as any).window = globalThis.window || globalThis
+  (globalThis as any).window = globalThis.window || globalThis
   ;(globalThis as any).window.electronAPI = {
     workspaceAi: {
       get: vi.fn(),

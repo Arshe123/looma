@@ -18,7 +18,6 @@ const workspaceStore = useWorkspaceStore()
 const settingsStore = useSettingsStore()
 const aiAssistStore = useAiAssistantStore()
 const BUILD_INDEX_ACTION_TYPE: AiAssistantMessageAction['type'] = 'build-index'
-const MISSING_INDEX_MESSAGE = '为了让 Looma AI 能检索你的笔记，需要先为当前工作空间建立本地索引。'
 const checkedHasIndex = ref(false)
 const isCheckingIndex = ref(false)
 const messagesRef = ref<HTMLElement | null>(null)
@@ -260,25 +259,6 @@ const openIndexLibrary = () => {
   const workspaceId = getActiveWorkspaceId()
   if (!workspaceId) return
   workspaceStore.openRagIndexPage()
-}
-
-const createBuildIndexAction = (disabled = false): AiAssistantMessageAction => ({
-  type: BUILD_INDEX_ACTION_TYPE,
-  title: '建立当前工作空间索引',
-  description: '索引只保存在本机。建立完成后，Looma AI 就可以基于当前工作空间回答你的问题。',
-  buttonText: '建立索引',
-  disabled,
-})
-
-const hasBuildIndexPrompt = () =>
-  messages.value.some((message) =>
-    message.text === MISSING_INDEX_MESSAGE
-    || message.actions?.some((action) => action.type === BUILD_INDEX_ACTION_TYPE),
-  )
-
-const ensureBuildIndexPrompt = () => {
-  if (hasBuildIndexPrompt()) return
-  appendMessage('system', MISSING_INDEX_MESSAGE, [createBuildIndexAction(false)])
 }
 
 const setBuildIndexActionsDisabled = (disabled: boolean) => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BookOpen, Bug, LogOut, MessageCircle, RefreshCw } from 'lucide-vue-next'
+import { Bug, LogOut, RefreshCw } from 'lucide-vue-next'
 
 defineProps<{
   open: boolean

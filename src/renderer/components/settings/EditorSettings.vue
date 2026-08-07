@@ -277,34 +277,32 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecord
         </div>
       </div>
 
-      <Transition name="inline-menu-panel">
-        <div class="shrink-0 rounded-lg border border-border-soft bg-surface/40 p-3">
-          <div class="mb-3">
-            <div class="text-sm font-medium text-text-main">其他操作</div>
-            <div class="mt-1 text-xs text-text-muted">从这里可以添加未添加的快捷操作。</div>
-          </div>
-
-          <TransitionGroup
-            name="inline-menu-list"
-            tag="div"
-            class="max-h-[360px] space-y-2 overflow-y-auto pr-1"
-            data-testid="inline-menu-all-actions-list"
-          >
-            <button
-              v-for="item in getMenuActions().filter((item) => !isInlineMenuActionAdded(item.id))"
-              :key="item.id"
-              type="button"
-              class="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors bg-panel-soft text-text-main hover:bg-accent-soft"
-              @click="settingsStore.addInlineMenuItem(item.id)"
-            >
-              <component :is="item.icon" :size="16" class="shrink-0" />
-              <span class="min-w-0 flex-1 truncate">{{ item.label }}</span>
-              <Check v-if="isInlineMenuActionAdded(item.id)" :size="14" class="shrink-0" />
-              <Plus v-else :size="14" class="shrink-0 text-accent" />
-            </button>
-          </TransitionGroup>
+      <div class="shrink-0 rounded-lg border border-border-soft bg-surface/40 p-3">
+        <div class="mb-3">
+          <div class="text-sm font-medium text-text-main">其他操作</div>
+          <div class="mt-1 text-xs text-text-muted">从这里可以添加未添加的快捷操作。</div>
         </div>
-      </Transition>
+
+        <TransitionGroup
+          name="inline-menu-list"
+          tag="div"
+          class="max-h-[360px] space-y-2 overflow-y-auto pr-1"
+          data-testid="inline-menu-all-actions-list"
+        >
+          <button
+            v-for="item in getMenuActions().filter((item) => !isInlineMenuActionAdded(item.id))"
+            :key="item.id"
+            type="button"
+            class="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors bg-panel-soft text-text-main hover:bg-accent-soft"
+            @click="settingsStore.addInlineMenuItem(item.id)"
+          >
+            <component :is="item.icon" :size="16" class="shrink-0" />
+            <span class="min-w-0 flex-1 truncate">{{ item.label }}</span>
+            <Check v-if="isInlineMenuActionAdded(item.id)" :size="14" class="shrink-0" />
+            <Plus v-else :size="14" class="shrink-0 text-accent" />
+          </button>
+        </TransitionGroup>
+      </div>
       </div>
     </div>
 

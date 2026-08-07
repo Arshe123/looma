@@ -470,12 +470,6 @@ const omitUndefined = <T extends Record<string, unknown>>(value: T): T => {
 }
 
 
-const toIndexBody = (workspacePath: string, _aiSettings?: RagRequestSettings) => ({
-  workspace: {
-    workspace_path: workspacePath,
-  },
-})
-
 const toIndexBuildBody = (workspacePath: string, mode: RagIndexBuildMode = 'incremental', path?: string) => omitUndefined({
   workspace: {
     workspace_path: workspacePath,
@@ -606,7 +600,7 @@ export const aiService: AIService = {
     }
   },
 
-  async getIndexStatus(workspacePath: string, aiSettings: RagRequestSettings): Promise<Result<RagIndexStatus>> {
+  async getIndexStatus(workspacePath: string, _aiSettings: RagRequestSettings): Promise<Result<RagIndexStatus>> {
     const result = await postJson<RagIndexStatus>('/rag/index/status', {
       workspace_path: workspacePath,
     })

@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import type { AgentEvent, AgentPendingFileReview, AgentSource } from '../../shared/types/agent-events'
 import { useSettingsStore } from './settings'
 import { useWorkspaceStore } from './workspace'
-import type { AiAssistantMessage, AiAssistantTimelineOutput, AiAssistantTimelineStep } from './workspace'
-import { normalizeAiAssistantSourcePath } from './workspace-ai-utils'
+import type { AiAssistantMessage, AiAssistantTimelineStep } from './workspace'
 import {
   applyRagTimelineEvent,
   createIndexTimeline,
@@ -214,45 +213,6 @@ const buildConversationStats = (
     distant_summary_messages: distantSummaryMessages,
   }
 }
-
-const createConversationContextTimeline = (stats: RagRequestStatsPayload, startedAt = Date.now()): AiAssistantTimelineStep[] => [{
-  id: 'conversation-context',
-  title: '整理对话上下文',
-  description: '按 AI 设置中的上下文策略整理最近对话和远对话摘要，并估算本次请求上下文 token。',
-  detail: `最近 ${stats.recent_turns} 轮内加入 ${stats.history_messages} 条历史消息${stats.distant_summary_enabled ? `，并压缩 ${stats.distant_summary_messages} 条更早消息为摘要` : ''}，整轮上下文约 ${stats.total_token_estimate} tokens。`,
-  status: 'completed',
-  startedAt,
-  endedAt: startedAt,
-  outputs: [
-    { id: 'history-messages', type: 'metric', title: '历史消息', value: stats.history_messages, unit: '条' },
-    { id: 'recent-turns', type: 'metric', title: '保留最近轮数', value: stats.recent_turns, unit: '轮' },
-    { id: 'history-token-estimate', type: 'metric', title: '历史上下文', value: stats.history_token_estimate, unit: ' tokens' },
-    { id: 'question-token-estimate', type: 'metric', title: '当前问题', value: stats.question_token_estimate, unit: ' tokens' },
-    { id: 'total-token-estimate', type: 'metric', title: '会话总计', value: stats.total_token_estimate, unit: ' tokens' },
-  ],
-}]
-
-const createSourceOutputs = (sources: RagSourcePayload[]): AiAssistantTimelineOutput[] =>
-  sources.slice(0, 5).map((source, index) => {
-    const path = typeof source.metadata?.source === 'string'
-      ? source.metadata.source
-      : typeof source.metadata?.file_path === 'string'
-        ? source.metadata.file_path
-        : typeof source.metadata?.path === 'string'
-          ? source.metadata.path
-          : ''
-    return {
-      id: `source-${index + 1}`,
-      type: 'source',
-      title: path ? `来源 ${index + 1}` : `片段 ${index + 1}`,
-      content: source.text.slice(0, 260),
-      path: normalizeAiAssistantSourcePath(path),
-      metadata: {
-        ...source.metadata,
-        score: source.score,
-      },
-    }
-  })
 
 export const useAiAssistantStore = defineStore('aiAssistant', {
   state: () => ({
@@ -592,7 +552,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       const settingsStore = useSettingsStore()
       let history: RagChatMessagePayload[]
       try {
-        ;({ history } = await this.buildConversationHistoryForRequest(conversationId, text))
+        ({ history } = await this.buildConversationHistoryForRequest(conversationId, text))
       } catch (error: any) {
         if (this.agentStartingConversationIds[conversationId]?.cancelled) {
           delete this.agentStartingConversationIds[conversationId]

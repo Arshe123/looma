@@ -10,7 +10,16 @@ type FileTreeShortcutHandlers = {
   closeMenu: () => void
   startRename: (relativePath: string) => void | Promise<void>
   deleteEntries: (relativePaths: string[]) => void | Promise<void>
+  copyEntries: () => void | Promise<void>
+  cutEntries: () => void | Promise<void>
+  pasteEntries: () => void | Promise<void>
   onError?: (error: unknown) => void
+}
+
+const isClipboardShortcut = (event: FileTreeKeyEvent, key: string) => {
+  if (event.key.toLowerCase() !== key) return false
+  const e = event as KeyboardEvent
+  return e.ctrlKey || e.metaKey
 }
 
 export const handleFileTreeGlobalKeyDown = ({
@@ -21,12 +30,33 @@ export const handleFileTreeGlobalKeyDown = ({
   closeMenu,
   startRename,
   deleteEntries,
+  copyEntries,
+  cutEntries,
+  pasteEntries,
   onError = console.error,
 }: FileTreeShortcutHandlers) => {
   if (isTextEditingTarget(event.target) || isTextEditingTarget(activeElement)) return false
 
   if (event.key === 'Escape') {
     closeMenu()
+    return true
+  }
+
+  if (isClipboardShortcut(event, 'c') && selectedPaths.length > 0) {
+    event.preventDefault()
+    Promise.resolve(copyEntries()).catch(onError)
+    return true
+  }
+
+  if (isClipboardShortcut(event, 'x') && selectedPaths.length > 0) {
+    event.preventDefault()
+    Promise.resolve(cutEntries()).catch(onError)
+    return true
+  }
+
+  if (isClipboardShortcut(event, 'v')) {
+    event.preventDefault()
+    Promise.resolve(pasteEntries()).catch(onError)
     return true
   }
 

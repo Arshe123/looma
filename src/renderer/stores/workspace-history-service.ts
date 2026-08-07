@@ -74,6 +74,27 @@ export const executeUndoAction = async (action: UndoAction, runtime: HistoryRunt
     return null
   }
 
+  if (action.type === 'copy') {
+    runtime.setBusy(true, '删除中...')
+    const newItems: { trashRelativePath: string; restoreTo: string }[] = []
+    for (const item of action.items) {
+      const r = await runtime.api.fs.delete(runtime.workspaceId, item.to)
+      if (r.success && r.data) newItems.push({ trashRelativePath: r.data.trashRelativePath, restoreTo: item.to })
+    }
+    runtime.setBusy(false)
+    if (newItems.length > 0) {
+      const removedPaths = newItems.map((item) => item.restoreTo)
+      return result(
+        { type: 'delete', items: newItems },
+        {
+          removedPaths,
+          affectedDirs: affectedDirsForPaths(removedPaths),
+        },
+      )
+    }
+    return null
+  }
+
   if (action.type === 'restore') return null
 
   runtime.setBusy(true, '恢复中...')

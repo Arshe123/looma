@@ -1,4 +1,4 @@
-import { app, shell } from 'electron'
+import { app, shell, clipboard } from 'electron'
 import chokidar, { type FSWatcher } from 'chokidar'
 import fs from 'fs/promises'
 import path from 'path'
@@ -237,6 +237,24 @@ const getTrashDir = (workspaceId: string) => {
   return path.join(app.getPath('appData'), 'workspace-meta', 'looma', 'trash', workspaceId)
 }
 
+export const parseMacPlistFilePaths = (plistText: string): string[] => {
+  const matches = [...plistText.matchAll(/<string>([^<]*)<\/string>/g)]
+  return matches.map((m) => m[1]).filter((p) => path.isAbsolute(p))
+}
+
+export const parseFileNameWFilePaths = (buffer: Buffer): string[] => {
+  return buffer.toString('utf16le').split('\0').filter((p) => path.win32.isAbsolute(p))
+}
+
+export const parseUriListFilePaths = (uriList: string): string[] => {
+  return uriList
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('file://'))
+    .map((line) => decodeURIComponent(line.replace(/^file:\/\//, '')))
+    .filter((p) => path.isAbsolute(p))
+}
+
 export const fileSystemService = {
   async listDir(workspacePath: string, dirRelativePath: string): Promise<Result<FsEntry[]>> {
     try {
@@ -396,6 +414,144 @@ export const fileSystemService = {
       return { success: true, data: { copied } }
     } catch (error: any) {
       return { success: false, error: `复制外部文件失败: ${error?.message ?? String(error)}` }
+    }
+  },
+
+  async copyEntries(
+    workspacePath: string,
+    fromRelativePaths: string[],
+    targetDirRelativePath: string,
+  ): Promise<Result<{ copied: ExternalCopyEntry[] }>> {
+    try {
+      if (!Array.isArray(fromRelativePaths) || fromRelativePaths.length === 0) {
+        return { success: false, error: '没有可复制的条目' }
+      }
+
+      const targetDirResolved = resolveInWorkspace(workspacePath, targetDirRelativePath || '.')
+      if (!targetDirResolved.ok) return { success: false, error: targetDirResolved.error }
+      const targetDirStats = await fs.lstat(targetDirResolved.target)
+      if (!targetDirStats.isDirectory() || targetDirStats.isSymbolicLink()) {
+        return { success: false, error: '目标位置不是可写入的普通目录' }
+      }
+
+      const workspaceRoot = path.resolve(targetDirResolved.root)
+      const planned: Array<{
+        source: string
+        destination: string
+        entry: ExternalCopyEntry
+      }> = []
+      const destinationKeys = new Set<string>()
+
+      const findFreeDestination = async (dirAbs: string, name: string): Promise<string> => {
+        const ext = path.extname(name)
+        const base = ext ? name.slice(0, -ext.length) : name
+        let candidate = name
+        let index = 2
+        while (await pathExists(path.join(dirAbs, candidate))) {
+          candidate = `${base} (${index})${ext}`
+          index += 1
+        }
+        return candidate
+      }
+
+      for (const rawRelativePath of fromRelativePaths) {
+        if (typeof rawRelativePath !== 'string' || !rawRelativePath) {
+          return { success: false, error: '复制条目缺少有效的相对路径' }
+        }
+        const sourceResolved = resolveInWorkspace(workspacePath, rawRelativePath)
+        if (!sourceResolved.ok) return { success: false, error: sourceResolved.error }
+        const source = path.resolve(sourceResolved.target)
+        const sourceStats = await fs.lstat(source)
+        if (sourceStats.isSymbolicLink() || (!sourceStats.isFile() && !sourceStats.isDirectory())) {
+          return { success: false, error: `不支持复制链接或特殊文件: ${path.basename(source)}` }
+        }
+        if (sourceStats.isDirectory() && isWithin(source, targetDirResolved.target)) {
+          return { success: false, error: `不能将文件夹 ${path.basename(source)} 复制到自身内部` }
+        }
+
+        const name = path.basename(source)
+        if (!name) return { success: false, error: '无法识别复制条目名称' }
+        const finalName = await findFreeDestination(targetDirResolved.target, name)
+        const destination = path.join(targetDirResolved.target, finalName)
+        const destinationKey = process.platform === 'win32' ? destination.toLowerCase() : destination
+        if (destinationKeys.has(destinationKey)) {
+          return { success: false, error: `复制内容包含重名项: ${name}` }
+        }
+        destinationKeys.add(destinationKey)
+
+        planned.push({
+          source,
+          destination,
+          entry: {
+            name: finalName,
+            relativePath: toPosix(path.relative(workspaceRoot, destination)),
+            isDirectory: sourceStats.isDirectory(),
+          },
+        })
+      }
+
+      const copied: ExternalCopyEntry[] = []
+      const copiedDestinations: string[] = []
+      try {
+        for (const item of planned) {
+          await fs.cp(item.source, item.destination, {
+            recursive: true,
+            errorOnExist: true,
+            force: false,
+          })
+          copiedDestinations.push(item.destination)
+          copied.push(item.entry)
+        }
+      } catch (error) {
+        await Promise.allSettled(
+          copiedDestinations.reverse().map(destination => fs.rm(destination, { recursive: true, force: true })),
+        )
+        throw error
+      }
+      return { success: true, data: { copied } }
+    } catch (error: any) {
+      return { success: false, error: `复制失败: ${error?.message ?? String(error)}` }
+    }
+  },
+
+  async readClipboardFilePaths(): Promise<Result<string[]>> {
+    try {
+      if (process.platform === 'darwin') {
+        const plistBuffer = clipboard.readBuffer('NSFilenamesPboardType')
+        if (plistBuffer && plistBuffer.length > 0) {
+          const paths = parseMacPlistFilePaths(plistBuffer.toString('utf8'))
+          if (paths.length > 0) return { success: true, data: paths }
+        }
+        const fileUrl = clipboard.read('public.file-url')
+        if (fileUrl) {
+          const filePath = decodeURIComponent(fileUrl.replace(/^file:\/\//, ''))
+          if (path.isAbsolute(filePath)) return { success: true, data: [filePath] }
+        }
+        return { success: false, error: '剪贴板中没有文件' }
+      }
+
+      if (process.platform === 'win32') {
+        const fileNameW = clipboard.readBuffer('FileNameW')
+        if (fileNameW && fileNameW.length > 0) {
+          const paths = parseFileNameWFilePaths(fileNameW)
+          if (paths.length > 0) return { success: true, data: paths }
+        }
+        const fileName = clipboard.readBuffer('FileName')
+        if (fileName && fileName.length > 0) {
+          const paths = fileName.toString('utf8').split('\0').filter((p) => path.win32.isAbsolute(p))
+          if (paths.length > 0) return { success: true, data: paths }
+        }
+        return { success: false, error: '剪贴板中没有文件' }
+      }
+
+      const uriList = clipboard.read('text/uri-list')
+      if (uriList) {
+        const paths = parseUriListFilePaths(uriList)
+        if (paths.length > 0) return { success: true, data: paths }
+      }
+      return { success: false, error: '剪贴板中没有文件' }
+    } catch (error: any) {
+      return { success: false, error: `读取剪贴板失败: ${error?.message ?? String(error)}` }
     }
   },
 

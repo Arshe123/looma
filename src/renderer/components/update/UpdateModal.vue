@@ -203,13 +203,13 @@ watch(
           <p class="mt-2 text-sm text-text-muted leading-relaxed whitespace-pre-line">{{ latest.notes }}</p>
         </div>
 
-        <p v-if="errorMessage" class="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-500">
+        <div v-if="errorMessage" class="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-500">
           {{ errorMessage }}
           <details v-if="errorDetail" class="mt-1">
             <summary class="cursor-pointer text-xs text-red-500/80 select-none">技术详情</summary>
             <span class="mt-1 block text-xs text-red-500/80 break-all">{{ errorDetail }}</span>
           </details>
-        </p>
+        </div>
 
         <div class="mt-6 flex gap-2" :class="isForce ? '' : 'justify-end'">
           <button

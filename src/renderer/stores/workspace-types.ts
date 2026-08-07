@@ -188,3 +188,4 @@ export type UndoAction =
   | { type: 'restore'; trashRelativePath: string; restoreTo: string }
   | { type: 'move'; items: { from: string; to: string }[] }
   | { type: 'delete'; items: { trashRelativePath: string; restoreTo: string }[] }
+  | { type: 'copy'; items: { to: string; sourceName: string; isDirectory: boolean }[] }

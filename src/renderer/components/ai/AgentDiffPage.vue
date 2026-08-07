@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Check, FileDiff, Loader2, ShieldCheck, X } from 'lucide-vue-next'
+import { Check, FileDiff, Loader2, X } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { useAiAssistantStore } from '@/renderer/stores/ai-assistant'
 import {

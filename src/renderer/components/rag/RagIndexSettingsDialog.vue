@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, watch } from 'vue'
-import { AlertTriangle, CheckCircle2, Clock3, FileCode2, FileText, GitBranch, Layers3, Save, Sparkles, X } from 'lucide-vue-next'
+import { AlertTriangle, CheckCircle2, FileText, Layers3, Save, X } from 'lucide-vue-next'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import type { AppSettings, ChunkingStrategy } from '@/shared/utils/app-settings'
 
@@ -70,6 +70,7 @@ const strategyOptions: Array<{
   // },
 ]
 
+// eslint-disable-next-line no-unused-vars -- 与模板中被注释的"索引更新策略"功能配套，恢复时启用
 const indexingModeOptions: Array<{ value: IndexingMode; label: string; description: string }> = [
   { value: 'manual', label: '手动', description: '由你手动点击构建，最稳妥。' },
   { value: 'incremental', label: '自动增量', description: '适合频繁编辑后的轻量同步。' },

@@ -33,11 +33,11 @@ const onSwitchTo = async (id: string) => {
 }
 
 const minimizeWindow = () => {
-  ;(window as any).electronAPI?.window?.minimize?.()
+  (window as any).electronAPI?.window?.minimize?.()
 }
 
 const toggleMaximizeWindow = () => {
-  ;(window as any).electronAPI?.window?.toggleMaximize?.()
+  (window as any).electronAPI?.window?.toggleMaximize?.()
 }
 
 const closeWindow = async () => {

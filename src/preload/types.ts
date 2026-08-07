@@ -133,25 +133,10 @@ interface RagChatMessagePayload {
   name?: string;
 }
 
-interface RagRequestStatsPayload {
-  history_messages: number;
-  history_token_estimate: number;
-  question_token_estimate: number;
-  total_token_estimate: number;
-  recent_turns?: number;
-  distant_summary_enabled?: boolean;
-  distant_summary_messages?: number;
-}
-
 interface RagSourcePayload {
   score: number | null;
   text: string;
   metadata: Record<string, unknown>;
-}
-
-interface RagAnswerPayload {
-  answer: string;
-  sources: RagSourcePayload[];
 }
 
 interface RagIndexPayload {
@@ -372,6 +357,10 @@ interface ElectronAPI {
     copyExternal: (workspaceId: string, sourcePaths: string[], targetDirRelativePath: string) => Promise<Result<{
       copied: Array<{ name: string; relativePath: string; isDirectory: boolean }>;
     }>>;
+    copyEntries: (workspaceId: string, fromRelativePaths: string[], targetDirRelativePath: string) => Promise<Result<{
+      copied: Array<{ name: string; relativePath: string; isDirectory: boolean }>;
+    }>>;
+    clipboardReadFiles: () => Promise<Result<string[]>>;
     importImage: (workspaceId: string, noteRelativePath: string, sourceFilePath: string) => Promise<Result<{
       relativePath: string;
       fileName: string;

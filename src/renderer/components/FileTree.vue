@@ -17,6 +17,9 @@ import {
 import { handleFileTreeGlobalKeyDown } from '@/shared/utils/file-tree-shortcuts'
 import { appendTreeGuides, type TreeGuidedRow } from '@/shared/utils/tree-row-guides'
 import { captureFileTreeDrop } from '@/shared/utils/external-file-drop'
+import { isMacPlatform } from '../../shared/utils/window-chrome'
+
+const isMac = isMacPlatform((window as any).electronAPI?.platform ?? '')
 
 const workspaceStore = useWorkspaceStore()
 const expanded = computed(() => workspaceStore.activeExpandedSet)
@@ -69,6 +72,8 @@ const rowElements = new Map<string, HTMLElement>()
 const externalDropRowKey = ref('')
 const dropErrorMessage = ref('')
 const dropTechnicalDetail = ref('')
+type FileClipboardState = { mode: 'copy' | 'cut'; paths: string[] }
+const fileClipboard = ref<FileClipboardState | null>(null)
 
 const inlineEditValue = computed({
   get: () => inlineEdit.value?.value ?? '',
@@ -420,6 +425,87 @@ const handleCopyRelativePath = () => {
   closeMenu()
 }
 
+const clipboardPaths = () => {
+  const paths = [...workspaceStore.selectedPaths]
+  if (paths.length === 0 && selectedFile.value && selectedFile.value.relativePath) {
+    paths.push(selectedFile.value.relativePath)
+  }
+  return paths
+}
+
+const handleCopyEntries = () => {
+  const paths = clipboardPaths()
+  if (paths.length === 0) return
+  fileClipboard.value = { mode: 'copy', paths }
+  closeMenu()
+}
+
+const handleCutEntries = () => {
+  const paths = clipboardPaths()
+  if (paths.length === 0) return
+  fileClipboard.value = { mode: 'cut', paths }
+  closeMenu()
+}
+
+const pasteTargetDir = async () => {
+  const target = selectedFile.value
+  if (!target || target.relativePath === '') return workspaceStore.getCurrentDir()
+  return getParentDirFromPath(target.relativePath)
+}
+
+const keyboardPasteTargetDir = async () => {
+  const selected = workspaceStore.selectedPaths
+  if (selected.length === 1 && selected[0]) {
+    const isFile = await workspaceStore.isFile(selected[0])
+    if (!isFile) return selected[0]
+  }
+  return workspaceStore.getCurrentDir()
+}
+
+const handlePasteEntries = async (targetDirOverride?: string) => {
+  const clip = fileClipboard.value
+  const targetDir = targetDirOverride ?? (await pasteTargetDir())
+
+  if (clip && clip.paths.length > 0) {
+    if (clip.mode === 'cut') {
+      await workspaceStore.moveEntries(clip.paths, targetDir)
+      fileClipboard.value = null
+    } else {
+      await workspaceStore.copyEntries(clip.paths, targetDir)
+    }
+    closeMenu()
+    return
+  }
+
+  const r = await window.electronAPI.fs.clipboardReadFiles()
+  if (!r.success || !r.data || r.data.length === 0) {
+    dropErrorMessage.value = '剪贴板中没有可粘贴的文件，请先在系统中复制文件。'
+    dropTechnicalDetail.value = r.error || 'Clipboard contains no file paths.'
+    return
+  }
+  const workspaceId = workspaceStore.activeWorkspaceId
+  if (!workspaceId) return
+  dropErrorMessage.value = ''
+  dropTechnicalDetail.value = ''
+  workspaceStore.setBusy(true, r.data.length > 1 ? `正在粘贴 ${r.data.length} 个项目...` : '正在粘贴文件...')
+  try {
+    const result = await window.electronAPI.fs.copyExternal(workspaceId, r.data, targetDir)
+    if (!result.success) {
+      dropErrorMessage.value = '文件粘贴失败，请检查目标目录、重名文件或文件占用情况。'
+      dropTechnicalDetail.value = result.error || 'Unknown clipboard file copy error.'
+      return
+    }
+    await workspaceStore.loadDir(workspaceId, targetDir)
+    if (targetDir) await ensureDirExpanded(targetDir)
+  } catch (error) {
+    dropErrorMessage.value = '文件粘贴失败，请稍后重试。'
+    dropTechnicalDetail.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    workspaceStore.setBusy(false)
+  }
+  closeMenu()
+}
+
 const handleRevealInExplorer = async () => {
   if (!selectedFile.value) return
   await workspaceStore.showItemInFolder(selectedFile.value.relativePath)
@@ -436,6 +522,9 @@ const onGlobalKeyDown = (e: KeyboardEvent) => {
     closeMenu,
     startRename,
     deleteEntries: (paths) => workspaceStore.deleteEntries(paths),
+    copyEntries: () => handleCopyEntries(),
+    cutEntries: () => handleCutEntries(),
+    pasteEntries: () => keyboardPasteTargetDir().then((dir) => handlePasteEntries(dir)).catch(console.error),
   })
 }
 
@@ -660,6 +749,32 @@ onUnmounted(() => {
           @click="removeEntry(workspaceStore.selectedPaths[0])"
         >
           删除
+        </button>
+        <button
+          v-if="workspaceStore.selectedPaths.length > 0"
+          class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft flex items-center justify-between gap-3"
+          title="复制"
+          @click="handleCopyEntries"
+        >
+          <span>复制</span>
+          <span class="text-xs text-text-subtle">{{ isMac ? '⌘C' : 'Ctrl+C' }}</span>
+        </button>
+        <button
+          v-if="workspaceStore.selectedPaths.length > 0"
+          class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft flex items-center justify-between gap-3"
+          title="剪切"
+          @click="handleCutEntries"
+        >
+          <span>剪切</span>
+          <span class="text-xs text-text-subtle">{{ isMac ? '⌘X' : 'Ctrl+X' }}</span>
+        </button>
+        <button
+          class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft flex items-center justify-between gap-3"
+          title="粘贴"
+          @click="handlePasteEntries().catch(console.error)"
+        >
+          <span>粘贴</span>
+          <span class="text-xs text-text-subtle">{{ isMac ? '⌘V' : 'Ctrl+V' }}</span>
         </button>
         <div v-if="selectedFile.relativePath !== ''" class="h-px bg-accent-soft my-1"></div>
         <button v-if="selectedFile.relativePath !== ''" class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft" @click="handleCopyPath">

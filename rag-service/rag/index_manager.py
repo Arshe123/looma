@@ -12,6 +12,7 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 
+from providers.base import ProviderConnectionError
 from rag.index_service import build_index as build_vector_index, configure_llama_index, get_persist_dir, has_index
 from schemas import IndexBuildRequest, IndexRequest, IndexStatusRequest, KnowledgeConfig
 
@@ -726,7 +727,18 @@ async def build_managed_index_events(request: IndexRequest, mode: str = "increme
         "outputs": [{"type": "json", "title": "索引摘要", "content": json.dumps(summary, ensure_ascii=False)}],
     }
     yield {"type": "timeline", "stepId": "build-index", "status": "active", "title": "同步向量索引", "detail": f"模式：{mode}。当前存储后端会在需要更新时重建本地向量库以保证一致性。"}
-    result = await asyncio.to_thread(build_managed_index, request, mode)
+    try:
+        result = await asyncio.to_thread(build_managed_index, request, mode)
+    except ProviderConnectionError as exc:
+        yield {
+            "type": "error",
+            "stepId": "build-index",
+            "error": str(exc),
+            "message": str(exc),
+            "code": exc.code,
+            "technicalDetail": exc.technical_detail,
+        }
+        return
     yield {"type": "timeline", "stepId": "build-index", "status": "completed", "title": "同步向量索引", "detail": "索引同步完成。"}
     yield {"type": "done", "result": result, **{k: v for k, v in result.items() if k in {"status", "document_count", "file_count", "exists", "persist_dir", "mode", "processed_count"}}}
 

@@ -14,6 +14,26 @@ from schemas import ChatMessage
 _MAX_REPAIR_RESPONSE_CHARS = 20_000
 
 
+class ProviderConnectionError(Exception):
+    """模型服务(如 Ollama)不可用或请求失败。
+
+    携带面向用户的友好中文信息与结构化错误码，供流式接口直接转成
+    error 事件返回给前端，避免以原始 httpx 异常/断流形式暴露。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "provider_unavailable",
+        technical_detail: str = "",
+    ) -> None:
+        self.message = message
+        self.code = code
+        self.technical_detail = technical_detail or message
+        super().__init__(message)
+
+
 @dataclass(frozen=True)
 class StructuredChatResponse:
     content: str

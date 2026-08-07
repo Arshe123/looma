@@ -18,7 +18,12 @@ from agent.models import (
     AgentToolBatch,
     AgentToolCall,
 )
-from providers.base import BaseChatProvider, BaseEmbeddingProvider, StructuredChatResponse
+from providers.base import (
+    BaseChatProvider,
+    BaseEmbeddingProvider,
+    ProviderConnectionError,
+    StructuredChatResponse,
+)
 from providers.tool_call_repair import (
     ToolCallFormatError,
     contains_textual_tool_call,
@@ -63,6 +68,68 @@ def _ollama_chat_messages(messages: List[ChatMessage]) -> list[dict]:
             payload["tool_name"] = message.name
         payloads.append(payload)
     return payloads
+
+
+def translate_ollama_error(exc: Exception, *, base_url: str, model: str = "") -> ProviderConnectionError:
+    """把 Ollama HTTP 请求失败翻译成带友好中文信息的 ProviderConnectionError。
+
+    覆盖典型场景：Ollama 未安装/未启动（连接拒绝）、请求超时、
+    502 Bad Gateway、模型不存在（404）、以及模型加载失败（500）。
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        request = exc.request
+        detail = f"{exc} [status={status_code}] [url={request.url}]"
+        if status_code == 404:
+            return ProviderConnectionError(
+                f"本地模型服务无法找到模型“{model}”。请确认 Ollama 中已下载该模型（如运行 ollama pull {model}），或在 AI 设置中更换模型后重试。",
+                code="ollama_model_not_found",
+                technical_detail=detail,
+            )
+        if status_code == 500:
+            return ProviderConnectionError(
+                "本地模型服务加载模型失败（内部错误）。请确认模型文件完整，或尝试在 Ollama 中重新拉取模型后重试。",
+                code="ollama_model_load_failed",
+                technical_detail=detail,
+            )
+        if status_code == 502:
+            return ProviderConnectionError(
+                "本地模型服务（Ollama）暂时无法响应。请确认 Ollama 已安装并正在运行，且模型已下载，然后重试。",
+                code="ollama_bad_gateway",
+                technical_detail=detail,
+            )
+        return ProviderConnectionError(
+            f"本地模型服务（Ollama）请求失败（HTTP {status_code}）。请确认 Ollama 正在运行且模型可用，然后重试。",
+            code="ollama_http_error",
+            technical_detail=detail,
+        )
+
+    if isinstance(exc, httpx.ConnectError):
+        return ProviderConnectionError(
+            f"无法连接本地模型服务（Ollama）。请确认 Ollama 已安装并正在运行（{base_url}），然后重试。",
+            code="ollama_connection_refused",
+            technical_detail=f"{exc} [base_url={base_url}]",
+        )
+
+    if isinstance(exc, (httpx.TimeoutException, httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout)):
+        return ProviderConnectionError(
+            "连接本地模型服务（Ollama）超时。模型可能正在加载，或服务负载过高，请稍后重试。",
+            code="ollama_timeout",
+            technical_detail=f"{exc} [base_url={base_url}]",
+        )
+
+    if isinstance(exc, httpx.HTTPError):
+        return ProviderConnectionError(
+            f"本地模型服务（Ollama）请求异常。请确认服务正在运行（{base_url}），然后重试。",
+            code="ollama_http_error",
+            technical_detail=f"{exc} [base_url={base_url}]",
+        )
+
+    return ProviderConnectionError(
+        "本地模型服务（Ollama）调用失败，请稍后重试。",
+        code="provider_unavailable",
+        technical_detail=f"{type(exc).__name__}: {exc}",
+    )
 
 
 class OllamaChatProvider(BaseChatProvider):
@@ -329,9 +396,14 @@ class OllamaChatProvider(BaseChatProvider):
             payload["think"] = False
 
         async with httpx.AsyncClient(timeout=None) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
+            try:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                data = response.json()
+            except (httpx.HTTPStatusError, httpx.HTTPError, httpx.TimeoutException) as exc:
+                raise translate_ollama_error(
+                    exc, base_url=self.base_url, model=self.model
+                ) from exc
 
         content = data.get("message", {}).get("content") or ""
         if structured:
@@ -354,21 +426,26 @@ class OllamaChatProvider(BaseChatProvider):
         }
 
         async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream("POST", url, json=payload) as response:
-                response.raise_for_status()
+            try:
+                async with client.stream("POST", url, json=payload) as response:
+                    response.raise_for_status()
 
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
 
-                    data = json.loads(line)
+                        data = json.loads(line)
 
-                    if data.get("done"):
-                        break
+                        if data.get("done"):
+                            break
 
-                    content = data.get("message", {}).get("content")
-                    if content:
-                        yield content
+                        content = data.get("message", {}).get("content")
+                        if content:
+                            yield content
+            except (httpx.HTTPStatusError, httpx.HTTPError, httpx.TimeoutException) as exc:
+                raise translate_ollama_error(
+                    exc, base_url=self.base_url, model=self.model
+                ) from exc
 
 
 class OllamaEmbeddingProvider(BaseEmbeddingProvider):
@@ -388,9 +465,14 @@ class OllamaEmbeddingProvider(BaseEmbeddingProvider):
             "input": texts
         }
 
-        async with httpx.AsyncClient(timeout=None) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                data = response.json()
+        except (httpx.HTTPStatusError, httpx.HTTPError, httpx.TimeoutException) as exc:
+            raise translate_ollama_error(
+                exc, base_url=self.base_url, model=self.model
+            ) from exc
 
         return data["embeddings"]

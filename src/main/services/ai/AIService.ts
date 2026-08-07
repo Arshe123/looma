@@ -492,7 +492,7 @@ const requestJson = async <T>(path: string, method: 'POST' | 'DELETE', body: unk
     }
     return { success: true, data: data as T }
   } catch (error: any) {
-    return { success: false, error: `无法连接 RAG 服务: ${error?.message ?? String(error)}` }
+    return { success: false, error: `RAG 服务连接失败: ${error?.message ?? String(error)}` }
   }
 }
 
@@ -577,7 +577,7 @@ const streamNdjson = async <T>(
     return { success: true }
   } catch (error: any) {
     if (error?.name === 'AbortError') return { success: true }
-    return { success: false, error: `无法连接 RAG 服务: ${error?.message ?? String(error)}` }
+    return { success: false, error: `RAG 服务连接失败: ${error?.message ?? String(error)}` }
   } finally {
     if (reader) {
       if (!reachedEof) {
@@ -596,7 +596,7 @@ export const aiService: AIService = {
       if (!response.ok) return { success: false, error: `RAG 服务不可用: HTTP ${response.status}` }
       return { success: true, data }
     } catch (error: any) {
-      return { success: false, error: `无法连接 RAG 服务: ${error?.message ?? String(error)}` }
+      return { success: false, error: `RAG 服务连接失败: ${error?.message ?? String(error)}` }
     }
   },
 

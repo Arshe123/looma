@@ -175,9 +175,33 @@ export const formatAiRuntimeError = (error: unknown, fallback = 'AI 助手请求
     }
   }
 
-  if (normalized.includes('failed to connect') || normalized.includes('无法连接') || normalized.includes('connection refused')) {
+  if (
+    normalized.includes('failed to connect')
+    || normalized.includes('无法连接')
+    || normalized.includes('connection refused')
+    || normalized.includes('econnrefused')
+  ) {
     return {
       message: '无法连接本地 AI 服务。请确认 Ollama/RAG 服务已经启动后重试。',
+      technicalDetail: raw,
+    }
+  }
+
+  // RAG 服务已连接，但向量模型（如 Ollama）不可用或流意外中断。
+  // 典型：Ollama 未安装/未启动、模型未下载、或长连接被服务端重置。
+  if (
+    normalized.includes('terminated')
+    || normalized.includes('socket hang up')
+    || normalized.includes('failed to fetch')
+    || normalized.includes('network error')
+    || normalized.includes('bad gateway')
+    || normalized.includes('502')
+    || normalized.includes('connection reset')
+    || normalized.includes('empty reply')
+    || normalized.includes('eof')
+  ) {
+    return {
+      message: '建立索引时无法调用向量模型服务。请确认 Ollama 已安装并正在运行，且所用的嵌入模型已下载（AI 设置中可查看），然后重试。',
       technicalDetail: raw,
     }
   }

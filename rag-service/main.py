@@ -133,8 +133,14 @@ async def rag_index_build_stream(request: IndexBuildRequest):
     index_request = IndexRequest(workspace=request.workspace, knowledge=request.knowledge, ai_config=request.ai_config)
 
     async def ndjson_stream() -> AsyncIterator[str]:
-        async for event in build_managed_index_events(index_request, request.mode):
-            yield ndjson_event(event.pop("type", "done"), **event)
+        try:
+            async for event in build_managed_index_events(index_request, request.mode):
+                yield ndjson_event(event.pop("type", "done"), **event)
+        except Exception as exc:  # noqa: BLE001 - stream must never die mid-flight
+            friendly = str(exc)
+            if isinstance(exc, HTTPException):
+                friendly = str(exc.detail)
+            yield ndjson_event("error", stepId="build-index", error=friendly, message=friendly)
 
     return StreamingResponse(
         ndjson_stream(),

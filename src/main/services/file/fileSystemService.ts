@@ -555,6 +555,52 @@ export const fileSystemService = {
     }
   },
 
+  async pasteClipboardImage(
+    workspacePath: string,
+    targetDirRelativePath: string,
+  ): Promise<Result<{ name: string; relativePath: string }>> {
+    try {
+      const targetDirResolved = resolveInWorkspace(workspacePath, targetDirRelativePath || '.')
+      if (!targetDirResolved.ok) return { success: false, error: targetDirResolved.error }
+      const targetDirStats = await fs.lstat(targetDirResolved.target)
+      if (!targetDirStats.isDirectory() || targetDirStats.isSymbolicLink()) {
+        return { success: false, error: '目标位置不是可写入的普通目录' }
+      }
+
+      const image = clipboard.readImage()
+      if (image.isEmpty()) return { success: false, error: '剪贴板中没有图片' }
+
+      // 根据剪贴板携带的原始格式决定编码：JPEG 原样转 JPEG，其余统一 PNG（截图无损）
+      const isJpeg = clipboard.availableFormats().some((format) => /jpe?g/i.test(format))
+      const extension = isJpeg ? '.jpg' : '.png'
+      const content = isJpeg ? image.toJPEG(95) : image.toPNG()
+
+      const stamp = new Date()
+      const pad = (value: number) => String(value).padStart(2, '0')
+      const baseName =
+        `截图-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}` +
+        `-${pad(stamp.getHours())}${pad(stamp.getMinutes())}${pad(stamp.getSeconds())}`
+      let finalName = `${baseName}${extension}`
+      let index = 2
+      while (await pathExists(path.join(targetDirResolved.target, finalName))) {
+        finalName = `${baseName} (${index})${extension}`
+        index += 1
+      }
+
+      const destination = path.join(targetDirResolved.target, finalName)
+      await fs.writeFile(destination, content)
+      return {
+        success: true,
+        data: {
+          name: finalName,
+          relativePath: toPosix(path.relative(targetDirResolved.root, destination)),
+        },
+      }
+    } catch (error: any) {
+      return { success: false, error: `粘贴剪贴板图片失败: ${error?.message ?? String(error)}` }
+    }
+  },
+
   async rename(workspacePath: string, targetRelativePath: string, newName: string): Promise<Result<string>> {
     try {
       const targetResolved = resolveInWorkspace(workspacePath, targetRelativePath)

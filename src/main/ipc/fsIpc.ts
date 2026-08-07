@@ -49,6 +49,12 @@ ipcMain.handle('fs:clipboardReadFiles', async () => {
   return await fileSystemService.readClipboardFilePaths();
 });
 
+ipcMain.handle('fs:clipboardPasteImage', async (_, workspaceId: string, targetDirRelativePath: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  return await fileSystemService.pasteClipboardImage(workspacePath, targetDirRelativePath);
+});
+
 ipcMain.handle('fs:importImage', async (_, workspaceId: string, noteRelativePath: string, sourceFilePath: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };

@@ -361,6 +361,10 @@ interface ElectronAPI {
       copied: Array<{ name: string; relativePath: string; isDirectory: boolean }>;
     }>>;
     clipboardReadFiles: () => Promise<Result<string[]>>;
+    clipboardPasteImage: (workspaceId: string, targetDirRelativePath: string) => Promise<Result<{
+      name: string;
+      relativePath: string;
+    }>>;
     importImage: (workspaceId: string, noteRelativePath: string, sourceFilePath: string) => Promise<Result<{
       relativePath: string;
       fileName: string;

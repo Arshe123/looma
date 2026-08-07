@@ -478,27 +478,46 @@ const handlePasteEntries = async (targetDirOverride?: string) => {
   }
 
   const r = await window.electronAPI.fs.clipboardReadFiles()
-  if (!r.success || !r.data || r.data.length === 0) {
-    dropErrorMessage.value = '剪贴板中没有可粘贴的文件，请先在系统中复制文件。'
-    dropTechnicalDetail.value = r.error || 'Clipboard contains no file paths.'
-    return
-  }
   const workspaceId = workspaceStore.activeWorkspaceId
   if (!workspaceId) return
+  if (r.success && r.data && r.data.length > 0) {
+    dropErrorMessage.value = ''
+    dropTechnicalDetail.value = ''
+    workspaceStore.setBusy(true, r.data.length > 1 ? `正在粘贴 ${r.data.length} 个项目...` : '正在粘贴文件...')
+    try {
+      const result = await window.electronAPI.fs.copyExternal(workspaceId, r.data, targetDir)
+      if (!result.success) {
+        dropErrorMessage.value = '文件粘贴失败，请检查目标目录、重名文件或文件占用情况。'
+        dropTechnicalDetail.value = result.error || 'Unknown clipboard file copy error.'
+        return
+      }
+      await workspaceStore.loadDir(workspaceId, targetDir)
+      if (targetDir) await ensureDirExpanded(targetDir)
+    } catch (error) {
+      dropErrorMessage.value = '文件粘贴失败，请稍后重试。'
+      dropTechnicalDetail.value = error instanceof Error ? error.message : String(error)
+    } finally {
+      workspaceStore.setBusy(false)
+    }
+    closeMenu()
+    return
+  }
+
+  // 剪贴板里没有文件路径时，尝试把剪贴板图片保存为文件（如 Snipaste 截图、网页复制的图片）
   dropErrorMessage.value = ''
   dropTechnicalDetail.value = ''
-  workspaceStore.setBusy(true, r.data.length > 1 ? `正在粘贴 ${r.data.length} 个项目...` : '正在粘贴文件...')
+  workspaceStore.setBusy(true, '正在粘贴剪贴板图片...')
   try {
-    const result = await window.electronAPI.fs.copyExternal(workspaceId, r.data, targetDir)
-    if (!result.success) {
-      dropErrorMessage.value = '文件粘贴失败，请检查目标目录、重名文件或文件占用情况。'
-      dropTechnicalDetail.value = result.error || 'Unknown clipboard file copy error.'
+    const imageResult = await window.electronAPI.fs.clipboardPasteImage(workspaceId, targetDir)
+    if (!imageResult.success) {
+      dropErrorMessage.value = '剪贴板中没有可粘贴的文件或图片，请先在系统中复制文件、或截图后复制。'
+      dropTechnicalDetail.value = [r.error, imageResult.error].filter(Boolean).join('；') || 'Clipboard contains neither file paths nor an image.'
       return
     }
     await workspaceStore.loadDir(workspaceId, targetDir)
     if (targetDir) await ensureDirExpanded(targetDir)
   } catch (error) {
-    dropErrorMessage.value = '文件粘贴失败，请稍后重试。'
+    dropErrorMessage.value = '剪贴板图片粘贴失败，请稍后重试。'
     dropTechnicalDetail.value = error instanceof Error ? error.message : String(error)
   } finally {
     workspaceStore.setBusy(false)

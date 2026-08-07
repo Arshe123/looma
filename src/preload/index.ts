@@ -157,6 +157,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     copyEntries: (workspaceId: string, fromRelativePaths: string[], targetDirRelativePath: string) =>
       ipcRenderer.invoke('fs:copyEntries', workspaceId, fromRelativePaths, targetDirRelativePath),
     clipboardReadFiles: () => ipcRenderer.invoke('fs:clipboardReadFiles'),
+    clipboardPasteImage: (workspaceId: string, targetDirRelativePath: string) =>
+      ipcRenderer.invoke('fs:clipboardPasteImage', workspaceId, targetDirRelativePath),
     importImage: (workspaceId: string, noteRelativePath: string, sourceFilePath: string) =>
       ipcRenderer.invoke('fs:importImage', workspaceId, noteRelativePath, sourceFilePath),
     delete: (workspaceId: string, targetRelativePath: string) =>

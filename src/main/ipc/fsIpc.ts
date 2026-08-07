@@ -9,6 +9,12 @@ ipcMain.handle('fs:listDir', async (_, workspaceId: string, dirRelativePath: str
   return await fileSystemService.listDir(workspacePath, dirRelativePath);
 });
 
+ipcMain.handle('fs:listNotes', async (_, workspaceId: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  return await fileSystemService.listNotes(workspacePath);
+});
+
 ipcMain.handle('fs:createFolder', async (_, workspaceId: string, parentDirRelativePath: string, name: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };

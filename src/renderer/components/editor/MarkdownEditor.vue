@@ -10,6 +10,7 @@ import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
 const Editor = defineAsyncComponent(() => import('./Editor.vue'))
 const TiptapPreview = defineAsyncComponent(() => import('../preview/TiptapPreview.vue'))
 const ChunkedMarkdownPreview = defineAsyncComponent(() => import('../preview/ChunkedMarkdownPreview.vue'))
+const NoteLinkPreview = defineAsyncComponent(() => import('../preview/NoteLinkPreview.vue'))
 
 const props = defineProps<{
   filePath: string
@@ -35,6 +36,7 @@ const splitRatio = ref(0.5)
 const splitContainerRef = ref<HTMLElement | null>(null)
 const editorRef = ref<InstanceType<typeof EditorComponent> | null>(null)
 const previewRef = ref<InstanceType<typeof TiptapPreviewComponent> | null>(null)
+const chunkedPreviewRef = ref<any>(null)
 const isPreparingFullContent = ref(false)
 let isResizingSplit = false
 let previousBodyCursor = ''
@@ -165,10 +167,26 @@ watch(
 defineExpose({
   scrollToHeading(target: MarkdownOutlineItem) {
     if (viewMode.value !== 'editor') {
-      previewRef.value?.scrollToHeading(target)
+      if (props.useChunkedPreview) {
+        chunkedPreviewRef.value?.scrollToHeading(target)
+      } else {
+        previewRef.value?.scrollToHeading(target)
+      }
     }
     if (viewMode.value !== 'preview') {
       editorRef.value?.scrollToLine(target.line)
+    }
+  },
+  scrollToLine(line: number) {
+    if (viewMode.value !== 'editor') {
+      if (props.useChunkedPreview) {
+        chunkedPreviewRef.value?.scrollToLine(line)
+      } else {
+        previewRef.value?.scrollToLine(line)
+      }
+    }
+    if (viewMode.value !== 'preview') {
+      editorRef.value?.scrollToLine(line)
     }
   },
   saveSnapshot(skipSaveMeta = false) {
@@ -218,8 +236,10 @@ defineExpose({
       </div>
       <ChunkedMarkdownPreview
         v-else-if="useChunkedPreview"
+        ref="chunkedPreviewRef"
         :content="props.content"
         :filePath="props.filePath"
+        :relativeFilePath="props.relativeFilePath"
         :isPartial="isPartial"
         :isLoadingMore="isLoadingMore"
         :totalBytes="totalBytes"
@@ -269,5 +289,10 @@ defineExpose({
         <Eye :size="18" />
       </button>
     </div>
+
+    <NoteLinkPreview
+      :file-path="props.filePath"
+      :relative-file-path="props.relativeFilePath"
+    />
   </div>
 </template>

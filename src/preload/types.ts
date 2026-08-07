@@ -350,6 +350,7 @@ interface ElectronAPI {
   };
   fs: {
     listDir: (workspaceId: string, dirRelativePath: string) => Promise<Result<Array<{ name: string; relativePath: string; isDirectory: boolean; size: number; mtimeMs: number }>>>;
+    listNotes: (workspaceId: string) => Promise<Result<string[]>>;
     rename: (workspaceId: string, targetRelativePath: string, newName: string) => Promise<Result<void>>;
     createFolder: (workspaceId: string, parentDirRelativePath: string, name: string) => Promise<Result<string>>;
     createFile: (workspaceId: string, parentDirRelativePath: string, name: string) => Promise<Result<string>>;

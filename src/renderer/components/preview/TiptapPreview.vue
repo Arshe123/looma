@@ -25,6 +25,7 @@ import TableToolbar from './TableToolbar.vue'
 import CodeBlockView from './CodeBlockView.vue'
 import LocalImageView from './LocalImageView.vue'
 import ImageInsertDialog from './ImageInsertDialog.vue'
+import NoteRefPicker from './NoteRefPicker.vue'
 import EditorDropAlert from '@/renderer/components/editor/EditorDropAlert.vue'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import { replaceExternalMarkdownContent } from '@/shared/utils/tiptap-content-sync'
@@ -44,6 +45,10 @@ import {
 import { renderCurrentMarkdownImage } from '@/shared/utils/tiptap-image-insertion'
 import { getDroppedFilePaths, isSupportedDroppedImagePath } from '@/shared/utils/external-file-drop'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
+import {
+  dispatchOpenNoteRef,
+  parseNoteLinkHref,
+} from '@/shared/utils/note-link-ref'
 
 const props = defineProps<{
   content: string
@@ -68,6 +73,7 @@ const markdownSerializationGate = createMarkdownSerializationGate()
 
 const editor = shallowRef<Editor | null>(null)
 const imageInsertDialogOpen = shallowRef(false)
+const noteRefPickerState = shallowRef<{ open: boolean; selectedText: string }>({ open: false, selectedText: '' })
 const previewContainerRef = shallowRef<HTMLElement | null>(null)
 const dropErrorMessage = shallowRef('')
 const dropTechnicalDetail = shallowRef('')
@@ -476,6 +482,67 @@ const scrollToBlockText = (sourceLineText: string) => {
   return true
 }
 
+/** 预览模式下按源码行号滚动：用该行文本作为块锚点。 */
+const scrollToSourceLine = (line: number) => {
+  const content = props.content || ''
+  const lines = content.split('\n')
+  const safeLine = Math.min(Math.max(Math.round(line || 1), 1), lines.length)
+  const targetText = (lines[safeLine - 1] || '').trim()
+  if (!targetText) return false
+  return scrollToBlockText(targetText)
+}
+
+const handleNoteRefClick = (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null
+  const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null
+  if (!anchor) return
+  const href = anchor.getAttribute('href') || ''
+
+  // 内部笔记引用：跳转到对应位置
+  const ref = parseNoteLinkHref(href, props.relativeFilePath)
+  if (ref) {
+    event.preventDefault()
+    event.stopPropagation()
+    dispatchOpenNoteRef(ref)
+    return
+  }
+
+  // 外部 http(s) 链接：交给系统默认浏览器，绝不在 looma 窗口内打开
+  if (/^https?:/i.test(href)) {
+    event.preventDefault()
+    event.stopPropagation()
+    void window.electronAPI.app.openExternal(href)
+  }
+}
+
+/** 检测输入 [[ 并打开笔记引用选择器（光标前两个字符为 [[，且不在代码块内）。 */
+const maybeOpenNoteRefPicker = (currentEditor: any) => {
+  if (noteRefPickerState.value.open) return
+  const { state } = currentEditor
+  const { $from } = state.selection
+  if ($from.parent.type.name.includes('code')) return
+  const textBefore = $from.parent.textBetween(0, $from.parentOffset, '\n', '')
+  if (!textBefore.endsWith('[[')) return
+
+  const { from, to } = state.selection
+  const selectedText = from === to ? '' : state.doc.textBetween(from, to, '\n', '')
+  const fromPos = Math.max(0, $from.pos - 2)
+  currentEditor.chain().focus().deleteRange({ from: fromPos, to: $from.pos }).run()
+  noteRefPickerState.value = { open: true, selectedText }
+}
+
+/** 从选择器选中笔记后插入链接（带 link mark 的文本节点，序列化时输出 [label](href)）。 */
+const insertNoteRefLink = (payload: { relativePath: string; href: string; label: string }) => {
+  noteRefPickerState.value = { open: false, selectedText: '' }
+  const currentEditor = editor.value
+  if (!currentEditor || currentEditor.isDestroyed) return
+  currentEditor.chain().focus().insertContent({
+    type: 'text',
+    text: payload.label,
+    marks: [{ type: 'link', attrs: { href: payload.href } }],
+  }).run()
+}
+
 const scrollToTextOffset = (textOffset: number) => {
   const currentEditor = editor.value
   if (!currentEditor) return false
@@ -583,6 +650,11 @@ onMounted(() => {
         codeBlock: false,
         bulletList: { keepMarks: true, keepAttributes: false },
         orderedList: { keepMarks: true, keepAttributes: false },
+        link: {
+          openOnClick: false,
+          autolink: true,
+          linkOnPaste: true,
+        },
       }),
       CodeBlockWithHeader.configure({
         exitOnTripleEnter: false,
@@ -632,6 +704,7 @@ onMounted(() => {
     onUpdate: ({ editor }) => {
       if (isUnmounting || editor.isDestroyed) return
       if (isUpdatingFromExternal) return
+      maybeOpenNoteRefPicker(editor)
       scheduleMarkdownEmit()
     },
     onTransaction: ({ editor, transaction }) => {
@@ -643,12 +716,14 @@ onMounted(() => {
   })
 
   previewContainerRef.value?.addEventListener(PREVIEW_IMAGE_SETTLED_EVENT, reanchorPendingHeading)
+  previewContainerRef.value?.addEventListener('click', handleNoteRefClick, true)
 })
 
 onBeforeUnmount(() => {
   emitCurrentMarkdown()
   isUnmounting = true
   previewContainerRef.value?.removeEventListener(PREVIEW_IMAGE_SETTLED_EVENT, reanchorPendingHeading)
+  previewContainerRef.value?.removeEventListener('click', handleNoteRefClick, true)
   clearPendingMarkdownEmit()
   clearPendingCodeHighlight()
   clearPendingHeadingTarget()
@@ -698,6 +773,9 @@ defineExpose({
   scrollToHeading(target: MarkdownOutlineItem) {
     if (scrollToHeadingTarget(target, 'smooth')) rememberHeadingTarget(target)
   },
+  scrollToLine(line: number) {
+    return scrollToSourceLine(line)
+  },
   getScrollState() {
     return getPreviewScrollState()
   },
@@ -723,6 +801,13 @@ defineExpose({
     <InlineMenu v-if="editor" :editor="editor" @insert-image="imageInsertDialogOpen = true" />
     <ContextMenu v-if="editor" :editor="editor" @insert-image="imageInsertDialogOpen = true" />
     <TableToolbar v-if="editor" :editor="editor" />
+    <NoteRefPicker
+      v-if="noteRefPickerState.open"
+      :from-relative-path="props.relativeFilePath"
+      :selected-text="noteRefPickerState.selectedText"
+      @select="insertNoteRefLink"
+      @close="noteRefPickerState = { open: false, selectedText: '' }; editor?.commands.focus()"
+    />
     <ImageInsertDialog
       v-if="editor"
       :open="imageInsertDialogOpen"

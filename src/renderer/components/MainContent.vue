@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { FileQuestion, FileText } from 'lucide-vue-next'
 import { useWorkspaceStore, type FileWorkspaceTab } from '../stores/workspace'
 import EditorLoadError from './editor/EditorLoadError.vue'
@@ -14,6 +14,11 @@ import { FILE_TREE_CREATE_FILE_EVENT } from '@/shared/utils/file-tree-utils'
 import { isTextEditingTarget } from '@/shared/utils/editing-target'
 import { isEditableTextPath } from '@/renderer/stores/workspace-utils'
 import { createKeyedTemplateRefSetters } from '@/shared/utils/component-ref-utils'
+import { parseMarkdownOutline } from '@/shared/utils/markdown-outline'
+import {
+  OPEN_NOTE_REF_EVENT,
+  isHeadingAnchorMatch,
+} from '@/shared/utils/note-link-ref'
 
 const workspaceStore = useWorkspaceStore()
 let keyHandler: ((e: KeyboardEvent) => void) | null = null
@@ -117,6 +122,65 @@ const jumpToHeading = (event: Event) => {
   currentEditorRef.value.scrollToHeading(detail)
 }
 
+const openNoteRef = async (event: Event) => {
+  const detail = (event as CustomEvent<{ relativePath: string; anchor?: { kind: string; text?: string; line?: number; start?: number } }>).detail
+  if (!detail?.relativePath) return
+  const relativePath = detail.relativePath
+
+  workspaceStore.openFileTab(relativePath)
+  const result = await workspaceStore.ensureTextFileFullyLoaded(relativePath)
+  if (!result.success) return
+
+  // 等待编辑器组件挂载并拿到内容
+  await nextTick()
+  await new Promise<void>((resolve) => {
+    const startedAt = Date.now()
+    const waitEditor = () => {
+      const editor = editorRefs.value[relativePath]
+      if (editor && workspaceStore.openedTextFileContents[relativePath] && !workspaceStore.openedTextFileContents[relativePath].isPartial) {
+        resolve()
+        return
+      }
+      if (Date.now() - startedAt > 3000) {
+        resolve()
+        return
+      }
+      setTimeout(waitEditor, 30)
+    }
+    waitEditor()
+  })
+
+  const editor = editorRefs.value[relativePath]
+  if (!editor) return
+  const content = workspaceStore.openedTextFileContents[relativePath]?.content || ''
+
+  const anchor = detail.anchor
+  if (anchor?.kind === 'line' && typeof anchor.line === 'number') {
+    if (typeof editor.scrollToLine === 'function') {
+      editor.scrollToLine(anchor.line)
+    }
+    return
+  }
+  if (anchor?.kind === 'line-range' && typeof anchor.start === 'number') {
+    if (typeof editor.scrollToLine === 'function') {
+      editor.scrollToLine(anchor.start)
+    }
+    return
+  }
+  if (anchor?.kind === 'heading' && anchor.text) {
+    const outline = parseMarkdownOutline(content)
+    const heading = outline.find((item) => isHeadingAnchorMatch(anchor.text as string, item.text))
+    if (heading && typeof editor.scrollToHeading === 'function') {
+      editor.scrollToHeading(heading)
+    }
+    return
+  }
+  // 无锚点：滚动到文件顶部
+  if (typeof editor.scrollToLine === 'function') {
+    editor.scrollToLine(1)
+  }
+}
+
 watch(
   () => workspaceStore.activeFileRelativePath,
   (_newRel, oldRel) => {
@@ -140,6 +204,7 @@ onMounted(() => {
   window.addEventListener('beforeunload', saveCurrentSnapshot)
   window.addEventListener('request-save-snapshot', saveCurrentSnapshot)
   window.addEventListener('looma:jump-to-heading', jumpToHeading)
+  window.addEventListener(OPEN_NOTE_REF_EVENT, openNoteRef)
   keyHandler = (e: KeyboardEvent) => {
     if (e.ctrlKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
       e.preventDefault()
@@ -171,6 +236,7 @@ onUnmounted(() => {
   window.removeEventListener('beforeunload', saveCurrentSnapshot)
   window.removeEventListener('request-save-snapshot', saveCurrentSnapshot)
   window.removeEventListener('looma:jump-to-heading', jumpToHeading)
+  window.removeEventListener(OPEN_NOTE_REF_EVENT, openNoteRef)
   saveCurrentSnapshot()
   if (keyHandler) window.removeEventListener('keydown', keyHandler)
   keyHandler = null

@@ -278,6 +278,36 @@ export const fileSystemService = {
     }
   },
 
+  /**
+   * 递归列出工作区内所有可引用的笔记文件（.md / .txt）。
+   * 跳过隐藏目录（.looma 等），供笔记引用选择器使用。
+   */
+  async listNotes(workspacePath: string): Promise<Result<string[]>> {
+    try {
+      const notes: string[] = []
+      const walk = async (dirAbs: string) => {
+        const items = await fs.readdir(dirAbs, { withFileTypes: true })
+        for (const item of items) {
+          if (item.name.startsWith('.')) continue
+          const abs = path.join(dirAbs, item.name)
+          if (item.isDirectory()) {
+            await walk(abs)
+            continue
+          }
+          const ext = path.extname(item.name).toLowerCase()
+          if (ext === '.md' || ext === '.txt') {
+            notes.push(toPosix(path.relative(workspacePath, abs)))
+          }
+        }
+      }
+      await walk(workspacePath)
+      notes.sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+      return { success: true, data: notes }
+    } catch (error: any) {
+      return { success: false, error: `列出笔记失败: ${error?.message ?? String(error)}` }
+    }
+  },
+
   async createFolder(workspacePath: string, parentDirRelativePath: string, name: string): Promise<Result<string>> {
     try {
       const resolvedParent = resolveInWorkspace(workspacePath, parentDirRelativePath || '.')

@@ -3,10 +3,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import 'github-markdown-css/github-markdown-light.css'
 import { renderMarkdown } from '@/shared/utils/markdown-renderer'
 import { splitMarkdownIntoRenderChunks } from '@/shared/utils/markdown-chunks'
+import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
+import { dispatchOpenNoteRef, parseNoteLinkHref } from '@/shared/utils/note-link-ref'
+import { findBestTextAnchor } from '@/shared/utils/editor-scroll-sync'
 
 const props = defineProps<{
   content: string
   filePath: string
+  relativeFilePath?: string
   isPartial: boolean
   isLoadingMore: boolean
   totalBytes: number
@@ -89,6 +93,57 @@ const requestMoreNearBoundary = () => {
   if (container.scrollHeight - container.scrollTop - container.clientHeight < 1200) emit('load-more')
 }
 
+const handleNoteRefClick = (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null
+  const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null
+  if (!anchor) return
+  const href = anchor.getAttribute('href') || ''
+
+  // 内部笔记引用：跳转到对应位置
+  const ref = parseNoteLinkHref(href, props.relativeFilePath || '')
+  if (ref) {
+    event.preventDefault()
+    dispatchOpenNoteRef(ref)
+    return
+  }
+
+  // 外部 http(s) 链接：交给系统默认浏览器
+  if (/^https?:/i.test(href)) {
+    event.preventDefault()
+    void window.electronAPI.app.openExternal(href)
+  }
+}
+
+const getBlockElements = () => {
+  const container = containerRef.value
+  if (!container) return []
+  return Array.from(container.querySelectorAll<HTMLElement>(
+    'h1, h2, h3, h4, h5, h6, p, li, pre, blockquote, td, th',
+  )).filter((element) => (element.textContent || '').trim())
+}
+
+const scrollToHeading = (target: MarkdownOutlineItem) => {
+  const headings = Array.from(containerRef.value?.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6') || [])
+  const heading = headings[target.index]
+  if (!heading) return false
+  heading.scrollIntoView({ block: 'start' })
+  return true
+}
+
+const scrollToSourceLine = (line: number) => {
+  const content = props.content || ''
+  const lines = content.split('\n')
+  const safeLine = Math.min(Math.max(Math.round(line || 1), 1), lines.length)
+  const targetText = (lines[safeLine - 1] || '').trim()
+  if (!targetText) return false
+  const blocks = getBlockElements()
+  const index = findBestTextAnchor(blocks.map((block) => block.textContent || ''), targetText)
+  const block = index >= 0 ? blocks[index] : null
+  if (!block) return false
+  block.scrollIntoView({ block: 'start' })
+  return true
+}
+
 watch(() => props.content, () => {
   resolveLocalImages().catch(() => {})
   requestAnimationFrame(requestMoreNearBoundary)
@@ -96,6 +151,7 @@ watch(() => props.content, () => {
 
 onMounted(() => {
   containerRef.value?.addEventListener('scroll', requestMoreNearBoundary, { passive: true })
+  containerRef.value?.addEventListener('click', handleNoteRefClick)
   resolveLocalImages().catch(() => {})
   requestAnimationFrame(requestMoreNearBoundary)
 })
@@ -103,6 +159,12 @@ onMounted(() => {
 onBeforeUnmount(() => {
   imageResolveGeneration += 1
   containerRef.value?.removeEventListener('scroll', requestMoreNearBoundary)
+  containerRef.value?.removeEventListener('click', handleNoteRefClick)
+})
+
+defineExpose({
+  scrollToHeading,
+  scrollToLine: scrollToSourceLine,
 })
 </script>
 

@@ -148,6 +148,27 @@ function createWindow(initialWorkspaceId?: string) {
   mainWindow = win;
   win.setIcon(path.join(__dirname, '../resources/icon.png'));
 
+  // 拦截所有 window.open：http/https 交给系统默认浏览器，其余一律拒绝
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) {
+      void import('electron').then(({ shell }) => shell.openExternal(url));
+    }
+    return { action: 'deny' };
+  });
+
+  // 拦截页面内导航：只允许应用自身页面，外部 URL 交给系统默认浏览器
+  win.webContents.on('will-navigate', (event, url) => {
+    const currentUrl = win.webContents.getURL();
+    const isSameAppPage = url === currentUrl
+      || (process.env.VITE_DEV_SERVER_URL && url.startsWith(process.env.VITE_DEV_SERVER_URL));
+    if (!isSameAppPage) {
+      event.preventDefault();
+      if (/^https?:/i.test(url)) {
+        void import('electron').then(({ shell }) => shell.openExternal(url));
+      }
+    }
+  });
+
   win.on('closed', () => {
     if (mainWindow === win) {
       mainWindow = BrowserWindow.getAllWindows()[0] ?? null;

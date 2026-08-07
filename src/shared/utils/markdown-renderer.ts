@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
+import { isInternalNoteHref } from './note-link-ref'
 
 const markdown = new MarkdownIt({
   html: false,
@@ -36,6 +37,17 @@ markdown.renderer.rules.fence = (tokens, idx) => {
 
 markdown.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   const token = tokens[idx]
+  const href = token.attrGet('href') || ''
+
+  // 内部笔记链接：打标供点击跳转使用，不在新窗口打开
+  if (isInternalNoteHref(href)) {
+    token.attrPush(['class', 'looma-note-ref'])
+    token.attrPush(['data-looma-note-ref', href])
+    return openExternalLinkRule
+      ? openExternalLinkRule(tokens, idx, options, env, self)
+      : self.renderToken(tokens, idx, options)
+  }
+
   const targetIndex = token.attrIndex('target')
   const relIndex = token.attrIndex('rel')
 

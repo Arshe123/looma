@@ -115,6 +115,9 @@ const getCustomStyleExtension = () => {
       padding: `10px 0 ${BASE_BOTTOM_SPACER} 0`,
       whiteSpace: props.wordWrap ? 'pre-wrap' : 'pre'
     },
+    '.cm-activeLine': {
+      backgroundColor: 'var(--editor-active-line-bg)',
+    },
     '.cm-gutters': {
       backgroundColor: 'transparent',
       color: 'var(--text-subtle)',

@@ -9,7 +9,7 @@ import {
   type NoteLinkAnchor,
 } from '@/shared/utils/note-link-ref'
 import { parseMarkdownOutline } from '@/shared/utils/markdown-outline'
-import { renderMarkdown } from '@/shared/utils/markdown-renderer'
+import { renderMarkdownWithLineData } from '@/shared/utils/markdown-renderer'
 
 const props = defineProps<{
   filePath: string
@@ -26,6 +26,8 @@ const loading = ref(false)
 const unresolved = ref(false)
 const currentTarget = ref<{ relativePath: string; anchor?: NoteLinkAnchor } | null>(null)
 const previewEl = ref<HTMLElement | null>(null)
+const previewBodyRef = ref<HTMLElement | null>(null)
+const previewGutterRef = ref<HTMLElement | null>(null)
 
 const PREVIEW_CHUNK_BYTES = 256 * 1024
 const SHOW_DELAY_MS = 180
@@ -66,28 +68,39 @@ const fetchTargetContent = async (relativePath: string): Promise<string | null> 
   return content
 }
 
-const extractSnippet = (content: string, anchor?: NoteLinkAnchor) => {
+type ExtractedSnippet = { text: string; baseLine: number }
+
+const extractSnippet = (content: string, anchor?: NoteLinkAnchor): ExtractedSnippet | null => {
   const lines = content.split('\n')
+  let from: number
+  let to: number
+
   if (!anchor) {
-    return lines.slice(0, MAX_SNIPPET_LINES).join('\n').trim()
-  }
-  if (anchor.kind === 'heading') {
+    from = 0
+    to = Math.min(lines.length, MAX_SNIPPET_LINES)
+  } else if (anchor.kind === 'heading') {
     const outline = parseMarkdownOutline(content)
     const heading = outline.find((item) => isHeadingAnchorMatch(anchor.text, item.text))
-    if (!heading) return ''
-    const startIndex = heading.line - 1
-    const endIndex = lines.findIndex((line, index) => index > startIndex && /^#{1,6}\s+/.test(line))
-    const sliceEnd = endIndex === -1 ? lines.length : endIndex
-    return lines.slice(startIndex, sliceEnd).slice(0, MAX_SNIPPET_LINES + 2).join('\n').trim()
-  }
-  if (anchor.kind === 'line' || anchor.kind === 'line-range') {
+    if (!heading) return null
+    from = heading.line - 1
+    const endIndex = lines.findIndex((line, index) => index > from && /^#{1,6}\s+/.test(line))
+    to = endIndex === -1 ? lines.length : endIndex
+    to = Math.min(to, from + MAX_SNIPPET_LINES + 2)
+  } else if (anchor.kind === 'line' || anchor.kind === 'line-range') {
     const start = anchor.kind === 'line' ? anchor.line : anchor.start
     const end = anchor.kind === 'line' ? anchor.line : anchor.end
-    const from = Math.max(0, start - 3)
-    const to = Math.min(lines.length, end + 2)
-    return lines.slice(from, to).join('\n').trim()
+    from = Math.max(0, start - 3)
+    to = Math.min(lines.length, end + 2)
+  } else {
+    return null
   }
-  return ''
+
+  const slice = lines.slice(from, to)
+  // trim 会去掉首尾空行，行号基准取第一个非空行
+  const firstNonEmpty = Math.max(0, slice.findIndex((line) => line.trim().length > 0))
+  const text = slice.join('\n').trim()
+  if (!text) return null
+  return { text, baseLine: from + firstNonEmpty }
 }
 
 const adjustPositionToViewport = async () => {
@@ -103,6 +116,37 @@ const adjustPositionToViewport = async () => {
   if (nextX !== position.value.x || nextY !== position.value.y) {
     position.value = { x: nextX, y: nextY }
   }
+}
+
+/** 根据 [data-line] 元素的位置在 gutter 里摆放行号。 */
+const renderGutterNumbers = () => {
+  const body = previewBodyRef.value
+  const gutter = previewGutterRef.value
+  if (!body || !gutter) return
+  gutter.innerHTML = ''
+  const bodyRect = body.getBoundingClientRect()
+  body.querySelectorAll<HTMLElement>('[data-line]').forEach((el) => {
+    const line = Number(el.dataset.line)
+    if (!Number.isFinite(line)) return
+    const top = el.getBoundingClientRect().top - bodyRect.top
+    const span = document.createElement('span')
+    span.className = 'looma-preview-gutter-line'
+    span.textContent = String(line)
+    span.style.top = `${Math.max(0, Math.round(top))}px`
+    gutter.appendChild(span)
+  })
+}
+
+const scheduleGutterRender = () => {
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      renderGutterNumbers()
+      // 图片加载后高度变化会导致行号错位，重新测量
+      previewBodyRef.value?.querySelectorAll('img').forEach((img) => {
+        img.addEventListener('load', renderGutterNumbers, { once: true })
+      })
+    })
+  })
 }
 
 const applyPreview = async (relativePath: string, anchor?: NoteLinkAnchor) => {
@@ -127,7 +171,8 @@ const applyPreview = async (relativePath: string, anchor?: NoteLinkAnchor) => {
     snippetHtml.value = `<p class="looma-preview-message">${anchor ? '未能定位到引用的位置。' : '该笔记暂无内容。'}</p>`
     return
   }
-  snippetHtml.value = renderMarkdown(extracted)
+  snippetHtml.value = renderMarkdownWithLineData(extracted.text, extracted.baseLine)
+  scheduleGutterRender()
   await adjustPositionToViewport()
 }
 
@@ -256,11 +301,18 @@ onBeforeUnmount(() => {
       <div class="max-h-60 overflow-y-auto focus-scrollbar">
         <div v-if="loading" class="px-3 py-3 text-sm text-text-muted">加载中...</div>
         <div
-          v-else
-          class="looma-preview-body markdown-body px-3 py-2.5 text-[13px] leading-relaxed"
-          :class="{ 'looma-preview-unresolved': unresolved }"
+          v-else-if="unresolved"
+          class="looma-preview-body markdown-body px-3 py-2.5 text-[13px] leading-relaxed looma-preview-unresolved"
           v-html="snippetHtml"
         />
+        <div v-else class="relative looma-preview-wrap">
+          <div ref="previewGutterRef" class="looma-preview-gutter" aria-hidden="true" />
+          <div
+            ref="previewBodyRef"
+            class="looma-preview-body markdown-body pl-12 pr-3 py-2.5 text-[13px] leading-relaxed"
+            v-html="snippetHtml"
+          />
+        </div>
       </div>
       <button
         class="w-full px-3 py-2 text-xs text-accent border-t border-border-soft hover:bg-accent-soft transition-colors"
@@ -275,6 +327,35 @@ onBeforeUnmount(() => {
 <style>
 .looma-note-preview {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+/* ---- 引用预览行号 gutter ---- */
+.looma-preview-wrap {
+  position: relative;
+}
+
+.looma-preview-gutter {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 2.75rem;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.looma-preview-gutter-line {
+  position: absolute;
+  left: 0.25rem;
+  right: 0.4rem;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 10.5px;
+  /* 与正文 13px * 1.6 行高一致，保证行号与文本行垂直对齐 */
+  line-height: 20.8px;
+  color: var(--text-subtle);
+  white-space: nowrap;
 }
 
 .looma-preview-body.markdown-body {

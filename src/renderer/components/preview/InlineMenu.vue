@@ -20,6 +20,7 @@ import {
   type HeadingDirection,
   type HeadingLevel,
 } from '@/shared/utils/editor-shortcuts'
+import { getOverlayPositionAtLineNumber } from '@/shared/utils/tiptap-line-numbers'
 
 const props = defineProps<{
   editor: Editor
@@ -39,6 +40,8 @@ const tablePickerVisible = ref(false)
 const menuMode = ref<'default' | 'table'>('default')
 let isDisposed = false
 let blurTimer: ReturnType<typeof setTimeout> | null = null
+// 当前被隐藏的行号元素（"+ 按钮断点化"：按钮出现时该行行号消失）
+let hiddenLineNumberEl: HTMLElement | null = null
 
 const getEditor = () => {
   if (isDisposed || props.editor.isDestroyed) return null
@@ -59,14 +62,28 @@ const isInNonEmptyCodeBlock = (editor: Editor) => {
   return parent.type.name === 'codeBlock' && parent.textContent.length > 0
 }
 
+// 恢复被隐藏的行号；无目标元素时恢复全部
+const restoreLineNumbers = (target?: HTMLElement | null) => {
+  if (target) {
+    target.classList.remove('looma-line-number-hidden')
+    return
+  }
+  document.querySelectorAll('.looma-line-number-hidden').forEach(el =>
+    el.classList.remove('looma-line-number-hidden'))
+}
+
 const updatePosition = () => {
   const editor = getEditor()
   if (!editor || !editor.isEditable || !editor.isFocused || defaultMenuItems.value.length === 0) {
+    restoreLineNumbers(hiddenLineNumberEl)
+    hiddenLineNumberEl = null
     menuVisible.value = false
     return
   }
 
   if (isInNonEmptyCodeBlock(editor)) {
+    restoreLineNumbers(hiddenLineNumberEl)
+    hiddenLineNumberEl = null
     menuVisible.value = false
     return
   }
@@ -79,6 +96,8 @@ const updatePosition = () => {
   const isCurrentBlockEmpty = $anchor.parent.textContent.length === 0
   
   if (!isCurrentBlockEmpty) {
+    restoreLineNumbers(hiddenLineNumberEl)
+    hiddenLineNumberEl = null
     menuVisible.value = false
     return
   }
@@ -100,10 +119,31 @@ const updatePosition = () => {
       
       if (container) {
         const containerRect = container.getBoundingClientRect()
-        // Position the "+" button relative to the scrolling container
-        buttonPosition.value = {
-          top: rect.top - containerRect.top + container.scrollTop + (rect.height / 2) - 12,
-          left: 4 // Move it more to the left (was 16)
+        const lineNumberEl = dom.querySelector<HTMLElement>('.looma-line-number')
+        // 行号在固定宽度的 gutter 列内居中；菜单也以该列为锚点，保证所有行共用同一竖线。
+        const lineNumberRect = lineNumberEl?.getBoundingClientRect() || null
+
+        // 行切换时先恢复上一行，再隐藏当前行；按钮完全覆盖行号文本。
+        if (lineNumberEl !== hiddenLineNumberEl) {
+          restoreLineNumbers(hiddenLineNumberEl)
+          hiddenLineNumberEl = lineNumberEl
+        }
+        lineNumberEl?.classList.add('looma-line-number-hidden')
+
+        if (lineNumberRect) {
+          buttonPosition.value = getOverlayPositionAtLineNumber({
+            lineNumberRect,
+            containerRect,
+            scrollTop: container.scrollTop,
+            scrollLeft: container.scrollLeft,
+            overlaySize: 24,
+          })
+        } else {
+          // 无行号元素（表格单元格/叶子块）：回退到行号栏列中心
+          buttonPosition.value = {
+            top: rect.top - containerRect.top + container.scrollTop + (rect.height / 2) - 12,
+            left: 26 - 12,
+          }
         }
       } else {
         const editorRect = editorDom.getBoundingClientRect()
@@ -117,6 +157,8 @@ const updatePosition = () => {
       menuVisible.value = false
     }
   } catch (e) {
+    restoreLineNumbers(hiddenLineNumberEl)
+    hiddenLineNumberEl = null
     menuVisible.value = false
   }
 }
@@ -366,6 +408,8 @@ onMounted(() => {
       if (isDisposed) return
       if (!panelVisible.value) {
         menuVisible.value = false
+        restoreLineNumbers(hiddenLineNumberEl)
+        hiddenLineNumberEl = null
       }
     }, 200)
   })
@@ -379,6 +423,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   isDisposed = true
+  restoreLineNumbers(hiddenLineNumberEl)
+  hiddenLineNumberEl = null
   if (blurTimer) {
     clearTimeout(blurTimer)
     blurTimer = null

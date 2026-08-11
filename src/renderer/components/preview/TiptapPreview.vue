@@ -49,6 +49,7 @@ import {
   dispatchOpenNoteRef,
   parseNoteLinkHref,
 } from '@/shared/utils/note-link-ref'
+import { LineNumbers } from '@/shared/utils/tiptap-line-numbers'
 
 const props = defineProps<{
   content: string
@@ -681,6 +682,7 @@ onMounted(() => {
       Markdown.configure({
         markedOptions: { gfm: true },
       }),
+      LineNumbers,
     ],
     content: prepareMarkdownForRichText(props.content),
     contentType: 'markdown',
@@ -827,6 +829,62 @@ defineExpose({
 <style>
 .tiptap-preview-container {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+/* ---- Tiptap 行号 ---- */
+.tiptap-preview-container .ProseMirror {
+  position: relative;
+  /* 覆盖 Tailwind p-8 的 padding-left，为行号栏留出空间 */
+  padding-left: 3rem;
+}
+
+.tiptap-preview-container .looma-line-number {
+  position: absolute;
+  left: 0.5rem;
+  min-width: 2.25rem;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.72rem;
+  line-height: inherit;
+  color: var(--text-subtle);
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+  cursor: default;
+  /* 小字号的视觉中心原先比正文偏上，向下微调后与正文行盒居中。 */
+  transform: translateY(0.16rem);
+  transition: opacity 0.12s ease;
+}
+
+.tiptap-preview-container .looma-line-number-active {
+  color: var(--text-main);
+  font-weight: 700;
+}
+
+.tiptap-preview-container .looma-active-line {
+  background: var(--editor-active-line-bg);
+  box-shadow: -100vw 0 0 var(--editor-active-line-bg);
+}
+
+/* 行内菜单 "+" 按钮出现时，当前行行号隐藏（断点化占位） */
+.tiptap-preview-container .looma-line-number.looma-line-number-hidden {
+  opacity: 0;
+}
+
+/* 表格内部不渲染行号（单元格自带定位上下文且会裁剪，行号没有意义） */
+.tiptap-preview-container table .looma-line-number {
+  display: none;
+}
+
+/* 代码块行号：跟随代码块自身的左内边距，避免被 code-block-shell 的定位上下文干扰 */
+.tiptap-preview-container .code-block-content {
+  position: relative;
+  padding-left: 3rem;
+}
+
+.tiptap-preview-container .code-block-content .looma-line-number {
+  left: 0;
 }
 .markdown-body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;

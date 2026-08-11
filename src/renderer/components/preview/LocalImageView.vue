@@ -39,6 +39,14 @@ const currentMarkdown = computed(() => formatMarkdownImage({
   alt: altText.value,
   src: originalSrc.value,
 }))
+const imageLineNumberDecoration = computed(() => (
+  (props.decorations as any[]).find(decoration => decoration.spec?.imageLineNumber === true)
+))
+const imageLineNumber = computed<number | null>(() => {
+  const line = imageLineNumberDecoration.value?.spec?.lineNumber
+  return typeof line === 'number' ? line : null
+})
+const imageLineNumberActive = computed(() => imageLineNumberDecoration.value?.spec?.activeLine === true)
 
 const getWrapperElement = () => {
   const value = wrapperRef.value
@@ -180,6 +188,13 @@ onBeforeUnmount(() => {
     :class="{ 'is-markdown-editing': editingMarkdown }"
     contenteditable="false"
   >
+    <span
+      v-if="imageLineNumber !== null"
+      class="looma-line-number looma-image-line-number"
+      :class="{ 'looma-line-number-active': imageLineNumberActive }"
+      :data-line="imageLineNumber"
+      aria-hidden="true"
+    >{{ imageLineNumber }}</span>
     <img
       v-if="renderedSrc"
       :src="renderedSrc"
@@ -226,8 +241,14 @@ onBeforeUnmount(() => {
 <style>
 .tiptap .local-image-node,
 .markdown-body .local-image-node {
+  position: relative;
   margin: 0.85em 0;
   border-radius: 8px;
+}
+
+.tiptap .local-image-node > .looma-image-line-number {
+  top: 0;
+  left: -2.5rem;
 }
 
 .tiptap .local-image-node.is-markdown-editing img,

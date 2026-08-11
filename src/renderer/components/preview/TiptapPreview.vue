@@ -45,7 +45,12 @@ import {
   serializeMarkdownAst,
 } from '@/shared/utils/markdown-rich-text'
 import { renderCurrentMarkdownImage } from '@/shared/utils/tiptap-image-insertion'
-import { getDroppedFilePaths, isSupportedDroppedImagePath } from '@/shared/utils/external-file-drop'
+import { getDroppedFilePaths } from '@/shared/utils/external-file-drop'
+import {
+  getTiptapSelectionDocument,
+  getTiptapClipboardCopyText,
+  partitionClipboardImagePaths,
+} from '@/shared/utils/tiptap-clipboard'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import {
   dispatchOpenNoteRef,
@@ -248,34 +253,26 @@ const LocalImage = Image.extend({
   },
 })
 
-const importDroppedImages = async (event: DragEvent) => {
-  event.preventDefault()
+const importImagePaths = async (sourcePaths: string[], insertAt: number) => {
   dropErrorMessage.value = ''
   dropTechnicalDetail.value = ''
   const currentEditor = editor.value
   const workspaceId = workspaceStore.activeWorkspaceId
   if (!currentEditor || currentEditor.isDestroyed || !workspaceId) return
 
-  const sourcePaths = getDroppedFilePaths(event.dataTransfer?.files)
-  if (sourcePaths.length === 0) {
-    dropErrorMessage.value = '无法读取拖入图片，请从系统文件资源管理器重新拖入。'
-    dropTechnicalDetail.value = 'Electron did not expose native paths for the dropped File objects.'
-    return
-  }
-  const unsupported = sourcePaths.filter(path => !isSupportedDroppedImagePath(path))
+  const { supported, unsupported } = partitionClipboardImagePaths(sourcePaths)
   if (unsupported.length > 0) {
-    dropErrorMessage.value = '这里只能拖入 PNG、JPG、GIF、WebP 或 SVG 图片。'
+    dropErrorMessage.value = '这里只能粘贴或拖入 PNG、JPG、GIF、WebP 或 SVG 图片文件。'
     dropTechnicalDetail.value = `Unsupported paths: ${unsupported.join(', ')}`
     return
   }
+  if (supported.length === 0) return
 
-  const dropPosition = currentEditor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
-    ?? currentEditor.state.selection.from
   const imported: Array<{ relativePath: string; fileName: string }> = []
   const failures: string[] = []
-  workspaceStore.setBusy(true, sourcePaths.length > 1 ? `正在导入 ${sourcePaths.length} 张图片...` : '正在导入图片...')
+  workspaceStore.setBusy(true, supported.length > 1 ? `正在导入 ${supported.length} 张图片...` : '正在导入图片...')
   try {
-    for (const sourcePath of sourcePaths) {
+    for (const sourcePath of supported) {
       const result = await window.electronAPI.fs.importImage(workspaceId, props.relativeFilePath, sourcePath)
       if (result.success && result.data) imported.push(result.data)
       else failures.push(result.error || sourcePath)
@@ -285,8 +282,8 @@ const importDroppedImages = async (event: DragEvent) => {
         { type: 'image', attrs: { src: image.relativePath, alt: image.fileName } },
         { type: 'paragraph' },
       ])
-      if (!currentEditor.chain().focus().insertContentAt(dropPosition, content).run()) {
-        failures.push(`图片已复制到 assets，但编辑器拒绝在位置 ${dropPosition} 插入。`)
+      if (!currentEditor.chain().focus().insertContentAt(insertAt, content).run()) {
+        failures.push(`图片已复制到 assets，但编辑器拒绝在位置 ${insertAt} 插入。`)
       }
     }
     if (failures.length > 0) {
@@ -301,6 +298,91 @@ const importDroppedImages = async (event: DragEvent) => {
   } finally {
     workspaceStore.setBusy(false)
   }
+}
+
+const importDroppedImages = async (event: DragEvent) => {
+  event.preventDefault()
+  const currentEditor = editor.value
+  if (!currentEditor || currentEditor.isDestroyed) return
+  const sourcePaths = getDroppedFilePaths(event.dataTransfer?.files)
+  if (sourcePaths.length === 0) {
+    dropErrorMessage.value = '无法读取拖入图片，请从系统文件资源管理器重新拖入。'
+    dropTechnicalDetail.value = 'Electron did not expose native paths for the dropped File objects.'
+    return
+  }
+  const insertAt = currentEditor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+    ?? currentEditor.state.selection.from
+  await importImagePaths(sourcePaths, insertAt)
+}
+
+const pasteClipboardFilesAt = async (insertAt: number) => {
+  const result = await window.electronAPI.fs.clipboardReadFiles()
+  if (!result.success || !result.data?.length) {
+    dropErrorMessage.value = '无法读取剪贴板中的文件。'
+    dropTechnicalDetail.value = result.error || 'Clipboard file list is empty.'
+    return
+  }
+  await importImagePaths(result.data, insertAt)
+}
+
+const copyRichTextSelection = async (overrideText?: string) => {
+  const currentEditor = editor.value
+  if (!currentEditor || currentEditor.isDestroyed) return
+  const text = overrideText ?? getTiptapClipboardCopyText(currentEditor.state)
+  if (text === null) return
+  await navigator.clipboard.writeText(text)
+  currentEditor.commands.focus()
+}
+
+const copyRichTextSource = async (overrideText?: string) => {
+  const currentEditor = editor.value
+  if (!currentEditor || currentEditor.isDestroyed) return
+  const selectionDocument = getTiptapSelectionDocument(currentEditor.state)
+  const markdown = overrideText ?? (selectionDocument
+    ? serializeMarkdownAst({
+        getJSON: () => selectionDocument,
+        markdown: currentEditor.markdown,
+      })
+    : null)
+  if (markdown === null) return
+  await navigator.clipboard.writeText(markdown)
+  currentEditor.commands.focus()
+}
+
+const pasteRichTextClipboard = async () => {
+  const currentEditor = editor.value
+  if (!currentEditor || currentEditor.isDestroyed) return
+  const insertAt = currentEditor.state.selection.from
+  const filesResult = await window.electronAPI.fs.clipboardReadFiles()
+  if (filesResult.success && filesResult.data?.length) {
+    await importImagePaths(filesResult.data, insertAt)
+    return
+  }
+
+  const text = await navigator.clipboard.readText()
+  if (!text || currentEditor.isDestroyed) return
+  currentEditor.view.focus()
+  currentEditor.view.pasteText(text)
+}
+
+const handleClipboardCopy = (event: ClipboardEvent) => {
+  const currentEditor = editor.value
+  if (!currentEditor || currentEditor.isDestroyed) return false
+  const text = getTiptapClipboardCopyText(currentEditor.state)
+  if (text === null || !event.clipboardData) return false
+  event.preventDefault()
+  event.clipboardData.setData('text/plain', text)
+  return true
+}
+
+const handleClipboardPaste = (event: ClipboardEvent) => {
+  const types = event.clipboardData ? Array.from(event.clipboardData.types) : []
+  if (!types.includes('Files') && !event.clipboardData?.files.length) return false
+  const currentEditor = editor.value
+  if (!currentEditor || currentEditor.isDestroyed) return false
+  event.preventDefault()
+  void pasteClipboardFilesAt(currentEditor.state.selection.from)
+  return true
 }
 
 const handleExternalImageDragOver = (event: DragEvent) => {
@@ -728,9 +810,24 @@ onMounted(() => {
         autocapitalize: 'off',
       },
       handleKeyDown: (_view, event) => {
+        const isClipboardShortcut = (event.metaKey || event.ctrlKey) && !event.altKey
+        if (isClipboardShortcut && event.key.toLowerCase() === 'c') {
+          event.preventDefault()
+          void copyRichTextSelection().catch(console.error)
+          return true
+        }
+        if (isClipboardShortcut && event.key.toLowerCase() === 'v') {
+          event.preventDefault()
+          void pasteRichTextClipboard().catch(console.error)
+          return true
+        }
         if (event.key !== 'Enter' || !editor.value) return false
         return renderCurrentMarkdownImage(editor.value)
       },
+      handleDOMEvents: {
+        copy: (_view, event) => handleClipboardCopy(event as ClipboardEvent),
+      },
+      handlePaste: (_view, event) => handleClipboardPaste(event),
       handleDrop: (_view, event) => {
         if (!event.dataTransfer?.types.includes('Files')) return false
         void importDroppedImages(event)
@@ -838,7 +935,15 @@ defineExpose({
     <editor-content v-if="editor" :editor="editor" class="h-full" />
     
     <InlineMenu v-if="editor" :editor="editor" @insert-image="imageInsertDialogOpen = true" />
-    <ContextMenu v-if="editor" :editor="editor" @insert-image="imageInsertDialogOpen = true" />
+    <ContextMenu
+      v-if="editor"
+      :editor="editor"
+      :relative-file-path="props.relativeFilePath"
+      @insert-image="imageInsertDialogOpen = true"
+      @copy="(text) => copyRichTextSelection(text).catch(console.error)"
+      @copy-source="(text) => copyRichTextSource(text).catch(console.error)"
+      @paste="pasteRichTextClipboard().catch(console.error)"
+    />
     <TableToolbar v-if="editor" :editor="editor" />
     <NoteRefPicker
       v-if="noteRefPickerState.open"

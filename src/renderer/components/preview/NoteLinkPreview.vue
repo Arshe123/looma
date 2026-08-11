@@ -177,6 +177,7 @@ const applyPreview = async (relativePath: string, anchor?: NoteLinkAnchor) => {
 }
 
 const onMouseOver = (event: MouseEvent) => {
+  if (document.querySelector('[data-looma-editor-context-menu]')) return
   const target = event.target as HTMLElement | null
   const anchorEl = target?.closest?.('a[href]') as HTMLAnchorElement | null
   if (!anchorEl) return
@@ -217,6 +218,14 @@ const closePreview = () => {
   hideTimer = null
   visible.value = false
   fetchGeneration += 1
+}
+
+const onContextMenu = (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null
+  const anchorEl = target?.closest?.('a[href]') as HTMLAnchorElement | null
+  if (!anchorEl || anchorEl.closest('.looma-note-preview')) return
+  if (!parseNoteLinkHref(anchorEl.getAttribute('href') || '', props.relativeFilePath)) return
+  closePreview()
 }
 
 const cancelHide = () => {
@@ -266,6 +275,7 @@ const handleOpenNoteRefEvent = () => {
 onMounted(() => {
   document.addEventListener('mouseover', onMouseOver)
   document.addEventListener('mouseout', onMouseOut)
+  document.addEventListener('contextmenu', onContextMenu)
   window.addEventListener(OPEN_NOTE_REF_EVENT, handleOpenNoteRefEvent)
 })
 
@@ -279,6 +289,7 @@ onBeforeUnmount(() => {
   if (hideTimer) window.clearTimeout(hideTimer)
   document.removeEventListener('mouseover', onMouseOver)
   document.removeEventListener('mouseout', onMouseOut)
+  document.removeEventListener('contextmenu', onContextMenu)
   window.removeEventListener(OPEN_NOTE_REF_EVENT, handleOpenNoteRefEvent)
 })
 </script>

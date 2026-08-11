@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Editor } from '@tiptap/vue-3'
-import { ChevronRight, Pilcrow } from 'lucide-vue-next'
+import { ChevronRight, ClipboardPaste, CodeXml, Copy, Pilcrow } from 'lucide-vue-next'
 import { isInTable } from '@tiptap/pm/tables'
 import TableSizePicker from './TableSizePicker.vue'
 import {
@@ -12,14 +12,20 @@ import {
   getMenuAction,
   resolveMenuActions,
 } from '@/shared/utils/tiptap-menu-actions'
+import { formatMarkdownLink, selectionHasMarkdownSource } from '@/shared/utils/tiptap-clipboard'
+import { parseNoteLinkHref } from '@/shared/utils/note-link-ref'
 import type { MenuAction } from '@/shared/types/MenuAction'
 
 const props = defineProps<{
   editor: Editor
+  relativeFilePath: string
 }>()
 
 const emit = defineEmits<{
   (e: 'insert-image'): void
+  (e: 'copy', text?: string): void
+  (e: 'copy-source', text?: string): void
+  (e: 'paste'): void
 }>()
 
 type ContextMenuItem = {
@@ -35,6 +41,9 @@ const activeSubMenu = ref<string | null>(null)
 const subMenuPosition = ref({ top: 0, left: 0 })
 const menuMode = ref<'default' | 'table'>('default')
 const tablePickerVisible = ref(false)
+const quickCopyText = ref<string | null>(null)
+const sourceCopyAvailable = ref(false)
+const isMac = navigator.platform.includes('Mac')
 
 const menuRef = ref<HTMLElement | null>(null)
 const subMenuRef = ref<HTMLElement | null>(null)
@@ -63,6 +72,33 @@ const listItems: ContextMenuItem[] = [
   ...(horizontalRuleAction ? [horizontalRuleAction] : []),
 ]
 
+const selectContextTarget = (editor: Editor, event: MouseEvent) => {
+  const targetPosition = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })
+  if (!targetPosition) {
+    editor.commands.focus()
+    return
+  }
+
+  const imageTarget = (event.target as HTMLElement | null)?.closest?.('.local-image-node')
+  if (imageTarget) {
+    const candidates = [targetPosition.inside, targetPosition.pos, targetPosition.pos - 1, targetPosition.pos + 1]
+    const imagePosition = candidates.find((candidate) => (
+      candidate >= 0 && editor.state.doc.nodeAt(candidate)?.type.name === 'image'
+    ))
+    if (imagePosition !== undefined) {
+      editor.chain().focus().setNodeSelection(imagePosition).run()
+      return
+    }
+  }
+
+  const { from, to, empty } = editor.state.selection
+  if (!empty && targetPosition.pos >= from && targetPosition.pos <= to) {
+    editor.commands.focus()
+    return
+  }
+  editor.chain().focus().setTextSelection(targetPosition.pos).run()
+}
+
 const handleContextMenu = (e: MouseEvent) => {
   const editor = getEditor()
   if (!editor) return
@@ -78,12 +114,13 @@ const handleContextMenu = (e: MouseEvent) => {
   if (!editorDom.contains(e.target as Node)) return
 
   e.preventDefault()
-  const pos = editor.view.posAtCoords({ left: e.clientX, top: e.clientY })
-  if (pos) {
-    editor.chain().focus().setTextSelection(pos.pos).run()
-  } else {
-    editor.commands.focus()
-  }
+  const anchorTarget = (e.target as HTMLElement | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+  const href = anchorTarget?.getAttribute('href') || ''
+  quickCopyText.value = anchorTarget && parseNoteLinkHref(href, props.relativeFilePath)
+    ? formatMarkdownLink((anchorTarget.textContent || '').trim(), href)
+    : null
+  selectContextTarget(editor, e)
+  sourceCopyAvailable.value = Boolean(quickCopyText.value) || selectionHasMarkdownSource(editor.state)
 
   visible.value = true
   activeSubMenu.value = null
@@ -186,6 +223,19 @@ const handleListItemClick = (item: ContextMenuItem) => {
   if (action) handleAction(action)
 }
 
+const handleClipboardAction = (action: 'copy' | 'copy-source' | 'paste') => {
+  if (!getEditor()) return
+  const copyText = quickCopyText.value || undefined
+  visible.value = false
+  activeSubMenu.value = null
+  tablePickerVisible.value = false
+  quickCopyText.value = null
+  sourceCopyAvailable.value = false
+  if (action === 'copy') emit('copy', copyText)
+  else if (action === 'copy-source') emit('copy-source', copyText)
+  else emit('paste')
+}
+
 const handleTableSizeSelect = (size: { rows: number; cols: number }) => {
   const editor = getEditor()
   if (!editor) return
@@ -203,6 +253,8 @@ const closeMenu = (e: MouseEvent) => {
     visible.value = false
     activeSubMenu.value = null
     tablePickerVisible.value = false
+    quickCopyText.value = null
+    sourceCopyAvailable.value = false
   }
 }
 
@@ -219,7 +271,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="visible" class="absolute z-50 pointer-events-none" style="top: 0; left: 0; right: 0; bottom: 0; min-height: 100%;">
+  <div
+    v-if="visible"
+    data-looma-editor-context-menu
+    class="absolute z-50 pointer-events-none"
+    style="top: 0; left: 0; right: 0; bottom: 0; min-height: 100%;"
+  >
     <!-- Main Menu -->
     <div
       ref="menuRef"
@@ -292,6 +349,37 @@ onBeforeUnmount(() => {
         >
           <component :is="item.icon" :key="`${item.id}-icon`" :size="15" class="text-text-muted" />
           <span>{{ item.label }}</span>
+        </button>
+      </div>
+
+      <div class="h-px bg-accent-soft my-1"></div>
+
+      <div class="px-1 pb-1 flex flex-col gap-0.5">
+        <button
+          type="button"
+          class="flex items-center justify-between gap-3 px-3 py-1.5 text-sm text-text-main hover:bg-accent-soft cursor-pointer rounded mx-1 transition-colors text-left"
+          @click="handleClipboardAction('copy')"
+        >
+          <span class="flex items-center gap-3"><Copy :size="15" class="text-text-muted" />{{ quickCopyText ? '复制引用' : '复制' }}</span>
+          <span class="text-xs text-text-subtle">{{ isMac ? '⌘C' : 'Ctrl+C' }}</span>
+        </button>
+        <button
+          type="button"
+          :disabled="!sourceCopyAvailable"
+          class="flex items-center gap-3 px-3 py-1.5 text-sm text-text-main hover:bg-accent-soft cursor-pointer rounded mx-1 transition-colors text-left disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+          title="复制所选内容的 Markdown 源码"
+          @click="handleClipboardAction('copy-source')"
+        >
+          <CodeXml :size="15" class="text-text-muted" />
+          <span>复制源码</span>
+        </button>
+        <button
+          type="button"
+          class="flex items-center justify-between gap-3 px-3 py-1.5 text-sm text-text-main hover:bg-accent-soft cursor-pointer rounded mx-1 transition-colors text-left"
+          @click="handleClipboardAction('paste')"
+        >
+          <span class="flex items-center gap-3"><ClipboardPaste :size="15" class="text-text-muted" />粘贴</span>
+          <span class="text-xs text-text-subtle">{{ isMac ? '⌘V' : 'Ctrl+V' }}</span>
         </button>
       </div>
     </div>

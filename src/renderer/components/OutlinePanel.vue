@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useWorkspaceStore } from '../stores/workspace'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import type { OutlineFlatRow } from '@/shared/utils/outline-tree'
+import helpMarkdown from './help/help.md?raw'
 
 const workspaceStore = useWorkspaceStore()
 const expandedHeadingIds = ref(new Set<string>())
@@ -16,7 +17,17 @@ const outlineError = ref('')
 let outlineWorker: Worker | null = null
 let activeRequestId = 0
 
-const isMarkdownActive = computed(() => workspaceStore.activeFileRelativePath.toLowerCase().endsWith('.md'))
+const outlineSource = computed(() => {
+  const tab = workspaceStore.activeTab
+  if (tab?.kind === 'system' && tab.page === 'help') {
+    return { key: tab.id, content: helpMarkdown, available: true }
+  }
+  if (tab?.kind === 'file' && tab.relativePath.toLowerCase().endsWith('.md')) {
+    return { key: tab.id, content: workspaceStore.activeFileContent, available: true }
+  }
+  return { key: tab?.id || '', content: '', available: false }
+})
+const isOutlineAvailable = computed(() => outlineSource.value.available)
 
 type MarkdownOutlineWorkerSuccess = {
   requestId: number
@@ -101,18 +112,18 @@ const requestOutline = (content: string, resetExpansion: boolean) => {
 }
 
 watch(
-  () => [workspaceStore.activeFileRelativePath, workspaceStore.activeFileContent] as const,
-  ([activePath, content]) => {
+  () => [outlineSource.value.key, outlineSource.value.content, outlineSource.value.available] as const,
+  ([sourceKey, content, available]) => {
     activeRequestId += 1
 
-    if (!activePath.toLowerCase().endsWith('.md')) {
-      lastActivePath.value = activePath
+    if (!available) {
+      lastActivePath.value = sourceKey
       resetOutlineState()
       return
     }
 
-    const resetExpansion = activePath !== lastActivePath.value
-    lastActivePath.value = activePath
+    const resetExpansion = sourceKey !== lastActivePath.value
+    lastActivePath.value = sourceKey
     requestOutline(content, resetExpansion)
   },
   { immediate: true },
@@ -134,7 +145,7 @@ const toggleHeading = (id: string) => {
     nextExpanded.add(id)
   }
   expandedHeadingIds.value = nextExpanded
-  requestOutline(workspaceStore.activeFileContent, false)
+  requestOutline(outlineSource.value.content, false)
 }
 
 const jumpToHeading = (item: MarkdownOutlineItem) => {
@@ -149,7 +160,7 @@ const jumpToHeading = (item: MarkdownOutlineItem) => {
     </div>
 
     <div class="min-h-0 flex-1 overflow-hidden">
-      <div v-if="!isMarkdownActive" class="h-full p-4 text-sm text-text-muted">
+      <div v-if="!isOutlineAvailable" class="h-full p-4 text-sm text-text-muted">
         大纲仅支持 Markdown 文件。
       </div>
       <div v-else-if="isOutlineLoading && outlineItems.length === 0" class="h-full p-4 text-sm text-text-muted">

@@ -60,7 +60,7 @@ const closeFromOverlay = () => {
 const openDownload = async () => {
   const url = latest.value?.downloadUrl
   if (!url) {
-    errorMessage.value = '暂无下载地址，请前往官网获取最新版本'
+    errorMessage.value = '暂无下载地址，请前往 GitHub Releases 获取最新版本'
     return
   }
   opening.value = true
@@ -228,7 +228,7 @@ watch(
             @click="openDownload"
           >
             <Download :size="16" />
-            <span>{{ opening ? '正在打开...' : '立即更新' }}</span>
+            <span>{{ opening ? '正在打开...' : '前往下载' }}</span>
           </button>
         </div>
       </div>

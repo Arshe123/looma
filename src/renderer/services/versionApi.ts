@@ -1,9 +1,6 @@
-// 检查更新 / 应用版本 接口服务
-// 后端：AppVersionController（GlobalRestController，继承 BaseController）
-// 全局前缀 /globalApi，控制器路由 /app/version（地址统一由 apiConfig 提供）
-// 该接口已加入登录白名单，无需登录即可访问。
+// 使用 GitHub Releases 检查更新，无需登录或依赖业务后端。
 
-import { buildGlobalApiUrl } from './apiConfig'
+const LATEST_RELEASE_URL = 'https://api.github.com/repos/Arshe123/looma/releases/latest'
 
 /** 后端 /app/version/latest 返回的最新版本信息 */
 export type LatestVersion = {
@@ -37,18 +34,18 @@ export type UpdateCheckResult = {
   latest: LatestVersion
 }
 
-type LoomaApiResponse<T> = {
-  code: number
-  message?: string
-  data?: T
+export type GitHubRelease = {
+  tag_name: string
+  name?: string | null
+  body?: string | null
+  published_at?: string | null
+  html_url: string
 }
 
-const getAppVersionBaseUrl = () => buildGlobalApiUrl('/app/version')
-
-const parseResponse = async <T>(response: Response, fallbackMessage: string) => {
-  let result: Partial<LoomaApiResponse<T>> | null = null
+const parseResponse = async (response: Response): Promise<GitHubRelease> => {
+  let result: (Partial<GitHubRelease> & { message?: string }) | null = null
   try {
-    result = (await response.json()) as LoomaApiResponse<T>
+    result = (await response.json()) as Partial<GitHubRelease> & { message?: string }
   } catch {
     result = null
   }
@@ -56,11 +53,20 @@ const parseResponse = async <T>(response: Response, fallbackMessage: string) => 
   if (!response.ok) {
     throw new Error(result?.message || `请求失败（HTTP ${response.status}）`)
   }
-  if (!result || result.code !== 200) {
-    throw new Error(result?.message || fallbackMessage)
+  if (!result?.tag_name || !result.html_url) {
+    throw new Error('GitHub 返回的版本信息不完整')
   }
-  return result.data as T
+  return result as GitHubRelease
 }
+
+export const mapGitHubRelease = (release: GitHubRelease): LatestVersion => ({
+  version: release.tag_name.replace(/^v/i, ''),
+  minVersion: null,
+  releaseDate: release.published_at?.slice(0, 10) || null,
+  notes: release.body || release.name || null,
+  downloadUrl: release.html_url,
+  forceUpdate: false,
+})
 
 /**
  * 语义化版本比较：a 与 b 比较。
@@ -91,11 +97,13 @@ export const compareVersions = (a: string, b: string): number => {
 
 /** 获取最新版本；库中无记录时返回 null */
 export const fetchLatestVersion = async (): Promise<LatestVersion | null> => {
-  const response = await fetch(`${getAppVersionBaseUrl()}/latest`, {
+  const response = await fetch(LATEST_RELEASE_URL, {
     method: 'GET',
-    credentials: 'include',
+    headers: {
+      Accept: 'application/vnd.github+json',
+    },
   })
-  return parseResponse<LatestVersion | null>(response, '获取最新版本失败，请稍后重试')
+  return mapGitHubRelease(await parseResponse(response))
 }
 
 /**

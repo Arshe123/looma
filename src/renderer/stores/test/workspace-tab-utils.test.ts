@@ -17,6 +17,7 @@ describe('workspace tab utils', () => {
     expect(getSystemTabId('settings')).toBe('system:settings')
     expect(getSystemTabId('ai-history')).toBe('system:ai-history')
     expect(getSystemTabId('agent-diff')).toBe('system:agent-diff')
+    expect(getSystemTabId('help')).toBe('system:help')
     expect(createFileTab('docs/note.md')).toEqual({
       id: 'file:docs/note.md',
       kind: 'file',
@@ -41,6 +42,7 @@ describe('workspace tab utils', () => {
       { id: 'settings', kind: 'system', page: 'settings' },
       { id: 'ai-history', kind: 'system', page: 'ai-history' },
       { id: 'agent-diff', kind: 'system', page: 'agent-diff' },
+      { id: 'help', kind: 'system', page: 'help' },
       { id: 'unknown', kind: 'system', page: 'unknown' },
       null,
     ])).toEqual([
@@ -48,6 +50,7 @@ describe('workspace tab utils', () => {
       { id: 'system:settings', kind: 'system', page: 'settings' },
       { id: 'system:ai-history', kind: 'system', page: 'ai-history' },
       { id: 'system:agent-diff', kind: 'system', page: 'agent-diff' },
+      { id: 'system:help', kind: 'system', page: 'help' },
     ])
   })
 

@@ -109,7 +109,7 @@ interface FileWorkspaceTabPayload extends WorkspaceTabPayloadBase {
 
 interface SystemWorkspaceTabPayload extends WorkspaceTabPayloadBase {
   kind: 'system';
-  page: 'settings' | 'rag-index' | 'ai-history' | 'agent-diff';
+  page: 'settings' | 'rag-index' | 'ai-history' | 'agent-diff' | 'help';
 }
 
 type WorkspaceTabPayload = FileWorkspaceTabPayload | SystemWorkspaceTabPayload;

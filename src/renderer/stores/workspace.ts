@@ -1039,6 +1039,10 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.openSystemTab('ai-history')
     },
 
+    openHelpPage() {
+      this.openSystemTab('help')
+    },
+
     openAgentDiffPage(payload: AgentDiffViewState) {
       const path = normalizeAiAssistantSourcePath(payload.path)
       if (!path || !payload.approvalId || !payload.conversationId || !payload.workspaceId) return false

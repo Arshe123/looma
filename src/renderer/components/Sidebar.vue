@@ -1,15 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Bot, Folders, Monitor, Moon, Sun, TableOfContents, Settings } from 'lucide-vue-next'
+import { Bot, Folders, Monitor, Moon, Sun, TableOfContents, Settings, UserRound } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import type { SidebarPanelId } from '@/renderer/stores/workspace'
-import type { LoginUser } from '@/renderer/services/authApi'
 import { SIDEBAR_TOOLBAR_WIDTH } from '@/renderer/utils/sidebar-layout'
 
 import AiAssistant from './ai/AiAssistant.vue'
-import AuthModal from './auth/AuthModal.vue'
-import FeedbackModal from './feedback/FeedbackModal.vue'
 import UpdateModal from './update/UpdateModal.vue'
+import UserMenu from './user/UserMenu.vue'
 import FileTree from './FileTree.vue'
 import OutlinePanel from './OutlinePanel.vue'
 
@@ -18,65 +16,37 @@ const props = defineProps<{
 }>()
 
 const workspaceStore = useWorkspaceStore()
-const authUser = ref<LoginUser | null>(JSON.parse(localStorage.getItem('looma:user') || 'null') as LoginUser | null)
-const authEmail = ref(localStorage.getItem('looma:userEmail') || '')
-const isMockLoggedIn = computed(() => Boolean(authUser.value?.token))
-const authUserId = computed(() => authUser.value?.id)
-const authModalOpen = ref(false)
-const authModalMode = ref<'login' | 'register'>('register')
-
 const userMenuOpen = ref(false)
-const feedbackModalOpen = ref(false)
 const updateModalOpen = ref(false)
 const appVersion = ref('0.0.0')
 const toolbarWidth = SIDEBAR_TOOLBAR_WIDTH
 const panelWidth = computed(() => Math.max(0, props.width - toolbarWidth))
 const isOpen = computed(() => workspaceStore.activeSidebarPanel !== null)
-const isMarkdownActive = computed(() => workspaceStore.activeFileRelativePath.toLowerCase().endsWith('.md'))
+const isOutlineAvailable = computed(() => {
+  const tab = workspaceStore.activeTab
+  return (tab?.kind === 'file' && tab.relativePath.toLowerCase().endsWith('.md'))
+    || (tab?.kind === 'system' && tab.page === 'help')
+})
 const isPanelOpen = (id: SidebarPanelId) => workspaceStore.activeSidebarPanel === id
 
 const togglePanel = (id: SidebarPanelId) => {
-  if (id === 'outline' && !isMarkdownActive.value && !isPanelOpen(id)) return
+  if (id === 'outline' && !isOutlineAvailable.value && !isPanelOpen(id)) return
   workspaceStore.toggleSidebarPanel(id)
-}
-
-const closeAuthModal = () => {
-  authModalOpen.value = false
 }
 
 const closeUserMenu = () => {
   userMenuOpen.value = false
 }
 
-const openAuthModal = (mode: 'login' | 'register') => {
-  closeUserMenu()
-  authModalMode.value = mode
-  authModalOpen.value = true
-}
-
-// 以下函数与模板中被注释的用户入口/反馈/更新弹窗配套，功能恢复时启用
-// eslint-disable-next-line no-unused-vars
 const toggleUserEntry = () => {
-  authModalOpen.value = false
   userMenuOpen.value = !userMenuOpen.value
 }
 
-// eslint-disable-next-line no-unused-vars
-const openFeedbackModal = () => {
+const openHelpPage = () => {
   closeUserMenu()
-  feedbackModalOpen.value = true
+  workspaceStore.openHelpPage()
 }
 
-const closeFeedbackModal = () => {
-  feedbackModalOpen.value = false
-}
-
-const handleFeedbackRequireLogin = () => {
-  closeFeedbackModal()
-  openAuthModal('login')
-}
-
-// eslint-disable-next-line no-unused-vars
 const openUpdateModal = () => {
   closeUserMenu()
   updateModalOpen.value = true
@@ -84,23 +54,6 @@ const openUpdateModal = () => {
 
 const closeUpdateModal = () => {
   updateModalOpen.value = false
-}
-
-// eslint-disable-next-line no-unused-vars
-const handleLogout = () => {
-  authUser.value = null
-  authEmail.value = ''
-  localStorage.removeItem('looma:user')
-  localStorage.removeItem('looma:userEmail')
-  closeUserMenu()
-}
-
-const handleAuthenticated = ({ email, user }: { email: string; user: LoginUser }) => {
-  authUser.value = user
-  authEmail.value = email
-  localStorage.setItem('looma:user', JSON.stringify(user))
-  localStorage.setItem('looma:userEmail', email)
-  closeAuthModal()
 }
 
 let cleanupUserEntry: (() => void) | null = null
@@ -116,8 +69,6 @@ onMounted(() => {
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.key !== 'Escape') return
     closeUserMenu()
-    closeAuthModal()
-    closeFeedbackModal()
     closeUpdateModal()
   }
 
@@ -161,16 +112,16 @@ onUnmounted(() => {
 
         <button
           @click="togglePanel('outline')"
-          :disabled="!isMarkdownActive && !isPanelOpen('outline')"
+          :disabled="!isOutlineAvailable && !isPanelOpen('outline')"
           :class="[
             'p-2 rounded-md',
             isPanelOpen('outline')
               ? 'bg-accent-soft text-text-main cursor-pointer'
-              : isMarkdownActive
+              : isOutlineAvailable
                 ? 'text-text-muted hover:bg-accent-soft hover:text-text-main cursor-pointer'
                 : 'text-text-subtle cursor-not-allowed'
           ]"
-          :title="isMarkdownActive ? (isPanelOpen('outline') ? '关闭大纲' : '打开大纲') : '大纲仅支持 Markdown 文件'"
+          :title="isOutlineAvailable ? (isPanelOpen('outline') ? '关闭大纲' : '打开大纲') : '大纲仅支持 Markdown 文件'"
         >
           <TableOfContents :size="20" />
         </button>
@@ -192,11 +143,11 @@ onUnmounted(() => {
       </div>
 
       <div class="flex flex-col items-center gap-2">
-        <!-- <div class="relative" data-user-entry>
+        <div class="relative" data-user-entry>
           <button
             class="p-2 rounded-md text-text-muted hover:bg-accent-soft hover:text-text-main cursor-pointer"
-            :class="{ 'bg-accent-soft text-text-main': authModalOpen || userMenuOpen }"
-            :title="isMockLoggedIn ? '用户' : '注册账号'"
+            :class="{ 'bg-accent-soft text-text-main': userMenuOpen }"
+            title="更多"
             @click="toggleUserEntry"
           >
             <UserRound :size="20" />
@@ -204,16 +155,11 @@ onUnmounted(() => {
 
           <UserMenu
             :open="userMenuOpen"
-            :isLoggedIn="isMockLoggedIn"
-            :username="mockUsername"
-            @login="openAuthModal('login')"
-            @register="openAuthModal('register')"
-            @logout="handleLogout"
-            @report="openFeedbackModal"
             @checkUpdate="openUpdateModal"
+            @help="openHelpPage"
             @close="closeUserMenu"
           />
-        </div> -->
+        </div>
 
         <button
           @click="workspaceStore.toggleTheme"
@@ -245,21 +191,6 @@ onUnmounted(() => {
         <AiAssistant v-else-if="workspaceStore.activeSidebarPanel === 'ai'" />
       </div>
     </div>
-
-    <AuthModal
-      :open="authModalOpen"
-      :initialMode="authModalMode"
-      @close="closeAuthModal"
-      @authenticated="handleAuthenticated"
-    />
-
-    <FeedbackModal
-      :open="feedbackModalOpen"
-      :isLoggedIn="isMockLoggedIn"
-      :userId="authUserId"
-      @close="closeFeedbackModal"
-      @requireLogin="handleFeedbackRequireLogin"
-    />
 
     <UpdateModal
       :open="updateModalOpen"

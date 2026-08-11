@@ -132,7 +132,7 @@ export interface AiAssistantState {
 }
 
 export type SidebarPanelId = 'files' | 'outline' | 'ai'
-export type SystemPageId = 'settings' | 'rag-index' | 'ai-history' | 'agent-diff'
+export type SystemPageId = 'settings' | 'rag-index' | 'ai-history' | 'agent-diff' | 'help'
 export type SettingsSectionId = 'appearance' | 'editor' | 'ai'
 
 export interface AgentDiffViewState {

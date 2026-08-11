@@ -32,6 +32,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (e: 'change', value: string): void
   (e: 'save', value: string): void
+  (e: 'scroll-sync', value: ScrollSyncState): void
 }>();
 
 const editorContainer = ref<HTMLElement | null>(null);
@@ -41,6 +42,8 @@ const dropTechnicalDetail = ref('');
 let editor: EditorView | null = null;
 let saveTimeout: any = null;
 let applyingExternalUpdate = false;
+let scrollSyncFrame: number | null = null;
+let scrollApplyFrame: number | null = null;
 
 // Compartments for dynamic reconfiguration without destroying editor
 const themeCompartment = new Compartment()
@@ -314,17 +317,35 @@ const createEditor = () => {
     state,
     parent: editorContainer.value,
   });
+  editor.scrollDOM.addEventListener('scroll', handleEditorScroll, { passive: true })
 };
 
 const getEditorScrollState = (): ScrollSyncState => {
   if (!editor) return { ratio: 0 }
   const rect = editor.scrollDOM.getBoundingClientRect()
   const sourceOffset = editor.posAtCoords({ x: rect.left + 52, y: rect.top + 4 }) ?? editor.state.selection.main.head
+  const viewportHeight = rect.top + 4 - editor.documentTop
+  const sourceLineBlock = editor.lineBlockAtHeight(viewportHeight)
+  const sourceLineInfo = editor.state.doc.lineAt(sourceLineBlock.from)
+  const sourceLineProgress = sourceLineBlock.height > 0
+    ? Math.min(Math.max((viewportHeight - sourceLineBlock.top) / sourceLineBlock.height, 0), 1)
+    : 0
   return {
     ratio: getScrollRatio(editor.scrollDOM),
+    sourceLine: sourceLineInfo.number + sourceLineProgress,
     sourceOffset,
     sourceLineText: lineTextAtOffset(editor.state.doc.toString(), sourceOffset),
   }
+}
+
+const emitEditorScrollState = () => {
+  scrollSyncFrame = null
+  emit('scroll-sync', getEditorScrollState())
+}
+
+const handleEditorScroll = () => {
+  if (scrollSyncFrame !== null) return
+  scrollSyncFrame = requestAnimationFrame(emitEditorScrollState)
 }
 
 const scrollToSourceOffset = (sourceOffset: number) => {
@@ -333,6 +354,28 @@ const scrollToSourceOffset = (sourceOffset: number) => {
   const safeOffset = Math.min(Math.max(Math.round(sourceOffset), 0), docLength)
   editor.dispatch({
     effects: EditorView.scrollIntoView(safeOffset, { y: 'start' }),
+  })
+  return true
+}
+
+const scrollToSourceLine = (sourceLine: number) => {
+  if (!editor || !Number.isFinite(sourceLine)) return false
+  const lineNumber = Math.min(Math.max(Math.floor(sourceLine), 1), editor.state.doc.lines)
+  const fraction = Math.min(Math.max(sourceLine - Math.floor(sourceLine), 0), 1)
+  const alignSourceLine = () => {
+    if (!editor) return
+    const line = editor.state.doc.line(lineNumber)
+    const block = editor.lineBlockAt(line.from)
+    const rect = editor.scrollDOM.getBoundingClientRect()
+    const viewportHeight = rect.top + 4 - editor.documentTop
+    const targetHeight = block.top + block.height * fraction
+    editor.scrollDOM.scrollTop += targetHeight - viewportHeight
+  }
+  alignSourceLine()
+  if (scrollApplyFrame !== null) cancelAnimationFrame(scrollApplyFrame)
+  scrollApplyFrame = requestAnimationFrame(() => {
+    scrollApplyFrame = null
+    alignSourceLine()
   })
   return true
 }
@@ -349,6 +392,7 @@ const scrollToSourceLineText = (sourceLineText: string) => {
 
 const applyEditorScrollState = (state: ScrollSyncState) => {
   if (!editor) return
+  if (typeof state.sourceLine === 'number' && scrollToSourceLine(state.sourceLine)) return
   if (typeof state.sourceOffset === 'number' && scrollToSourceOffset(state.sourceOffset)) return
   if (state.sourceLineText && scrollToSourceLineText(state.sourceLineText)) return
   setScrollRatio(editor.scrollDOM, state.ratio)
@@ -360,8 +404,11 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (editor) {
+    editor.scrollDOM.removeEventListener('scroll', handleEditorScroll)
     editor.destroy();
   }
+  if (scrollSyncFrame !== null) cancelAnimationFrame(scrollSyncFrame)
+  if (scrollApplyFrame !== null) cancelAnimationFrame(scrollApplyFrame)
   if (saveTimeout) clearTimeout(saveTimeout);
 });
 

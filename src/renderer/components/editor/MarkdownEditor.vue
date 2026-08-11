@@ -42,6 +42,9 @@ let isResizingSplit = false
 let previousBodyCursor = ''
 let previousBodyUserSelect = ''
 let isSyncingScroll = false
+let ignoreEditorScrollUntil = 0
+let ignorePreviewScrollUntil = 0
+const SCROLL_SYNC_GUARD_MS = 180
 
 const clampSplitRatio = (ratio: number) => Math.min(Math.max(ratio, 0.2), 0.8)
 
@@ -96,8 +99,11 @@ const withScrollSync = (fn: () => void) => {
 }
 
 const getCurrentScrollState = () => {
-  if (viewMode.value === 'preview') return previewRef.value?.getScrollState?.()
-  return editorRef.value?.getScrollState?.() || previewRef.value?.getScrollState?.()
+  const previewState = props.useChunkedPreview
+    ? chunkedPreviewRef.value?.getScrollState?.()
+    : previewRef.value?.getScrollState?.()
+  if (viewMode.value === 'preview') return previewState
+  return editorRef.value?.getScrollState?.() || previewState
 }
 
 const syncVisibleViewsFrom = (state?: ScrollSyncState | null) => {
@@ -107,9 +113,23 @@ const syncVisibleViewsFrom = (state?: ScrollSyncState | null) => {
       editorRef.value?.applyScrollState?.(state)
     }
     if (viewMode.value !== 'editor') {
-      previewRef.value?.applyScrollState?.(state)
+      if (props.useChunkedPreview) chunkedPreviewRef.value?.applyScrollState?.(state)
+      else previewRef.value?.applyScrollState?.(state)
     }
   })
+}
+
+const syncSplitScrollFromEditor = (state: ScrollSyncState) => {
+  if (viewMode.value !== 'split' || Date.now() < ignoreEditorScrollUntil) return
+  ignorePreviewScrollUntil = Date.now() + SCROLL_SYNC_GUARD_MS
+  if (props.useChunkedPreview) chunkedPreviewRef.value?.applyScrollState?.(state)
+  else previewRef.value?.applyScrollState?.(state)
+}
+
+const syncSplitScrollFromPreview = (state: ScrollSyncState) => {
+  if (viewMode.value !== 'split' || Date.now() < ignorePreviewScrollUntil) return
+  ignoreEditorScrollUntil = Date.now() + SCROLL_SYNC_GUARD_MS
+  editorRef.value?.applyScrollState?.(state)
 }
 
 const setViewMode = async (nextMode: 'split' | 'editor' | 'preview') => {
@@ -222,6 +242,7 @@ defineExpose({
         :relativeFilePath="props.relativeFilePath"
         @change="(v) => emit('update:content', v)"
         @save="(v) => emit('save', v)"
+        @scroll-sync="syncSplitScrollFromEditor"
       />
     </div>
     <div
@@ -244,6 +265,7 @@ defineExpose({
         :isLoadingMore="isLoadingMore"
         :totalBytes="totalBytes"
         @load-more="emit('load-more')"
+        @scroll-sync="syncSplitScrollFromPreview"
       />
       <TiptapPreview
         v-else
@@ -252,6 +274,7 @@ defineExpose({
         :filePath="props.filePath"
         :relativeFilePath="props.relativeFilePath"
         @update:content="(v) => emit('update:content', v)"
+        @scroll-sync="syncSplitScrollFromPreview"
       />
     </div>
 

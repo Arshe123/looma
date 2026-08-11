@@ -33,7 +33,9 @@ import { destroyTiptapEditorSafely } from '@/shared/utils/tiptap-editor-lifecycl
 import { EnhancedTable } from '@/shared/utils/tiptap-table-utils'
 import {
   findBestTextAnchor,
+  getOffsetForSourceLine,
   getScrollRatio,
+  getSourceLineAtOffset,
   setScrollRatio,
 } from '@/shared/utils/editor-scroll-sync'
 import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
@@ -61,6 +63,7 @@ const workspaceStore = useWorkspaceStore()
 
 const emit = defineEmits<{
   (e: 'update:content', value: string): void
+  (e: 'scroll-sync', value: ScrollSyncState): void
 }>()
 
 let isUpdatingFromExternal = false
@@ -70,6 +73,7 @@ let pendingMarkdownEmitTimer: number | null = null
 let pendingCodeHighlightTimer: number | null = null
 let pendingHeadingTarget: MarkdownOutlineItem | null = null
 let pendingHeadingClearTimer: number | null = null
+let scrollSyncFrame: number | null = null
 const markdownSerializationGate = createMarkdownSerializationGate()
 
 const editor = shallowRef<Editor | null>(null)
@@ -432,6 +436,17 @@ const getTopVisibleBlock = () => {
   }) || null
 }
 
+const getPreviewSourceLineAnchors = () => {
+  const container = previewContainerRef.value
+  if (!container) return []
+  const containerRect = container.getBoundingClientRect()
+  return Array.from(container.querySelectorAll<HTMLElement>('.looma-line-number[data-line]'))
+    .map((element) => ({
+      line: Number(element.dataset.line),
+      top: element.getBoundingClientRect().top - containerRect.top + container.scrollTop,
+    }))
+}
+
 const getTextOffsetBeforePos = (pos: number) => {
   if (!editor.value) return 0
   return editor.value.state.doc.textBetween(0, pos, '\n', '\n').length
@@ -467,11 +482,23 @@ const getPreviewScrollState = (): ScrollSyncState => {
   const posInfo = currentEditor.view.posAtCoords({ left: rect.left + 32, top: rect.top + 4 })
   const topBlock = getTopVisibleBlock()
   const textOffset = posInfo ? getTextOffsetBeforePos(posInfo.pos) : undefined
+  const sourceLine = getSourceLineAtOffset(getPreviewSourceLineAnchors(), container.scrollTop + 4) ?? undefined
   return {
     ratio: getScrollRatio(container),
+    sourceLine,
     textOffset,
     sourceLineText: topBlock?.textContent || undefined,
   }
+}
+
+const emitPreviewScrollState = () => {
+  scrollSyncFrame = null
+  emit('scroll-sync', getPreviewScrollState())
+}
+
+const handlePreviewScroll = () => {
+  if (scrollSyncFrame !== null) return
+  scrollSyncFrame = requestAnimationFrame(emitPreviewScrollState)
 }
 
 const scrollToBlockText = (sourceLineText: string) => {
@@ -557,6 +584,13 @@ const scrollToTextOffset = (textOffset: number) => {
 const applyPreviewScrollState = (state: ScrollSyncState) => {
   const container = previewContainerRef.value
   if (!container) return
+  if (typeof state.sourceLine === 'number') {
+    const offset = getOffsetForSourceLine(getPreviewSourceLineAnchors(), state.sourceLine)
+    if (typeof offset === 'number') {
+      container.scrollTop = offset
+      return
+    }
+  }
   if (state.sourceLineText && scrollToBlockText(state.sourceLineText)) return
   if (typeof state.textOffset === 'number' && scrollToTextOffset(state.textOffset)) return
   setScrollRatio(container, state.ratio)
@@ -719,6 +753,7 @@ onMounted(() => {
 
   previewContainerRef.value?.addEventListener(PREVIEW_IMAGE_SETTLED_EVENT, reanchorPendingHeading)
   previewContainerRef.value?.addEventListener('click', handleNoteRefClick, true)
+  previewContainerRef.value?.addEventListener('scroll', handlePreviewScroll, { passive: true })
 })
 
 onBeforeUnmount(() => {
@@ -726,6 +761,8 @@ onBeforeUnmount(() => {
   isUnmounting = true
   previewContainerRef.value?.removeEventListener(PREVIEW_IMAGE_SETTLED_EVENT, reanchorPendingHeading)
   previewContainerRef.value?.removeEventListener('click', handleNoteRefClick, true)
+  previewContainerRef.value?.removeEventListener('scroll', handlePreviewScroll)
+  if (scrollSyncFrame !== null) cancelAnimationFrame(scrollSyncFrame)
   clearPendingMarkdownEmit()
   clearPendingCodeHighlight()
   clearPendingHeadingTarget()

@@ -1,6 +1,67 @@
 const MARKDOWN_PREFIX_RE = /^\s{0,3}(#{1,6}\s+|[-*+]\s+\[[ xX]\]\s+|[-*+]\s+|\d+[.)]\s+|>\s+)/
 const MARKDOWN_DECORATION_RE = /[`*_~[\]()!>#|-]/g
 
+export type SourceLineAnchor = {
+  line: number
+  top: number
+}
+
+const normalizeSourceLineAnchors = (anchors: SourceLineAnchor[]) => {
+  const seenLines = new Set<number>()
+  const sorted = anchors
+    .filter(({ line, top }) => Number.isFinite(line) && Number.isFinite(top))
+    .sort((a, b) => a.line - b.line || a.top - b.top)
+    .filter(({ line }) => {
+      if (seenLines.has(line)) return false
+      seenLines.add(line)
+      return true
+    })
+
+  return sorted.reduce<SourceLineAnchor[]>((normalized, anchor) => {
+    const previous = normalized[normalized.length - 1]
+    if (!previous || anchor.top > previous.top) normalized.push(anchor)
+    return normalized
+  }, [])
+}
+
+const interpolate = (value: number, from: number, to: number, targetFrom: number, targetTo: number) => {
+  if (to <= from) return targetFrom
+  const progress = (value - from) / (to - from)
+  return targetFrom + progress * (targetTo - targetFrom)
+}
+
+export const getSourceLineAtOffset = (anchors: SourceLineAnchor[], offset: number) => {
+  const normalized = normalizeSourceLineAnchors(anchors)
+  if (normalized.length === 0) return null
+  if (offset <= normalized[0].top) return normalized[0].line
+
+  for (let index = 1; index < normalized.length; index++) {
+    const previous = normalized[index - 1]
+    const next = normalized[index]
+    if (offset <= next.top) {
+      return interpolate(offset, previous.top, next.top, previous.line, next.line)
+    }
+  }
+
+  return normalized[normalized.length - 1].line
+}
+
+export const getOffsetForSourceLine = (anchors: SourceLineAnchor[], sourceLine: number) => {
+  const normalized = normalizeSourceLineAnchors(anchors)
+  if (normalized.length === 0) return null
+  if (sourceLine <= normalized[0].line) return normalized[0].top
+
+  for (let index = 1; index < normalized.length; index++) {
+    const previous = normalized[index - 1]
+    const next = normalized[index]
+    if (sourceLine <= next.line) {
+      return interpolate(sourceLine, previous.line, next.line, previous.top, next.top)
+    }
+  }
+
+  return normalized[normalized.length - 1].top
+}
+
 export const clampScrollRatio = (ratio: number) => {
   if (!Number.isFinite(ratio)) return 0
   return Math.min(Math.max(ratio, 0), 1)

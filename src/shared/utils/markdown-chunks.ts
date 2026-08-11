@@ -8,12 +8,24 @@ const FENCE_PATTERN = /^\s{0,3}(`{3,}|~{3,})/
 export const splitMarkdownIntoRenderChunks = (
   content: string,
   targetChars = MARKDOWN_RENDER_CHUNK_CHARS,
+) => splitMarkdownIntoRenderChunksWithLines(content, targetChars).map(chunk => chunk.content)
+
+export type MarkdownRenderChunk = {
+  content: string
+  startLine: number
+}
+
+export const splitMarkdownIntoRenderChunksWithLines = (
+  content: string,
+  targetChars = MARKDOWN_RENDER_CHUNK_CHARS,
 ) => {
   if (!content) return []
 
-  const chunks: string[] = []
+  const chunks: MarkdownRenderChunk[] = []
   const lines = content.match(/.*(?:\r?\n|$)/g)?.filter(Boolean) ?? [content]
   let current = ''
+  let currentStartLine = 0
+  let nextLine = 0
   let fenceMarker = ''
 
   for (const line of lines) {
@@ -24,13 +36,15 @@ export const splitMarkdownIntoRenderChunks = (
     }
 
     current += line
+    nextLine += (line.match(/\n/g) || []).length
     const isBlockBoundary = !fenceMarker && /^\s*$/.test(line)
     if (current.length >= targetChars && isBlockBoundary) {
-      chunks.push(current)
+      chunks.push({ content: current, startLine: currentStartLine })
       current = ''
+      currentStartLine = nextLine
     }
   }
 
-  if (current) chunks.push(current)
+  if (current) chunks.push({ content: current, startLine: currentStartLine })
   return chunks
 }

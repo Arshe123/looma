@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import 'github-markdown-css/github-markdown-light.css'
-import { renderMarkdown } from '@/shared/utils/markdown-renderer'
-import { splitMarkdownIntoRenderChunks } from '@/shared/utils/markdown-chunks'
+import { renderMarkdownWithLineData } from '@/shared/utils/markdown-renderer'
+import { splitMarkdownIntoRenderChunksWithLines } from '@/shared/utils/markdown-chunks'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import { dispatchOpenNoteRef, parseNoteLinkHref } from '@/shared/utils/note-link-ref'
-import { findBestTextAnchor } from '@/shared/utils/editor-scroll-sync'
+import {
+  findBestTextAnchor,
+  getOffsetForSourceLine,
+  getScrollRatio,
+  getSourceLineAtOffset,
+  setScrollRatio,
+} from '@/shared/utils/editor-scroll-sync'
+import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
 
 const props = defineProps<{
   content: string
@@ -18,15 +25,17 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'load-more'): void
+  (e: 'scroll-sync', value: ScrollSyncState): void
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
 const renderedChunkCache = new Map<string, string>()
-const renderedChunks = computed(() => splitMarkdownIntoRenderChunks(props.content).map((chunk) => {
-  const cached = renderedChunkCache.get(chunk)
+const renderedChunks = computed(() => splitMarkdownIntoRenderChunksWithLines(props.content).map((chunk) => {
+  const cacheKey = `${chunk.startLine}\0${chunk.content}`
+  const cached = renderedChunkCache.get(cacheKey)
   if (cached !== undefined) return cached
-  const html = renderMarkdown(chunk)
-  renderedChunkCache.set(chunk, html)
+  const html = renderMarkdownWithLineData(chunk.content, chunk.startLine)
+  renderedChunkCache.set(cacheKey, html)
   return html
 }))
 const progress = computed(() => {
@@ -37,6 +46,7 @@ const progress = computed(() => {
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
 const imageCache = new Map<string, string | null>()
 let imageResolveGeneration = 0
+let scrollSyncFrame: number | null = null
 
 const pathSeparator = (path: string) => path.includes('\\') ? '\\' : '/'
 const fileDirectory = (path: string) => {
@@ -122,6 +132,47 @@ const getBlockElements = () => {
   )).filter((element) => (element.textContent || '').trim())
 }
 
+const getSourceLineAnchors = () => {
+  const container = containerRef.value
+  if (!container) return []
+  const containerRect = container.getBoundingClientRect()
+  return Array.from(container.querySelectorAll<HTMLElement>('[data-line]')).map(element => ({
+    line: Number(element.dataset.line),
+    top: element.getBoundingClientRect().top - containerRect.top + container.scrollTop,
+  }))
+}
+
+const getScrollState = (): ScrollSyncState => {
+  const container = containerRef.value
+  if (!container) return { ratio: 0 }
+  return {
+    ratio: getScrollRatio(container),
+    sourceLine: getSourceLineAtOffset(getSourceLineAnchors(), container.scrollTop + 4) ?? undefined,
+  }
+}
+
+const applyScrollState = (state: ScrollSyncState) => {
+  const container = containerRef.value
+  if (!container) return
+  if (typeof state.sourceLine === 'number') {
+    const offset = getOffsetForSourceLine(getSourceLineAnchors(), state.sourceLine)
+    if (typeof offset === 'number') {
+      container.scrollTop = offset
+      return
+    }
+  }
+  setScrollRatio(container, state.ratio)
+}
+
+const handleScroll = () => {
+  requestMoreNearBoundary()
+  if (scrollSyncFrame !== null) return
+  scrollSyncFrame = requestAnimationFrame(() => {
+    scrollSyncFrame = null
+    emit('scroll-sync', getScrollState())
+  })
+}
+
 const scrollToHeading = (target: MarkdownOutlineItem) => {
   const headings = Array.from(containerRef.value?.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6') || [])
   const heading = headings[target.index]
@@ -150,7 +201,7 @@ watch(() => props.content, () => {
 }, { flush: 'post' })
 
 onMounted(() => {
-  containerRef.value?.addEventListener('scroll', requestMoreNearBoundary, { passive: true })
+  containerRef.value?.addEventListener('scroll', handleScroll, { passive: true })
   containerRef.value?.addEventListener('click', handleNoteRefClick)
   resolveLocalImages().catch(() => {})
   requestAnimationFrame(requestMoreNearBoundary)
@@ -158,13 +209,16 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   imageResolveGeneration += 1
-  containerRef.value?.removeEventListener('scroll', requestMoreNearBoundary)
+  containerRef.value?.removeEventListener('scroll', handleScroll)
   containerRef.value?.removeEventListener('click', handleNoteRefClick)
+  if (scrollSyncFrame !== null) cancelAnimationFrame(scrollSyncFrame)
 })
 
 defineExpose({
   scrollToHeading,
   scrollToLine: scrollToSourceLine,
+  getScrollState,
+  applyScrollState,
 })
 </script>
 

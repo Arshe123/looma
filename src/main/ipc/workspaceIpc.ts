@@ -6,6 +6,7 @@ import { mainWindow } from '../index';
 import { getWindowFromEvent } from './windowIpc';
 import fs from 'fs/promises';
 import path from 'path';
+import { formatPrimaryShortcut } from '../../shared/utils/platform-shortcuts';
 
 const getWorkspacePathById = async (workspaceId: string) => {
   const state = await workspaceService.getState();
@@ -88,8 +89,8 @@ ipcMain.handle('workspace:new', async (_, parentDir: string, name: string, templ
         '',
         '这是一个新的工作空间。',
         '',
-        '- Ctrl/Cmd+O：切换工作空间',
-        '- Ctrl/Cmd+Shift+N：新建工作空间',
+        `- ${formatPrimaryShortcut('O', process.platform)}：切换工作空间`,
+        `- ${formatPrimaryShortcut('Shift+N', process.platform)}：新建工作空间`,
         '',
       ].join('\n');
       await fs.writeFile(path.join(dest, 'Welcome.md'), md, 'utf-8');

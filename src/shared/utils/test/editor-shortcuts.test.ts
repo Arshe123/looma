@@ -95,6 +95,19 @@ describe('editor shortcut settings', () => {
     expect(matchesEditorShortcut(keyboardEvent({ altKey: true }), shortcut)).toBe(false)
     expect(matchesEditorShortcut(keyboardEvent(), { ...shortcut, enabled: false })).toBe(false)
   })
+
+  it('maps portable Ctrl bindings to Command on macOS', () => {
+    const shortcut = createDefaultEditorShortcutSettings().inlineMenuSlots[0]
+    const commandEvent = keyboardEvent({ ctrlKey: false, metaKey: true })
+
+    expect(matchesEditorShortcut(commandEvent, shortcut, 'darwin')).toBe(true)
+    expect(matchesEditorShortcut(keyboardEvent(), shortcut, 'darwin')).toBe(false)
+    expect(formatEditorShortcut(shortcut, 'darwin')).toBe('⌘ + 1')
+    expect(shortcutFromKeyboardEvent(commandEvent, 'darwin')).toMatchObject({
+      ctrl: true,
+      meta: false,
+    })
+  })
 })
 
 describe('heading level adjustment', () => {

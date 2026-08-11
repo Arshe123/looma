@@ -21,6 +21,7 @@ import {
   type HeadingLevel,
 } from '@/shared/utils/editor-shortcuts'
 import { getOverlayPositionAtLineNumber } from '@/shared/utils/tiptap-line-numbers'
+import { isPrimaryModifierPressed } from '@/shared/utils/platform-shortcuts'
 
 const props = defineProps<{
   editor: Editor
@@ -31,6 +32,7 @@ const emit = defineEmits<{
 }>()
 
 const settingsStore = useSettingsStore()
+const platform = window.electronAPI.platform
 const menuVisible = ref(false)
 const panelVisible = ref(false)
 const buttonPosition = ref({ top: 0, left: 0 })
@@ -287,12 +289,12 @@ const runInlineMenuShortcut = (editor: Editor, index: number) => {
 
 const handleConfiguredShortcut = (event: KeyboardEvent, editor: Editor) => {
   const shortcuts = settingsStore.editorShortcuts
-  if (matchesEditorShortcut(event, shortcuts.headingLevelUp)
+  if (matchesEditorShortcut(event, shortcuts.headingLevelUp, platform)
     && adjustCurrentHeading(editor, 'up')) return true
-  if (matchesEditorShortcut(event, shortcuts.headingLevelDown)
+  if (matchesEditorShortcut(event, shortcuts.headingLevelDown, platform)
     && adjustCurrentHeading(editor, 'down')) return true
 
-  const slotIndex = shortcuts.inlineMenuSlots.findIndex(shortcut => matchesEditorShortcut(event, shortcut))
+  const slotIndex = shortcuts.inlineMenuSlots.findIndex(shortcut => matchesEditorShortcut(event, shortcut, platform))
   return slotIndex >= 0 && runInlineMenuShortcut(editor, slotIndex)
 }
 
@@ -306,7 +308,7 @@ const handleKeyDown = (event: KeyboardEvent) => {
     return true
   }
 
-  if (event.key === 'Enter' && event.shiftKey && event.ctrlKey) {
+  if (event.key === 'Enter' && event.shiftKey && isPrimaryModifierPressed(event, platform)) {
     event.preventDefault()
     event.stopImmediatePropagation()
     const mode = getCurrentMenuMode(editor)
@@ -482,7 +484,7 @@ onBeforeUnmount(() => {
           v-if="menuMode === 'default' && index < 9 && settingsStore.editorShortcuts.inlineMenuSlots[index]?.enabled"
           class="shrink-0 rounded border border-border-soft bg-panel-soft px-1.5 py-0.5 text-[9px] text-text-muted"
         >
-          {{ formatEditorShortcut(settingsStore.editorShortcuts.inlineMenuSlots[index]) }}
+          {{ formatEditorShortcut(settingsStore.editorShortcuts.inlineMenuSlots[index], platform) }}
         </span>
       </div>
 

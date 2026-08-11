@@ -19,8 +19,10 @@ import {
   OPEN_NOTE_REF_EVENT,
   isHeadingAnchorMatch,
 } from '@/shared/utils/note-link-ref'
+import { isPrimaryModifierPressed } from '@/shared/utils/platform-shortcuts'
 
 const workspaceStore = useWorkspaceStore()
+const platform = window.electronAPI.platform
 let keyHandler: ((e: KeyboardEvent) => void) | null = null
 
 const saveTrigger = ref(0)
@@ -206,23 +208,24 @@ onMounted(() => {
   window.addEventListener('looma:jump-to-heading', jumpToHeading)
   window.addEventListener(OPEN_NOTE_REF_EVENT, openNoteRef)
   keyHandler = (e: KeyboardEvent) => {
-    if (e.ctrlKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
+    const commandKey = isPrimaryModifierPressed(e, platform)
+    if (commandKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
       e.preventDefault()
       saveTrigger.value += 1
       return
     }
-    if (e.ctrlKey && !e.shiftKey && (e.key === 'n' || e.key === 'N')) {
+    if (commandKey && !e.shiftKey && (e.key === 'n' || e.key === 'N')) {
       e.preventDefault()
       window.dispatchEvent(new CustomEvent(FILE_TREE_CREATE_FILE_EVENT))
       return
     }
-    if (e.ctrlKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+    if (commandKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
       if (isTextEditingTarget(e.target) || isTextEditingTarget(document.activeElement)) return
       e.preventDefault()
       workspaceStore.undo()
       return
     }
-    if (e.ctrlKey && (e.key === 'y' || e.key === 'Y')) {
+    if (commandKey && (e.key === 'y' || e.key === 'Y')) {
       if (isTextEditingTarget(e.target) || isTextEditingTarget(document.activeElement)) return
       e.preventDefault()
       workspaceStore.redo()

@@ -15,6 +15,7 @@ import {
 import { formatMarkdownLink, selectionHasMarkdownSource } from '@/shared/utils/tiptap-clipboard'
 import { parseNoteLinkHref } from '@/shared/utils/note-link-ref'
 import type { MenuAction } from '@/shared/types/MenuAction'
+import { isMacPlatform } from '@/shared/utils/window-chrome'
 
 const props = defineProps<{
   editor: Editor
@@ -43,7 +44,7 @@ const menuMode = ref<'default' | 'table'>('default')
 const tablePickerVisible = ref(false)
 const quickCopyText = ref<string | null>(null)
 const sourceCopyAvailable = ref(false)
-const isMac = navigator.platform.includes('Mac')
+const isMac = isMacPlatform(window.electronAPI.platform)
 
 const menuRef = ref<HTMLElement | null>(null)
 const subMenuRef = ref<HTMLElement | null>(null)

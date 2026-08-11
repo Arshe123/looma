@@ -37,6 +37,8 @@ type ShortcutRow = {
 }
 
 const settingsStore = useSettingsStore()
+const platform = window.electronAPI.platform
+const formatShortcut = (shortcut: EditorShortcutBinding) => formatEditorShortcut(shortcut, platform)
 const activePanel = ref<'menu' | 'shortcuts'>('shortcuts')
 const activeShortcutCategory = ref<ShortcutCategory>('all')
 const draggedInlineMenuIndex = ref<number | null>(null)
@@ -134,7 +136,7 @@ const toggleShortcut = async (row: ShortcutRow) => {
   if (!row.binding.enabled) {
     const conflict = findShortcutConflict(row.target, row.binding)
     if (conflict?.binding.enabled) {
-      shortcutError.value = `无法启用：${formatEditorShortcut(row.binding)} 已用于“${conflict.command}”。`
+      shortcutError.value = `无法启用：${formatShortcut(row.binding)} 已用于“${conflict.command}”。`
       return
     }
   }
@@ -155,9 +157,11 @@ const handleShortcutRecording = async (event: KeyboardEvent) => {
     return
   }
 
-  const candidate = shortcutFromKeyboardEvent(event)
+  const candidate = shortcutFromKeyboardEvent(event, platform)
   if (!candidate) {
-    shortcutError.value = '请按下包含 Ctrl、Alt 或 Meta 的组合键；不能使用单个字符或仅修饰键。'
+    shortcutError.value = platform === 'darwin'
+      ? '请按下包含 Command、Option 或 Control 的组合键；不能使用单个字符或仅修饰键。'
+      : '请按下包含 Ctrl、Alt 或 Meta 的组合键；不能使用单个字符或仅修饰键。'
     return
   }
   const current = shortcutRows.value.find(row => isSameTarget(row.target, target))
@@ -165,7 +169,7 @@ const handleShortcutRecording = async (event: KeyboardEvent) => {
   candidate.enabled = current.binding.enabled
   const conflict = findShortcutConflict(target, candidate)
   if (conflict) {
-    shortcutError.value = `${formatEditorShortcut(candidate)} 已用于“${conflict.command}”，请换一个组合键。`
+    shortcutError.value = `${formatShortcut(candidate)} 已用于“${conflict.command}”，请换一个组合键。`
     return
   }
 
@@ -314,7 +318,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecord
             集中查看、启停和修改编辑器快捷键。点击组合键后直接按下新快捷键。
           </p>
           <p class="mt-1 text-xs leading-5 text-text-muted">
-            Ctrl + 1～9 始终对应当前快速插入菜单的前 9 项；调整菜单顺序后，命令名称与实际操作会自动更新。
+            {{ platform === 'darwin' ? 'Command' : 'Ctrl' }} + 1～9 始终对应当前快速插入菜单的前 9 项；调整菜单顺序后，命令名称与实际操作会自动更新。
             冲突组合键不会覆盖原配置，按 Esc 可取消录入。
           </p>
         </div>
@@ -391,7 +395,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecord
                   <span class="block truncate">
                     {{ isSameTarget(recordingTarget ?? 'headingLevelUp', row.target) && recordingTarget !== null
                       ? '请按组合键…'
-                      : formatEditorShortcut(row.binding) }}
+                      : formatShortcut(row.binding) }}
                   </span>
                 </button>
                 <button

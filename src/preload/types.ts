@@ -266,6 +266,7 @@ interface OllamaModelPullProgressPayload extends OllamaDownloadProgressPayload {
 }
 
 interface ElectronAPI {
+  platform: string;
   file: {
     readMarkdown: (filePath: string) => Promise<Result<string>>;
     readTextChunk: (filePath: string, offset: number, length: number) => Promise<Result<TextFileChunkPayload>>;

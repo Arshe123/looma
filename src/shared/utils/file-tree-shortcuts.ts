@@ -1,9 +1,11 @@
 import { isTextEditingTarget } from './editing-target'
+import { isPrimaryModifierPressed } from './platform-shortcuts'
 
-type FileTreeKeyEvent = Pick<KeyboardEvent, 'key' | 'target' | 'preventDefault'>
+type FileTreeKeyEvent = Pick<KeyboardEvent, 'key' | 'target' | 'preventDefault' | 'ctrlKey' | 'metaKey'>
 
 type FileTreeShortcutHandlers = {
   event: FileTreeKeyEvent
+  platform: string
   selectedPaths: string[]
   hasInlineEdit: boolean
   activeElement: EventTarget | null
@@ -16,14 +18,12 @@ type FileTreeShortcutHandlers = {
   onError?: (error: unknown) => void
 }
 
-const isClipboardShortcut = (event: FileTreeKeyEvent, key: string) => {
-  if (event.key.toLowerCase() !== key) return false
-  const e = event as KeyboardEvent
-  return e.ctrlKey || e.metaKey
-}
+const isClipboardShortcut = (event: FileTreeKeyEvent, key: string, platform: string) =>
+  event.key.toLowerCase() === key && isPrimaryModifierPressed(event, platform)
 
 export const handleFileTreeGlobalKeyDown = ({
   event,
+  platform,
   selectedPaths,
   hasInlineEdit,
   activeElement,
@@ -42,19 +42,19 @@ export const handleFileTreeGlobalKeyDown = ({
     return true
   }
 
-  if (isClipboardShortcut(event, 'c') && selectedPaths.length > 0) {
+  if (isClipboardShortcut(event, 'c', platform) && selectedPaths.length > 0) {
     event.preventDefault()
     Promise.resolve(copyEntries()).catch(onError)
     return true
   }
 
-  if (isClipboardShortcut(event, 'x') && selectedPaths.length > 0) {
+  if (isClipboardShortcut(event, 'x', platform) && selectedPaths.length > 0) {
     event.preventDefault()
     Promise.resolve(cutEntries()).catch(onError)
     return true
   }
 
-  if (isClipboardShortcut(event, 'v')) {
+  if (isClipboardShortcut(event, 'v', platform)) {
     event.preventDefault()
     Promise.resolve(pasteEntries()).catch(onError)
     return true

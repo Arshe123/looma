@@ -20,6 +20,7 @@ import { captureFileTreeDrop } from '@/shared/utils/external-file-drop'
 import { isMacPlatform } from '../../shared/utils/window-chrome'
 
 const isMac = isMacPlatform((window as any).electronAPI?.platform ?? '')
+const platform = window.electronAPI.platform
 
 const workspaceStore = useWorkspaceStore()
 const expanded = computed(() => workspaceStore.activeExpandedSet)
@@ -535,6 +536,7 @@ const onGlobalPointerDown = () => closeMenu()
 const onGlobalKeyDown = (e: KeyboardEvent) => {
   handleFileTreeGlobalKeyDown({
     event: e,
+    platform,
     selectedPaths: workspaceStore.selectedPaths,
     hasInlineEdit: Boolean(inlineEdit.value),
     activeElement: document.activeElement,
@@ -601,13 +603,13 @@ onUnmounted(() => {
           class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
           @click="workspaceStore.openWorkspaceInNewWindowFlow()"
         >
-          打开工作空间 (Ctrl+O)
+          打开工作空间 ({{ isMac ? '⌘O' : 'Ctrl+O' }})
         </button>
         <button
           class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
           @click="workspaceStore.newWorkspaceInNewWindowFlow()"
         >
-          新建工作空间 (Ctrl+Shift+N)
+          新建工作空间 ({{ isMac ? '⌘⇧N' : 'Ctrl+Shift+N' }})
         </button>
       </div>
     </div>

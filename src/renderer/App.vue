@@ -20,11 +20,13 @@ import {
   shouldCloseSidebarOnResize,
   shouldOpenSidebarOnResize,
 } from '@/renderer/utils/sidebar-layout';
+import { isPrimaryModifierPressed } from '@/shared/utils/platform-shortcuts';
 
 const workspaceStore = useWorkspaceStore();
 const settingsStore = useSettingsStore();
 const ollamaStore = useOllamaStore();
 const downloadsStore = useDownloadsStore();
+const platform = window.electronAPI.platform
 
 const readStoredSidebarWidth = () => {
   if (typeof localStorage === 'undefined') return DEFAULT_SIDEBAR_WIDTH
@@ -117,7 +119,7 @@ onMounted(() => {
 
   keyHandler = (e: KeyboardEvent) => {
     if (workspaceStore.inputDialogOpen || workspaceStore.confirmationDialogOpen) return
-    const commandKey = e.ctrlKey || e.metaKey
+    const commandKey = isPrimaryModifierPressed(e, platform)
     if (commandKey && !e.shiftKey && (e.key === 'o' || e.key === 'O')) {
       e.preventDefault()
       workspaceStore.openWorkspaceInNewWindowFlow()

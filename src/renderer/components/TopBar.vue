@@ -3,9 +3,11 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Minus, Square, X, ChevronDown, FolderOpen, Plus, Command } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../stores/workspace'
 import { isMacPlatform } from '../../shared/utils/window-chrome'
+import { formatPrimaryShortcut } from '../../shared/utils/platform-shortcuts'
 
 const workspaceStore = useWorkspaceStore()
 const isMac = isMacPlatform((window as any).electronAPI?.platform ?? '')
+const platform = window.electronAPI.platform
 
 const workspaceName = computed(() => workspaceStore.activeWorkspace?.name || '未打开工作空间')
 const recentWorkspaces = computed(() => {
@@ -149,7 +151,7 @@ onUnmounted(() => {
                 <FolderOpen :size="16" class="text-text-muted" />
                 打开工作空间
               </span>
-              <span class="text-[11px] text-text-subtle">Ctrl/Cmd+O</span>
+              <span class="text-[11px] text-text-subtle">{{ formatPrimaryShortcut('O', platform) }}</span>
             </button>
 
             <button
@@ -160,7 +162,7 @@ onUnmounted(() => {
                 <Plus :size="16" class="text-text-muted" />
                 新建工作空间（选择创建的位置）
               </span>
-              <span class="text-[11px] text-text-subtle">Ctrl/Cmd+Shift+N</span>
+              <span class="text-[11px] text-text-subtle">{{ formatPrimaryShortcut('Shift+N', platform) }}</span>
             </button>
 
             <button
@@ -171,7 +173,7 @@ onUnmounted(() => {
                 <Command :size="16" class="text-text-muted" />
                 打开命令面板
               </span>
-              <span class="text-[11px] text-text-subtle">Ctrl/Cmd+Shift+P</span>
+              <span class="text-[11px] text-text-subtle">{{ formatPrimaryShortcut('Shift+P', platform) }}</span>
             </button>
           </div>
         </div>

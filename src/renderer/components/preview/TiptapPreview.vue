@@ -40,6 +40,7 @@ import {
 } from '@/shared/utils/editor-scroll-sync'
 import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
 import { createMarkdownSerializationGate } from '@/shared/utils/markdown-serialization-gate'
+import { isPrimaryModifierPressed } from '@/shared/utils/platform-shortcuts'
 import {
   prepareMarkdownForRichText,
   serializeMarkdownAst,
@@ -810,7 +811,7 @@ onMounted(() => {
         autocapitalize: 'off',
       },
       handleKeyDown: (_view, event) => {
-        const isClipboardShortcut = (event.metaKey || event.ctrlKey) && !event.altKey
+        const isClipboardShortcut = isPrimaryModifierPressed(event, window.electronAPI.platform) && !event.altKey
         if (isClipboardShortcut && event.key.toLowerCase() === 'c') {
           event.preventDefault()
           void copyRichTextSelection().catch(console.error)

@@ -21,6 +21,11 @@ export type EditorShortcutEvent = Pick<
 export type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6
 export type HeadingDirection = 'up' | 'down'
 
+const platformModifiers = (event: EditorShortcutEvent, platform: string) =>
+  platform === 'darwin'
+    ? { ctrl: event.metaKey, meta: event.ctrlKey }
+    : { ctrl: event.ctrlKey, meta: event.metaKey }
+
 const binding = (key: string): EditorShortcutBinding => ({
   key,
   ctrl: true,
@@ -89,16 +94,18 @@ const shiftIsImpliedByKey = (key: string) =>
 
 export const shortcutFromKeyboardEvent = (
   event: EditorShortcutEvent,
+  platform = '',
 ): EditorShortcutBinding | null => {
   const key = normalizeShortcutKey(event.key)
+  const modifiers = platformModifiers(event, platform)
   if (!isValidShortcutKey(key)) return null
-  if (!event.ctrlKey && !event.altKey && !event.metaKey) return null
+  if (!modifiers.ctrl && !event.altKey && !modifiers.meta) return null
   return {
     key,
-    ctrl: event.ctrlKey,
+    ctrl: modifiers.ctrl,
     alt: event.altKey,
     shift: event.shiftKey && !shiftIsImpliedByKey(key),
-    meta: event.metaKey,
+    meta: modifiers.meta,
     enabled: true,
   }
 }
@@ -106,23 +113,26 @@ export const shortcutFromKeyboardEvent = (
 export const matchesEditorShortcut = (
   event: EditorShortcutEvent,
   shortcut: EditorShortcutBinding,
+  platform = '',
 ) => {
   if (!shortcut.enabled) return false
   const key = normalizeShortcutKey(event.key)
+  const modifiers = platformModifiers(event, platform)
   const eventShift = event.shiftKey && !shiftIsImpliedByKey(key)
   return key === shortcut.key
-    && event.ctrlKey === shortcut.ctrl
+    && modifiers.ctrl === shortcut.ctrl
     && event.altKey === shortcut.alt
     && eventShift === shortcut.shift
-    && event.metaKey === shortcut.meta
+    && modifiers.meta === shortcut.meta
 }
 
-export const formatEditorShortcut = (shortcut: EditorShortcutBinding) => {
+export const formatEditorShortcut = (shortcut: EditorShortcutBinding, platform: string | number = '') => {
+  const resolvedPlatform = typeof platform === 'string' ? platform : ''
   const parts: string[] = []
-  if (shortcut.ctrl) parts.push('Ctrl')
-  if (shortcut.alt) parts.push('Alt')
+  if (shortcut.ctrl) parts.push(resolvedPlatform === 'darwin' ? '⌘' : 'Ctrl')
+  if (shortcut.alt) parts.push(resolvedPlatform === 'darwin' ? 'Option' : 'Alt')
   if (shortcut.shift) parts.push('Shift')
-  if (shortcut.meta) parts.push('Meta')
+  if (shortcut.meta) parts.push(resolvedPlatform === 'darwin' ? 'Control' : 'Meta')
   parts.push(shortcut.key)
   return parts.join(' + ')
 }

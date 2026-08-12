@@ -16,6 +16,7 @@ const isOutlineLoading = ref(false)
 const outlineError = ref('')
 let outlineWorker: Worker | null = null
 let activeRequestId = 0
+let hasPersistedExpansion = false
 
 const outlineSource = computed(() => {
   const tab = workspaceStore.activeTab
@@ -98,8 +99,6 @@ const requestOutline = (content: string, resetExpansion: boolean) => {
   if (resetExpansion) {
     outlineItems.value = []
     visibleRows.value = []
-    expandedHeadingIds.value = new Set()
-    knownHeadingIds.value = new Set()
   }
 
   worker?.postMessage({
@@ -108,6 +107,7 @@ const requestOutline = (content: string, resetExpansion: boolean) => {
     expandedIds: Array.from(expandedHeadingIds.value),
     knownIds: Array.from(knownHeadingIds.value),
     resetExpansion,
+    hasPersistedExpansion,
   })
 }
 
@@ -123,6 +123,16 @@ watch(
     }
 
     const resetExpansion = sourceKey !== lastActivePath.value
+    if (resetExpansion) {
+      hasPersistedExpansion = Object.prototype.hasOwnProperty.call(
+        workspaceStore.outlineExpandedHeadingIds,
+        sourceKey,
+      )
+      expandedHeadingIds.value = new Set(
+        hasPersistedExpansion ? workspaceStore.outlineExpandedHeadingIds[sourceKey] : [],
+      )
+      knownHeadingIds.value = new Set()
+    }
     lastActivePath.value = sourceKey
     requestOutline(content, resetExpansion)
   },
@@ -145,6 +155,7 @@ const toggleHeading = (id: string) => {
     nextExpanded.add(id)
   }
   expandedHeadingIds.value = nextExpanded
+  workspaceStore.setOutlineExpandedHeadingIds(outlineSource.value.key, Array.from(nextExpanded))
   requestOutline(outlineSource.value.content, false)
 }
 

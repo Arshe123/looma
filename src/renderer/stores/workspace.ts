@@ -360,6 +360,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeSidebarPanel: DEFAULT_ACTIVE_SIDEBAR_PANEL as SidebarPanelId | null,
     aiAssistant: createDefaultAiAssistantState() as AiAssistantState,
     fileSessions: {} as Record<string, EditorSession>,
+    outlineExpandedHeadingIds: {} as Record<string, string[]>,
     selectedPaths: [] as string[],
     expandedDirs: [] as string[],
     noteOrder: {} as Record<string, string[]>,
@@ -957,6 +958,22 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     toggleSidebarPanel(id: SidebarPanelId) {
       this.activeSidebarPanel = toggleActiveSidebarPanel(this.activeSidebarPanel, id)
+      this.saveWorkspaceMeta().catch(() => {})
+    },
+
+    setOutlineExpandedHeadingIds(sourceKey: string, ids: string[]) {
+      if (!sourceKey) return
+      const normalizedIds = Array.from(new Set(ids))
+      const currentIds = this.outlineExpandedHeadingIds[sourceKey]
+      if (
+        currentIds
+        && currentIds.length === normalizedIds.length
+        && currentIds.every((id, index) => id === normalizedIds[index])
+      ) return
+      this.outlineExpandedHeadingIds = {
+        ...this.outlineExpandedHeadingIds,
+        [sourceKey]: normalizedIds,
+      }
       this.saveWorkspaceMeta().catch(() => {})
     },
 
@@ -1566,6 +1583,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.selectedPaths = []
       this.expandedDirs = []
       this.noteOrder = {}
+      this.outlineExpandedHeadingIds = {}
       this.dirEntries = {}
       this.dirLoadStates = {}
       this.dirLoadErrors = {}
@@ -1655,6 +1673,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
         this.resetAiAssistantState()
         this.fileSessions = {}
+        this.outlineExpandedHeadingIds = {}
         this.loadAiAssistantState(id).catch(() => {})
         return
       }
@@ -1675,6 +1694,9 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.syncLegacyTabState()
 
       this.fileSessions = metaResult.data.fileSessions || {}
+      this.outlineExpandedHeadingIds = metaResult.data.outlineExpansionStateVersion === 1
+        ? metaResult.data.outlineExpandedHeadingIds || {}
+        : {}
       this.openedTextFileContents = {}
       this.activeSidebarPanel = resolveActiveSidebarPanel(
         metaResult.data.activeSidebarPanel,
@@ -1721,6 +1743,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         activeSidebarPanel: this.activeSidebarPanel,
         activeFileRelativePath: this.activeFileRelativePath,
         fileSessions: this.fileSessions,
+        outlineExpandedHeadingIds: this.outlineExpandedHeadingIds,
       })
       this.fileSessions = cleanedSessions
       await window.electronAPI.workspaceMeta.set(id, meta)

@@ -176,6 +176,8 @@ export interface WorkspaceMeta {
   tabs?: WorkspaceTab[]
   activeTabId?: string
   fileSessions?: Record<string, EditorSession>
+  outlineExpandedHeadingIds?: Record<string, string[]>
+  outlineExpansionStateVersion?: 1
   activeSidebarPanel?: SidebarPanelId | null
   sidebarPanels?: SidebarPanelState[]
 }

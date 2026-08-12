@@ -37,6 +37,10 @@ describe('workspace startup hydration', () => {
             activeFile: 'note.md',
             activeSidebarPanel: 'ai',
             fileSessions: {},
+            outlineExpandedHeadingIds: {
+              'file:note.md': ['heading-1'],
+            },
+            outlineExpansionStateVersion: 1,
           },
         }),
         set: vi.fn().mockResolvedValue({ success: true }),
@@ -59,7 +63,66 @@ describe('workspace startup hydration', () => {
     expect(store.activeSidebarPanel).toBe('ai')
     expect(store.activeTabId).toBe('file:note.md')
     expect(store.activeFileRelativePath).toBe('note.md')
+    expect(store.outlineExpandedHeadingIds).toEqual({
+      'file:note.md': ['heading-1'],
+    })
     expect(window.electronAPI.workspaceAi.get).toHaveBeenCalledWith(workspace.id)
+  })
+
+  it('ignores unversioned expansion state generated before explicit-toggle persistence', async () => {
+    const pendingAi = deferred<any>()
+    ;(window as any).electronAPI = {
+      workspaceMeta: {
+        get: vi.fn().mockResolvedValue({
+          success: true,
+          data: {
+            expandedDirs: [],
+            selectedPaths: [],
+            noteOrder: {},
+            outlineExpandedHeadingIds: {
+              'system:help': [],
+            },
+          },
+        }),
+        set: vi.fn().mockResolvedValue({ success: true }),
+      },
+      workspaceAi: {
+        get: vi.fn(() => pendingAi.promise),
+        set: vi.fn().mockResolvedValue({ success: true }),
+      },
+    }
+
+    const store = useWorkspaceStore()
+    store.activeWorkspaceId = workspace.id
+
+    await store.loadWorkspaceMeta(workspace.id)
+
+    expect(store.outlineExpandedHeadingIds).toEqual({})
+  })
+
+  it('persists heading expansion for each outline source', async () => {
+    const setMeta = vi.fn().mockResolvedValue({ success: true })
+    ;(window as any).electronAPI = {
+      workspaceMeta: { set: setMeta },
+    }
+
+    const store = useWorkspaceStore()
+    store.activeWorkspaceId = workspace.id
+    store.tabs = [{ id: 'file:note.md', kind: 'file', relativePath: 'note.md' }]
+    store.activeTabId = 'file:note.md'
+
+    store.setOutlineExpandedHeadingIds('file:note.md', ['heading-0', 'heading-2'])
+
+    await vi.waitFor(() => {
+      expect(setMeta).toHaveBeenCalledWith(
+        workspace.id,
+        expect.objectContaining({
+          outlineExpandedHeadingIds: {
+            'file:note.md': ['heading-0', 'heading-2'],
+          },
+        }),
+      )
+    })
   })
 
   it('tracks root directory loading separately from an empty directory', async () => {

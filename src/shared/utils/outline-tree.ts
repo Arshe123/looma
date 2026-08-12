@@ -15,6 +15,32 @@ export type OutlineFlatRow = {
   guides: TreeGuide[]
 }
 
+export const resolveOutlineExpandedIds = (
+  items: MarkdownOutlineItem[],
+  expandedIds: string[],
+  knownIds: string[],
+  resetExpansion: boolean,
+  hasPersistedExpansion: boolean,
+) => {
+  const idSet = new Set(items.map((item) => item.id))
+  const roots = buildOutlineTree(items)
+  const defaultExpandedIds = roots.length === 1
+    ? [roots[0].item.id, ...roots[0].children.map((child) => child.item.id)]
+    : roots.map((root) => root.item.id)
+
+  if (resetExpansion) {
+    return hasPersistedExpansion
+      ? expandedIds.filter((id) => idSet.has(id))
+      : defaultExpandedIds
+  }
+
+  const knownIdSet = new Set(knownIds)
+  return [
+    ...expandedIds.filter((id) => idSet.has(id)),
+    ...defaultExpandedIds.filter((id) => !knownIdSet.has(id)),
+  ]
+}
+
 const updateDepth = (node: OutlineTreeNode, depth: number) => {
   node.depth = depth
   node.children.forEach((child) => updateDepth(child, depth + 1))

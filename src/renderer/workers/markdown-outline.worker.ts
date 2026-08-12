@@ -1,5 +1,10 @@
 import { parseMarkdownOutline } from '@/shared/utils/markdown-outline'
-import { buildOutlineTree, flattenOutlineTree, type OutlineFlatRow } from '@/shared/utils/outline-tree'
+import {
+  buildOutlineTree,
+  flattenOutlineTree,
+  resolveOutlineExpandedIds,
+  type OutlineFlatRow,
+} from '@/shared/utils/outline-tree'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 
 type MarkdownOutlineWorkerRequest = {
@@ -8,6 +13,7 @@ type MarkdownOutlineWorkerRequest = {
   expandedIds: string[]
   knownIds: string[]
   resetExpansion: boolean
+  hasPersistedExpansion: boolean
 }
 
 type MarkdownOutlineWorkerSuccess = {
@@ -33,19 +39,18 @@ const getErrorMessage = (error: unknown) => {
 }
 
 self.onmessage = (event: MessageEvent<MarkdownOutlineWorkerRequest>) => {
-  const { requestId, content, expandedIds, knownIds, resetExpansion } = event.data
+  const { requestId, content, expandedIds, knownIds, resetExpansion, hasPersistedExpansion } = event.data
 
   try {
     const items = parseMarkdownOutline(content)
     const ids = items.map((item) => item.id)
-    const idSet = new Set(ids)
-    const knownIdSet = new Set(knownIds)
-    const nextExpandedIds = resetExpansion
-      ? ids
-      : [
-          ...expandedIds.filter((id) => idSet.has(id)),
-          ...ids.filter((id) => !knownIdSet.has(id)),
-        ]
+    const nextExpandedIds = resolveOutlineExpandedIds(
+      items,
+      expandedIds,
+      knownIds,
+      resetExpansion,
+      hasPersistedExpansion,
+    )
     const outlineTree = buildOutlineTree(items)
     const visibleRows = flattenOutlineTree(outlineTree, new Set(nextExpandedIds))
     const response: MarkdownOutlineWorkerResponse = {

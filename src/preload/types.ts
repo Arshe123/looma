@@ -123,6 +123,8 @@ interface WorkspaceMetaPayload {
   tabs?: WorkspaceTabPayload[];
   activeTabId?: string;
   fileSessions?: Record<string, any>;
+  outlineExpandedHeadingIds?: Record<string, string[]>;
+  outlineExpansionStateVersion?: 1;
   activeSidebarPanel?: SidebarPanelId | null;
   sidebarPanels?: SidebarPanelState[];
 }

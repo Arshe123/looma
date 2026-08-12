@@ -19,6 +19,9 @@ describe('buildWorkspaceMetaPayload tab persistence', () => {
         'legacy.md': { updatedAt: 2 },
       },
       activeSidebarPanel: 'files',
+      outlineExpandedHeadingIds: {
+        'file:docs/a.md': ['heading-0'],
+      },
     })
 
     expect(meta.tabs).toEqual(tabs)
@@ -28,6 +31,10 @@ describe('buildWorkspaceMetaPayload tab persistence', () => {
     expect(cleanedSessions).toEqual({
       'docs/a.md': { updatedAt: 1 },
     })
+    expect(meta.outlineExpandedHeadingIds).toEqual({
+      'file:docs/a.md': ['heading-0'],
+    })
+    expect(meta.outlineExpansionStateVersion).toBe(1)
   })
 
   it('does not persist the ephemeral Agent diff tab or its active id', () => {
@@ -40,6 +47,7 @@ describe('buildWorkspaceMetaPayload tab persistence', () => {
       tabs: [createFileTab('docs/a.md'), createSystemTab('agent-diff')],
       activeTabId: 'system:agent-diff',
       fileSessions: {},
+      outlineExpandedHeadingIds: {},
       activeSidebarPanel: 'ai',
     })
 
@@ -56,6 +64,7 @@ describe('buildWorkspaceMetaPayload tab persistence', () => {
       openedFiles: ['legacy.md'],
       activeFileRelativePath: 'legacy.md',
       fileSessions: {},
+      outlineExpandedHeadingIds: {},
       activeSidebarPanel: null,
     })
 

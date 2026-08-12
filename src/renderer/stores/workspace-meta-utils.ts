@@ -11,6 +11,7 @@ interface BuildWorkspaceMetaInput {
   tabs?: WorkspaceTab[]
   activeTabId?: string
   fileSessions: Record<string, EditorSession>
+  outlineExpandedHeadingIds: Record<string, string[]>
   activeSidebarPanel?: SidebarPanelId | null
 }
 
@@ -20,6 +21,14 @@ const cloneNoteOrder = (noteOrder: Record<string, string[]>) => {
     noteOrderPlain[k] = Array.isArray(v) ? v.slice() : []
   }
   return noteOrderPlain
+}
+
+const cloneStringArrayRecord = (value: Record<string, string[]>) => {
+  const result: Record<string, string[]> = {}
+  for (const [key, entries] of Object.entries(value || {})) {
+    result[key] = Array.isArray(entries) ? entries.slice() : []
+  }
+  return result
 }
 
 const cleanupSessionsForOpenedFiles = (openedFiles: string[], fileSessions: Record<string, EditorSession>) => {
@@ -52,6 +61,8 @@ export const buildWorkspaceMetaPayload = (input: BuildWorkspaceMetaInput) => {
     tabs: normalizedTabs.length > 0 ? normalizedTabs : undefined,
     activeTabId,
     fileSessions: JSON.parse(JSON.stringify(cleanedSessions)),
+    outlineExpandedHeadingIds: cloneStringArrayRecord(input.outlineExpandedHeadingIds),
+    outlineExpansionStateVersion: 1,
     activeSidebarPanel: input.activeSidebarPanel,
   }
   return { cleanedSessions, meta }

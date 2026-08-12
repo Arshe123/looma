@@ -19,6 +19,8 @@ export interface WorkspaceMeta {
   tabs?: WorkspaceTab[]
   activeTabId?: string
   fileSessions?: Record<string, any>
+  outlineExpandedHeadingIds?: Record<string, string[]>
+  outlineExpansionStateVersion?: 1
   activeSidebarPanel?: 'files' | 'outline' | 'ai' | null
   sidebarPanels?: { id: 'files' | 'outline' | 'ai'; size: number }[]
 }
@@ -105,6 +107,15 @@ export const workspaceMetaService = {
         tabs: Array.isArray(parsed.tabs) ? parsed.tabs : undefined,
         activeTabId: typeof parsed.activeTabId === 'string' ? parsed.activeTabId : undefined,
         fileSessions: typeof parsed.fileSessions === 'object' && parsed.fileSessions ? parsed.fileSessions : {},
+        outlineExpandedHeadingIds:
+          typeof parsed.outlineExpandedHeadingIds === 'object' && parsed.outlineExpandedHeadingIds
+            ? Object.fromEntries(
+                Object.entries(parsed.outlineExpandedHeadingIds)
+                  .filter(([, ids]) => Array.isArray(ids))
+                  .map(([key, ids]) => [key, ids.filter((id): id is string => typeof id === 'string')]),
+              )
+            : {},
+        outlineExpansionStateVersion: parsed.outlineExpansionStateVersion === 1 ? 1 as const : undefined,
         activeSidebarPanel:
           parsed.activeSidebarPanel === null || parsed.activeSidebarPanel === 'files' || parsed.activeSidebarPanel === 'outline' || parsed.activeSidebarPanel === 'ai'
             ? parsed.activeSidebarPanel

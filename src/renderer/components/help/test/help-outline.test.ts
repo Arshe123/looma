@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseMarkdownOutline } from '@/shared/utils/markdown-outline'
+import { buildOutlineTree, flattenOutlineTree, resolveOutlineExpandedIds } from '@/shared/utils/outline-tree'
 import helpMarkdown from '../help.md?raw'
 
 describe('help document outline', () => {
@@ -54,5 +55,33 @@ describe('help document outline', () => {
       '11.5 如何反馈问题？',
     ])
     expect(outline.map((item) => item.index)).toEqual(outline.map((_, index) => index))
+  })
+
+  it('shows the subsections of first-level help sections by default', () => {
+    const outline = parseMarkdownOutline(helpMarkdown)
+    const expandedIds = resolveOutlineExpandedIds(outline, [], [], true, false)
+    const visibleRows = flattenOutlineTree(buildOutlineTree(outline), new Set(expandedIds))
+
+    expect(outline.filter((item) => expandedIds.includes(item.id)).map((item) => item.text)).toEqual([
+      'Looma 帮助文档',
+      '1. 开始使用',
+      '2. 界面总览',
+      '3. 笔记编辑',
+      '4. 文件管理',
+      '5. 笔记引用',
+      '6. 图片与媒体预览',
+      '7. 快捷键速查',
+      '8. AI 助手与 Agent',
+      '9. 数据与隐私',
+      '10. 获取更新',
+      '11. 常见问题',
+    ])
+    expect(visibleRows.slice(0, 5).map((row) => row.item.text)).toEqual([
+      'Looma 帮助文档',
+      '1. 开始使用',
+      '1.1 打开或新建工作空间',
+      '1.2 新建第一篇笔记',
+      '1.3 修改会自动保存',
+    ])
   })
 })

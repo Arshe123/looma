@@ -741,11 +741,11 @@ onUnmounted(() => {
         @contextmenu.prevent
       >
         <button
-          title="新建文件"
+          title="新建笔记"
           class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft"
           @click="addFile"
         >
-          新建文件
+          新建笔记
         </button>
         <button
           title="新建文件夹"

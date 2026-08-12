@@ -5,6 +5,8 @@ describe('renderMarkdown note ref links', () => {
   it('tags internal note links with looma-note-ref and data attribute', () => {
     const html = renderMarkdown('[说明](note.md#简介)')
     expect(html).toContain('class="looma-note-ref"')
+    expect(html).toContain('class="looma-link-icon looma-note-ref-icon"')
+    expect(html).toContain('looma-note-ref-icon')
     // markdown-it 会 URL 编码 href，data 属性保留编码后的原文，解析层负责解码
     expect(html).toContain('data-looma-note-ref="note.md#%E7%AE%80%E4%BB%8B"')
     expect(html).not.toContain('target="_blank"')
@@ -12,6 +14,9 @@ describe('renderMarkdown note ref links', () => {
 
   it('keeps external links opening in new tab', () => {
     const html = renderMarkdown('[外部](https://example.com)')
+    expect(html).toContain('class="looma-external-link"')
+    expect(html).toContain('class="looma-link-icon looma-external-link-icon"')
+    expect(html).toContain('looma-external-link-icon')
     expect(html).toContain('target="_blank"')
     expect(html).not.toContain('looma-note-ref')
   })

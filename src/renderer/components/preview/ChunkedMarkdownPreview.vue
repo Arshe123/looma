@@ -246,6 +246,23 @@ defineExpose({
   background: transparent !important;
   padding-bottom: calc(2rem + 22vh) !important;
 }
+.chunked-markdown .looma-note-ref,
+.chunked-markdown .looma-external-link {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+.chunked-markdown .looma-note-ref {
+  border-bottom-style: dotted;
+}
+.chunked-markdown .looma-link-icon {
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.2em;
+  vertical-align: -0.13em;
+  color: var(--accent);
+}
 .markdown-render-chunk {
   content-visibility: auto;
   contain-intrinsic-size: auto 720px;

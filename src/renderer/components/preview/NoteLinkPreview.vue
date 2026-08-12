@@ -10,6 +10,7 @@ import {
 } from '@/shared/utils/note-link-ref'
 import { parseMarkdownOutline } from '@/shared/utils/markdown-outline'
 import { renderMarkdownWithLineData } from '@/shared/utils/markdown-renderer'
+import { shouldSuppressNoteRefPreview } from '@/shared/utils/note-ref-interaction'
 
 const props = defineProps<{
   filePath: string
@@ -38,6 +39,7 @@ const contentCache = new Map<string, string | null>()
 let showTimer: number | null = null
 let hideTimer: number | null = null
 let fetchGeneration = 0
+let suppressedAnchor: HTMLAnchorElement | null = null
 
 const getWorkspaceAbsPath = (relativePath: string) => {
   const ws = workspaceStore.activeWorkspace
@@ -181,6 +183,7 @@ const onMouseOver = (event: MouseEvent) => {
   const target = event.target as HTMLElement | null
   const anchorEl = target?.closest?.('a[href]') as HTMLAnchorElement | null
   if (!anchorEl) return
+  if (anchorEl === suppressedAnchor) return
   // 浮窗自身渲染出的链接不触发嵌套预览
   if (anchorEl.closest('.looma-note-preview')) return
   const ref = parseNoteLinkHref(anchorEl.getAttribute('href') || '', props.relativeFilePath)
@@ -201,6 +204,7 @@ const onMouseOut = (event: MouseEvent) => {
   const target = event.target as HTMLElement | null
   const anchorEl = target?.closest?.('a[href]') as HTMLAnchorElement | null
   if (!anchorEl) return
+  if (anchorEl === suppressedAnchor) suppressedAnchor = null
   const ref = parseNoteLinkHref(anchorEl.getAttribute('href') || '', props.relativeFilePath)
   if (!ref) return
   if (showTimer) window.clearTimeout(showTimer)
@@ -225,6 +229,16 @@ const onContextMenu = (event: MouseEvent) => {
   const anchorEl = target?.closest?.('a[href]') as HTMLAnchorElement | null
   if (!anchorEl || anchorEl.closest('.looma-note-preview')) return
   if (!parseNoteLinkHref(anchorEl.getAttribute('href') || '', props.relativeFilePath)) return
+  closePreview()
+}
+
+const onPointerDown = (event: PointerEvent) => {
+  if (!shouldSuppressNoteRefPreview(event)) return
+  const target = event.target as HTMLElement | null
+  const anchorEl = target?.closest?.('a[href]') as HTMLAnchorElement | null
+  if (!anchorEl || anchorEl.closest('.looma-note-preview')) return
+  if (!parseNoteLinkHref(anchorEl.getAttribute('href') || '', props.relativeFilePath)) return
+  suppressedAnchor = anchorEl
   closePreview()
 }
 
@@ -276,6 +290,7 @@ onMounted(() => {
   document.addEventListener('mouseover', onMouseOver)
   document.addEventListener('mouseout', onMouseOut)
   document.addEventListener('contextmenu', onContextMenu)
+  document.addEventListener('pointerdown', onPointerDown, true)
   window.addEventListener(OPEN_NOTE_REF_EVENT, handleOpenNoteRefEvent)
 })
 
@@ -290,6 +305,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseover', onMouseOver)
   document.removeEventListener('mouseout', onMouseOut)
   document.removeEventListener('contextmenu', onContextMenu)
+  document.removeEventListener('pointerdown', onPointerDown, true)
   window.removeEventListener(OPEN_NOTE_REF_EVENT, handleOpenNoteRefEvent)
 })
 </script>
@@ -426,6 +442,25 @@ onBeforeUnmount(() => {
 }
 
 .looma-preview-body.markdown-body a {
+  color: var(--accent);
+}
+
+.looma-preview-body .looma-note-ref,
+.looma-preview-body .looma-external-link {
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+
+.looma-preview-body .looma-note-ref {
+  border-bottom-style: dotted;
+}
+
+.looma-preview-body .looma-link-icon {
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.2em;
+  vertical-align: -0.13em;
   color: var(--accent);
 }
 

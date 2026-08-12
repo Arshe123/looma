@@ -137,7 +137,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <div class="border-t border-border-soft px-3 py-1.5 text-[11px] text-text-muted">
-          输入 <b>[[</b> 或从菜单插入笔记引用 · ↑↓ 选择 · Enter 确认 · Esc 关闭
+          ↑↓ 选择 · Enter 确认 · 选择后输入引用名，再按 Enter 编辑路径锚点
         </div>
       </div>
     </div>

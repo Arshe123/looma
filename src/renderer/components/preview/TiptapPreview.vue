@@ -26,6 +26,7 @@ import CodeBlockView from './CodeBlockView.vue'
 import LocalImageView from './LocalImageView.vue'
 import ImageInsertDialog from './ImageInsertDialog.vue'
 import NoteRefPicker from './NoteRefPicker.vue'
+import NoteRefSourceEditor from './NoteRefSourceEditor.vue'
 import EditorDropAlert from '@/renderer/components/editor/EditorDropAlert.vue'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import { replaceExternalMarkdownContent } from '@/shared/utils/tiptap-content-sync'
@@ -49,6 +50,10 @@ import {
   insertImportedImagesAt,
   renderCurrentMarkdownImage,
 } from '@/shared/utils/tiptap-image-insertion'
+import {
+  handleMarkdownNoteRefEnter,
+  insertMarkdownNoteRefTemplate,
+} from '@/shared/utils/tiptap-note-ref-insertion'
 import { getDroppedFilePaths } from '@/shared/utils/external-file-drop'
 import {
   getTiptapSelectionDocument,
@@ -64,6 +69,8 @@ import {
   parseNoteLinkHref,
 } from '@/shared/utils/note-link-ref'
 import { LineNumbers } from '@/shared/utils/tiptap-line-numbers'
+import { LinkIcons } from '@/shared/utils/tiptap-link-icons'
+import { getNoteRefClickIntent } from '@/shared/utils/note-ref-interaction'
 
 const props = defineProps<{
   content: string
@@ -86,14 +93,20 @@ let pendingCodeHighlightTimer: number | null = null
 let pendingHeadingTarget: MarkdownOutlineItem | null = null
 let pendingHeadingClearTimer: number | null = null
 let scrollSyncFrame: number | null = null
+let noteRefValidationTimer: number | null = null
 const markdownSerializationGate = createMarkdownSerializationGate()
 
 const editor = shallowRef<Editor | null>(null)
+const noteRefSourceEditorRef = shallowRef<{
+  dismissForNavigation: () => void
+  openForCurrentSelection: () => void
+} | null>(null)
 const imageInsertDialogOpen = shallowRef(false)
 const noteRefPickerState = shallowRef<{ open: boolean; selectedText: string }>({ open: false, selectedText: '' })
 const previewContainerRef = shallowRef<HTMLElement | null>(null)
 const dropErrorMessage = shallowRef('')
 const dropTechnicalDetail = shallowRef('')
+const noteRefValidationMessage = shallowRef('')
 const lowlight = createLowlight(common)
 const PREVIEW_IMAGE_SETTLED_EVENT = 'looma:preview-image-settled'
 const HEADING_REANCHOR_WINDOW_MS = 1000
@@ -653,6 +666,16 @@ const handleNoteRefClick = (event: MouseEvent) => {
   if (ref) {
     event.preventDefault()
     event.stopPropagation()
+    if (getNoteRefClickIntent(event) === 'edit-source') {
+      const currentEditor = editor.value
+      if (currentEditor && !currentEditor.isDestroyed) {
+        const position = currentEditor.view.posAtDOM(anchor, 0)
+        currentEditor.commands.setTextSelection(position)
+        noteRefSourceEditorRef.value?.openForCurrentSelection()
+      }
+      return
+    }
+    noteRefSourceEditorRef.value?.dismissForNavigation()
     dispatchOpenNoteRef(ref)
     return
   }
@@ -663,6 +686,16 @@ const handleNoteRefClick = (event: MouseEvent) => {
     event.stopPropagation()
     void window.electronAPI.app.openExternal(href)
   }
+}
+
+const handleNoteRefPointerDown = (event: PointerEvent) => {
+  if (event.altKey) return
+  const target = event.target as HTMLElement | null
+  const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null
+  if (!anchor) return
+  const href = anchor.getAttribute('href') || ''
+  if (!parseNoteLinkHref(href, props.relativeFilePath)) return
+  noteRefSourceEditorRef.value?.dismissForNavigation()
 }
 
 /** 检测输入 [[ 并打开笔记引用选择器（光标前两个字符为 [[，且不在代码块内）。 */
@@ -681,16 +714,21 @@ const maybeOpenNoteRefPicker = (currentEditor: any) => {
   noteRefPickerState.value = { open: true, selectedText }
 }
 
-/** 从选择器选中笔记后插入链接（带 link mark 的文本节点，序列化时输出 [label](href)）。 */
+/** 从选择器选中笔记后插入可编辑 Markdown 模板，先编辑引用名，再编辑路径锚点。 */
 const insertNoteRefLink = (payload: { relativePath: string; href: string; label: string }) => {
   noteRefPickerState.value = { open: false, selectedText: '' }
   const currentEditor = editor.value
   if (!currentEditor || currentEditor.isDestroyed) return
-  currentEditor.chain().focus().insertContent({
-    type: 'text',
-    text: payload.label,
-    marks: [{ type: 'link', attrs: { href: payload.href } }],
-  }).run()
+  insertMarkdownNoteRefTemplate(currentEditor, payload.href)
+}
+
+const showNoteRefLabelRequired = () => {
+  noteRefValidationMessage.value = '引用文字不能为空'
+  if (noteRefValidationTimer !== null) window.clearTimeout(noteRefValidationTimer)
+  noteRefValidationTimer = window.setTimeout(() => {
+    noteRefValidationMessage.value = ''
+    noteRefValidationTimer = null
+  }, 1800)
 }
 
 const scrollToTextOffset = (textOffset: number) => {
@@ -839,6 +877,7 @@ onMounted(() => {
         markedOptions: { gfm: true },
       }),
       LineNumbers,
+      LinkIcons,
     ],
     content: prepareMarkdownForRichText(props.content),
     contentType: 'markdown',
@@ -857,7 +896,9 @@ onMounted(() => {
           return true
         }
         if (event.key !== 'Enter' || !editor.value) return false
-        return renderCurrentMarkdownImage(editor.value)
+        return handleMarkdownNoteRefEnter(editor.value, {
+          onEmptyLabel: showNoteRefLabelRequired,
+        }) || renderCurrentMarkdownImage(editor.value)
       },
       handleDOMEvents: {
         copy: (_view, event) => handleClipboardCopy(event as ClipboardEvent),
@@ -885,6 +926,7 @@ onMounted(() => {
 
   previewContainerRef.value?.addEventListener(PREVIEW_IMAGE_SETTLED_EVENT, reanchorPendingHeading)
   previewContainerRef.value?.addEventListener('click', handleNoteRefClick, true)
+  previewContainerRef.value?.addEventListener('pointerdown', handleNoteRefPointerDown, true)
   previewContainerRef.value?.addEventListener('scroll', handlePreviewScroll, { passive: true })
 })
 
@@ -893,8 +935,10 @@ onBeforeUnmount(() => {
   isUnmounting = true
   previewContainerRef.value?.removeEventListener(PREVIEW_IMAGE_SETTLED_EVENT, reanchorPendingHeading)
   previewContainerRef.value?.removeEventListener('click', handleNoteRefClick, true)
+  previewContainerRef.value?.removeEventListener('pointerdown', handleNoteRefPointerDown, true)
   previewContainerRef.value?.removeEventListener('scroll', handlePreviewScroll)
   if (scrollSyncFrame !== null) cancelAnimationFrame(scrollSyncFrame)
+  if (noteRefValidationTimer !== null) window.clearTimeout(noteRefValidationTimer)
   clearPendingMarkdownEmit()
   clearPendingCodeHighlight()
   clearPendingHeadingTarget()
@@ -980,6 +1024,14 @@ defineExpose({
       @paste="pasteRichTextClipboard().catch(console.error)"
     />
     <TableToolbar v-if="editor" :editor="editor" />
+    <NoteRefSourceEditor v-if="editor" ref="noteRefSourceEditorRef" :editor="editor" />
+    <div
+      v-if="noteRefValidationMessage"
+      class="pointer-events-none fixed left-1/2 top-16 z-[9999] -translate-x-1/2 rounded-lg border border-warning/40 bg-panel px-3 py-2 text-xs font-medium text-text-main shadow-lg"
+      role="alert"
+    >
+      {{ noteRefValidationMessage }}
+    </div>
     <NoteRefPicker
       v-if="noteRefPickerState.open"
       :from-relative-path="props.relativeFilePath"
@@ -1006,6 +1058,57 @@ defineExpose({
 <style>
 .tiptap-preview-container {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+.looma-link-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  vertical-align: -0.13em;
+  color: var(--accent);
+  pointer-events: none;
+}
+
+.looma-link-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.tiptap .looma-note-ref,
+.tiptap .looma-external-link {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+  cursor: pointer;
+}
+
+.tiptap .looma-note-ref {
+  border-bottom-style: dotted;
+}
+
+.tiptap .looma-note-ref::before,
+.tiptap .looma-external-link::before {
+  content: "";
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.2em;
+  vertical-align: -0.12em;
+  background-color: currentColor;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+}
+
+.tiptap .looma-note-ref::before {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m10 18 3-3-3-3M14 2v4a2 2 0 0 0 2 2h4M4 11V4a2 2 0 0 1 2-2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h7' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.tiptap .looma-external-link::before {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 /* ---- Tiptap 行号 ---- */

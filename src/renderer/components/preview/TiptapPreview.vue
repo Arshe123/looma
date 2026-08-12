@@ -45,12 +45,18 @@ import {
   prepareMarkdownForRichText,
   serializeMarkdownAst,
 } from '@/shared/utils/markdown-rich-text'
-import { renderCurrentMarkdownImage } from '@/shared/utils/tiptap-image-insertion'
+import {
+  insertImportedImagesAt,
+  renderCurrentMarkdownImage,
+} from '@/shared/utils/tiptap-image-insertion'
 import { getDroppedFilePaths } from '@/shared/utils/external-file-drop'
 import {
   getTiptapSelectionDocument,
   getTiptapClipboardCopyText,
+  captureTiptapFileTransfer,
   partitionClipboardImagePaths,
+  shouldReadClipboardImage,
+  transferContainsClipboardImage,
 } from '@/shared/utils/tiptap-clipboard'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import {
@@ -279,11 +285,7 @@ const importImagePaths = async (sourcePaths: string[], insertAt: number) => {
       else failures.push(result.error || sourcePath)
     }
     if (imported.length > 0 && !currentEditor.isDestroyed) {
-      const content = imported.flatMap(image => [
-        { type: 'image', attrs: { src: image.relativePath, alt: image.fileName } },
-        { type: 'paragraph' },
-      ])
-      if (!currentEditor.chain().focus().insertContentAt(insertAt, content).run()) {
+      if (!insertImportedImagesAt(currentEditor, imported, insertAt)) {
         failures.push(`图片已复制到 assets，但编辑器拒绝在位置 ${insertAt} 插入。`)
       }
     }
@@ -316,14 +318,35 @@ const importDroppedImages = async (event: DragEvent) => {
   await importImagePaths(sourcePaths, insertAt)
 }
 
-const pasteClipboardFilesAt = async (insertAt: number) => {
-  const result = await window.electronAPI.fs.clipboardReadFiles()
-  if (!result.success || !result.data?.length) {
-    dropErrorMessage.value = '无法读取剪贴板中的文件。'
-    dropTechnicalDetail.value = result.error || 'Clipboard file list is empty.'
-    return
+const importClipboardImageAt = async (insertAt: number) => {
+  dropErrorMessage.value = ''
+  dropTechnicalDetail.value = ''
+  const currentEditor = editor.value
+  const workspaceId = workspaceStore.activeWorkspaceId
+  if (!currentEditor || currentEditor.isDestroyed || !workspaceId) return false
+
+  workspaceStore.setBusy(true, '正在导入图片...')
+  try {
+    const result = await window.electronAPI.fs.importClipboardImage(workspaceId, props.relativeFilePath)
+    if (!result.success || !result.data) {
+      if (result.error?.includes('剪贴板中没有图片')) return false
+      dropErrorMessage.value = '剪贴板图片导入失败，请重新截图后粘贴。'
+      dropTechnicalDetail.value = result.error || 'Clipboard image import returned no data.'
+      return true
+    }
+    if (currentEditor.isDestroyed) return true
+    if (!insertImportedImagesAt(currentEditor, [result.data], insertAt)) {
+      dropErrorMessage.value = '图片已保存到 assets，但编辑器未能插入图片。'
+      dropTechnicalDetail.value = `Editor rejected clipboard image insertion at position ${insertAt}.`
+    }
+    return true
+  } catch (error) {
+    dropErrorMessage.value = '剪贴板图片导入失败，请重新截图后粘贴。'
+    dropTechnicalDetail.value = error instanceof Error ? error.message : String(error)
+    return true
+  } finally {
+    workspaceStore.setBusy(false)
   }
-  await importImagePaths(result.data, insertAt)
 }
 
 const copyRichTextSelection = async (overrideText?: string) => {
@@ -360,6 +383,8 @@ const pasteRichTextClipboard = async () => {
     return
   }
 
+  if (await importClipboardImageAt(insertAt)) return
+
   const text = await navigator.clipboard.readText()
   if (!text || currentEditor.isDestroyed) return
   currentEditor.view.focus()
@@ -377,12 +402,26 @@ const handleClipboardCopy = (event: ClipboardEvent) => {
 }
 
 const handleClipboardPaste = (event: ClipboardEvent) => {
-  const types = event.clipboardData ? Array.from(event.clipboardData.types) : []
-  if (!types.includes('Files') && !event.clipboardData?.files.length) return false
+  const sourcePaths = captureTiptapFileTransfer(event.clipboardData)
   const currentEditor = editor.value
   if (!currentEditor || currentEditor.isDestroyed) return false
+  if (sourcePaths === null) {
+    if (!transferContainsClipboardImage(event.clipboardData)) return false
+    event.preventDefault()
+    void importClipboardImageAt(currentEditor.state.selection.from)
+    return true
+  }
   event.preventDefault()
-  void pasteClipboardFilesAt(currentEditor.state.selection.from)
+  if (sourcePaths.length === 0) {
+    if (shouldReadClipboardImage(event.clipboardData)) {
+      void importClipboardImageAt(currentEditor.state.selection.from)
+      return true
+    }
+    dropErrorMessage.value = '无法读取粘贴图片，请从系统文件资源管理器重新复制。'
+    dropTechnicalDetail.value = 'Electron did not expose native paths for the pasted File objects.'
+    return true
+  }
+  void importImagePaths(sourcePaths, currentEditor.state.selection.from)
   return true
 }
 
@@ -815,11 +854,6 @@ onMounted(() => {
         if (isClipboardShortcut && event.key.toLowerCase() === 'c') {
           event.preventDefault()
           void copyRichTextSelection().catch(console.error)
-          return true
-        }
-        if (isClipboardShortcut && event.key.toLowerCase() === 'v') {
-          event.preventDefault()
-          void pasteRichTextClipboard().catch(console.error)
           return true
         }
         if (event.key !== 'Enter' || !editor.value) return false

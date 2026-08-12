@@ -1,8 +1,34 @@
 import type { JSONContent } from '@tiptap/core'
 import type { EditorState } from '@tiptap/pm/state'
 import { NodeSelection } from '@tiptap/pm/state'
-import { isSupportedDroppedImagePath } from './external-file-drop'
+import {
+  getDroppedFilePaths,
+  isSupportedDroppedImagePath,
+  type DroppedFileLike,
+} from './external-file-drop'
 import { formatMarkdownImage } from './tiptap-image-insertion'
+
+type FileTransferLike = {
+  types: ArrayLike<string>
+  files: ArrayLike<DroppedFileLike>
+}
+
+export const captureTiptapFileTransfer = (transfer: FileTransferLike | null | undefined) => {
+  if (!transfer || !Array.from(transfer.types).includes('Files')) return null
+  return getDroppedFilePaths(transfer.files)
+}
+
+export const transferContainsClipboardImage = (
+  transfer: Pick<FileTransferLike, 'types'> | null | undefined,
+) => Boolean(transfer && Array.from(transfer.types).some(type =>
+  /^image\//i.test(type) || /^(?:public\.)?(?:png|tiff?|jpe?g)$/i.test(type),
+))
+
+export const shouldReadClipboardImage = (transfer: FileTransferLike | null | undefined) => {
+  if (!transfer) return false
+  if (transferContainsClipboardImage(transfer)) return true
+  return Array.from(transfer.types).includes('Files') && getDroppedFilePaths(transfer.files).length === 0
+}
 
 export const formatMarkdownLink = (label: string, href: string) => {
   const escapedLabel = label.replace(/([\\[\]])/g, '\\$1')

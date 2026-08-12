@@ -6,11 +6,31 @@ import {
   MARKDOWN_IMAGE_CURSOR_OFFSET,
   MARKDOWN_IMAGE_TEMPLATE,
   formatMarkdownImage,
+  insertImportedImagesAt,
   parseMarkdownImageBlock,
   renderCurrentMarkdownImage,
 } from '../tiptap-image-insertion'
 
 describe('tiptap image insertion helpers', () => {
+  it('does not treat a failed focus command as a failed imported-image insertion', () => {
+    const insertContentAt = vi.fn(() => true)
+    const focus = vi.fn(() => false)
+    const editor = {
+      isDestroyed: false,
+      state: { doc: { content: { size: 12 } } },
+      commands: { insertContentAt, focus },
+    } as unknown as Editor
+
+    expect(insertImportedImagesAt(editor, [
+      { relativePath: 'assets/screenshot.png', fileName: 'screenshot.png' },
+    ], 6)).toBe(true)
+    expect(insertContentAt).toHaveBeenCalledWith(6, [
+      { type: 'image', attrs: { src: 'assets/screenshot.png', alt: 'screenshot.png' } },
+      { type: 'paragraph' },
+    ])
+    expect(focus).toHaveBeenCalledOnce()
+  })
+
   it('places the cursor inside the Markdown image path placeholder', () => {
     expect(MARKDOWN_IMAGE_TEMPLATE).toBe('![]()')
     expect(MARKDOWN_IMAGE_TEMPLATE.slice(0, MARKDOWN_IMAGE_CURSOR_OFFSET)).toBe('![](')

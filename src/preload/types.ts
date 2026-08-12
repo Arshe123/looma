@@ -373,6 +373,10 @@ interface ElectronAPI {
       relativePath: string;
       fileName: string;
     }>>;
+    importClipboardImage: (workspaceId: string, noteRelativePath: string) => Promise<Result<{
+      relativePath: string;
+      fileName: string;
+    }>>;
     delete: (workspaceId: string, targetRelativePath: string) => Promise<Result<{ trashRelativePath: string }>>;
     restore: (workspaceId: string, trashRelativePath: string, restoreToRelativePath: string) => Promise<Result<void>>;
     emptyTrash: (workspaceId: string) => Promise<Result<void>>;

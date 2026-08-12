@@ -703,6 +703,49 @@ export const fileSystemService = {
     }
   },
 
+  async importClipboardImageToNoteAssets(
+    workspacePath: string,
+    noteRelativePath: string,
+  ): Promise<Result<{ relativePath: string; fileName: string }>> {
+    try {
+      const noteResolved = resolveInWorkspace(workspacePath, noteRelativePath)
+      if (!noteResolved.ok) return { success: false, error: noteResolved.error }
+      const noteStats = await fs.lstat(noteResolved.target)
+      if (!noteStats.isFile() || noteStats.isSymbolicLink()) {
+        return { success: false, error: '当前笔记不是可写入的普通文件' }
+      }
+
+      const image = clipboard.readImage()
+      if (image.isEmpty()) return { success: false, error: '剪贴板中没有图片' }
+
+      const isJpeg = clipboard.availableFormats().some(format => /jpe?g/i.test(format))
+      const extension = isJpeg ? '.jpg' : '.png'
+      const content = isJpeg ? image.toJPEG(95) : image.toPNG()
+      const assetsDirectory = path.join(path.dirname(noteResolved.target), 'assets')
+      await fs.mkdir(assetsDirectory, { recursive: true })
+
+      const stamp = new Date()
+      const pad = (value: number) => String(value).padStart(2, '0')
+      const baseName =
+        `截图-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}` +
+        `-${pad(stamp.getHours())}${pad(stamp.getMinutes())}${pad(stamp.getSeconds())}`
+      let fileName = `${baseName}${extension}`
+      let index = 2
+      while (await pathExists(path.join(assetsDirectory, fileName))) {
+        fileName = `${baseName} (${index})${extension}`
+        index += 1
+      }
+
+      await fs.writeFile(path.join(assetsDirectory, fileName), content)
+      return {
+        success: true,
+        data: { relativePath: `assets/${fileName}`, fileName },
+      }
+    } catch (error: any) {
+      return { success: false, error: `导入剪贴板图片失败: ${error?.message ?? String(error)}` }
+    }
+  },
+
   async restoreFromTrash(
     workspaceId: string,
     workspacePath: string,

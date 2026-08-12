@@ -67,6 +67,12 @@ ipcMain.handle('fs:importImage', async (_, workspaceId: string, noteRelativePath
   return await fileSystemService.importImageToNoteAssets(workspacePath, noteRelativePath, sourceFilePath);
 });
 
+ipcMain.handle('fs:importClipboardImage', async (_, workspaceId: string, noteRelativePath: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: 'Workspace not found' };
+  return await fileSystemService.importClipboardImageToNoteAssets(workspacePath, noteRelativePath);
+});
+
 ipcMain.handle('fs:delete', async (_, workspaceId: string, targetRelativePath: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };

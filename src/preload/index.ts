@@ -162,6 +162,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('fs:clipboardPasteImage', workspaceId, targetDirRelativePath),
     importImage: (workspaceId: string, noteRelativePath: string, sourceFilePath: string) =>
       ipcRenderer.invoke('fs:importImage', workspaceId, noteRelativePath, sourceFilePath),
+    importClipboardImage: (workspaceId: string, noteRelativePath: string) =>
+      ipcRenderer.invoke('fs:importClipboardImage', workspaceId, noteRelativePath),
     delete: (workspaceId: string, targetRelativePath: string) =>
       ipcRenderer.invoke('fs:delete', workspaceId, targetRelativePath),
     restore: (workspaceId: string, trashRelativePath: string, restoreToRelativePath: string) =>

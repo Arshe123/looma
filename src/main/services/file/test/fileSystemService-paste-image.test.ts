@@ -53,6 +53,21 @@ describe('fileSystemService.pasteClipboardImage', () => {
     expect(saved.toString()).toBe('fake-png')
   })
 
+  it('imports a clipboard screenshot into the current note assets directory', async () => {
+    readImageMock.mockReturnValue(createImage(false))
+    availableFormatsMock.mockReturnValue(['public.png', 'public.tiff'])
+    await fs.mkdir(path.join(workspace, 'notes'), { recursive: true })
+    await fs.writeFile(path.join(workspace, 'notes', 'note.md'), '# note', 'utf8')
+
+    const result = await fileSystemService.importClipboardImageToNoteAssets(workspace, 'notes/note.md')
+
+    expect(result.success).toBe(true)
+    expect(result.data?.relativePath).toMatch(/^assets\/截图-\d{8}-\d{6}\.png$/)
+    expect(result.data?.fileName).toMatch(/^截图-\d{8}-\d{6}\.png$/)
+    const saved = await fs.readFile(path.join(workspace, 'notes', result.data!.relativePath))
+    expect(saved.toString()).toBe('fake-png')
+  })
+
   it('writes JPEG when the clipboard carried a JPEG format', async () => {
     readImageMock.mockReturnValue(createImage(false))
     availableFormatsMock.mockReturnValue(['public.jpeg'])

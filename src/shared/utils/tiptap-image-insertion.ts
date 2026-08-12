@@ -13,6 +13,27 @@ export const MARKDOWN_IMAGE_CURSOR_OFFSET = 4
 export const formatMarkdownImage = ({ alt, src }: MarkdownImageTarget) =>
   `![${alt}](${src})`
 
+export type ImportedImage = {
+  relativePath: string
+  fileName: string
+}
+
+export const insertImportedImagesAt = (
+  editor: Editor,
+  images: readonly ImportedImage[],
+  insertAt: number,
+) => {
+  if (editor.isDestroyed || images.length === 0) return false
+  const safePosition = Math.min(Math.max(insertAt, 0), editor.state.doc.content.size)
+  const content = images.flatMap(image => [
+    { type: 'image', attrs: { src: image.relativePath, alt: image.fileName } },
+    { type: 'paragraph' },
+  ])
+  const inserted = editor.commands.insertContentAt(safePosition, content)
+  if (inserted) editor.commands.focus()
+  return inserted
+}
+
 export const parseMarkdownImageBlock = (text: string): MarkdownImageTarget | null => {
   const match = text.match(/^!\[([^\]]*)\]\((.+)\)$/)
   if (!match) return null

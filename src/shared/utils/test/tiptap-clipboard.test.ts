@@ -2,11 +2,14 @@ import { Schema } from '@tiptap/pm/model'
 import { EditorState, NodeSelection, TextSelection } from '@tiptap/pm/state'
 import { describe, expect, it } from 'vitest'
 import {
+  captureTiptapFileTransfer,
   formatMarkdownLink,
   getTiptapSelectionDocument,
   getTiptapClipboardCopyText,
   partitionClipboardImagePaths,
   selectionHasMarkdownSource,
+  shouldReadClipboardImage,
+  transferContainsClipboardImage,
 } from '../tiptap-clipboard'
 
 const schema = new Schema({
@@ -27,6 +30,33 @@ const schema = new Schema({
 })
 
 describe('tiptap clipboard helpers', () => {
+  it('captures pasted files through the same transfer shape as dropped files', () => {
+    const files = [
+      { name: 'cover.png', path: '/tmp/cover.png' },
+      { name: 'cover.png', path: '/tmp/cover.png' },
+      { name: 'browser-only.png' },
+    ]
+
+    expect(captureTiptapFileTransfer({ types: ['Files'], files })).toEqual(['/tmp/cover.png'])
+    expect(captureTiptapFileTransfer({ types: ['text/plain'], files: [] })).toBeNull()
+  })
+
+  it('recognizes image data copied by screenshot tools without a local file path', () => {
+    expect(transferContainsClipboardImage({ types: ['image/png', 'text/html'] })).toBe(true)
+    expect(transferContainsClipboardImage({ types: ['public.tiff'] })).toBe(true)
+    expect(transferContainsClipboardImage({ types: ['text/plain'] })).toBe(false)
+  })
+
+  it('falls back to the system clipboard when Chromium exposes unreadable Files', () => {
+    expect(shouldReadClipboardImage({ types: ['Files'], files: [{ name: '截图.png' }] })).toBe(true)
+    expect(shouldReadClipboardImage({
+      types: ['Files'],
+      files: [{ name: 'cover.png', path: '/tmp/cover.png' }],
+    })).toBe(false)
+    expect(shouldReadClipboardImage({ types: ['image/png'], files: [] })).toBe(true)
+    expect(shouldReadClipboardImage({ types: ['text/plain'], files: [] })).toBe(false)
+  })
+
   it('copies selected rich-text content as plain text', () => {
     const paragraph = schema.nodes.paragraph.create(null, schema.text('复制这段文字'))
     let state = EditorState.create({ schema, doc: schema.nodes.doc.create(null, [paragraph]) })

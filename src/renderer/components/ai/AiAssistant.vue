@@ -9,7 +9,6 @@ import type { AiAssistantMessage, AiAssistantMessageAction } from '@/renderer/st
 import AiMarkdown from './AiMarkdown.vue'
 import AgentConversationFlow from './AgentConversationFlow.vue'
 import AgentFileReviewFloat from './AgentFileReviewFloat.vue'
-import AgentRecoveryCard from './AgentRecoveryCard.vue'
 import AgentRagSources from './AgentRagSources.vue'
 import type { AgentFileReviewDisplayData } from './agentConversationDisplay'
 import type { AgentRagSourceDisplayItem } from './agentRagSources'
@@ -37,10 +36,6 @@ const activeConversation = computed(() => workspaceStore.activeAiAssistantConver
 const activeConversationId = computed(() => workspaceStore.aiAssistant.activeConversationId)
 const messages = computed(() => activeConversation.value.messages)
 const isAgentRunning = computed(() => aiAssistStore.isConversationRunningAgent(activeConversationId.value))
-const isAnyConversationRunning = computed(() => (
-  Object.keys(aiAssistStore.agentRunsByConversationId).length > 0
-  || Object.keys(aiAssistStore.agentStartingConversationIds).length > 0
-))
 const isGenerating = computed(() => isAgentRunning.value)
 const isIndexing = computed(() => aiAssistStore.isWorkspaceIndexing(workspaceStore.activeWorkspaceId))
 const hasIndex = computed(() => aiAssistStore.getWorkspaceIndexResult(workspaceStore.activeWorkspaceId)?.exists ?? checkedHasIndex.value)
@@ -93,15 +88,6 @@ const getMessageAiName = (message: AiAssistantMessage) => message.modelIdentity?
 const getMessageDisplayEvents = (message: AiAssistantMessage) => (
   aiAssistStore.getMessageAgentDisplayEvents(activeConversationId.value, message.id)
 )
-const getMessageRecovery = (message: AiAssistantMessage) => (
-  aiAssistStore.getMessageAgentRecovery(activeConversationId.value, message.id, message.runId)
-)
-const continueAgentRun = async (message: AiAssistantMessage) => {
-  const conversationId = activeConversationId.value
-  if (!conversationId) return
-  await aiAssistStore.resumeAgentRun(conversationId, message)
-  scrollToBottom()
-}
 const getMessageApprovals = (message: AiAssistantMessage) => {
   const run = aiAssistStore.getConversationAgentRun(activeConversationId.value)
   if (!run || run.assistantMessageId !== message.id) return []
@@ -560,12 +546,6 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
                 :completed="!isMessageStreaming(message)"
                 @open-diff="openAgentDiff"
                 @open-source="openAgentRagSource"
-              />
-              <AgentRecoveryCard
-                v-if="message.role === 'assistant' && getMessageRecovery(message)"
-                :recovery="getMessageRecovery(message)!"
-                :disabled="isAnyConversationRunning"
-                @continue="continueAgentRun(message)"
               />
               <AiMarkdown
                 v-if="message.role === 'assistant'"

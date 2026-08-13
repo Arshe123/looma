@@ -58,8 +58,8 @@ const shortcutRows = computed<ShortcutRow[]>(() => {
     {
       target: 'headingLevelUp',
       command: '提升标题级别',
-      description: 'H3 → H2 → H1，H1 保持不变',
-      scope: '标题段落',
+      description: '正文 → H6 → … → H1，H1 保持不变',
+      scope: '正文与标题段落',
       category: 'heading',
       binding: shortcuts.headingLevelUp,
       configured: true,

@@ -141,9 +141,10 @@ export const editorShortcutSignature = (shortcut: EditorShortcutBinding) =>
   `${shortcut.ctrl ? 1 : 0}:${shortcut.alt ? 1 : 0}:${shortcut.shift ? 1 : 0}:${shortcut.meta ? 1 : 0}:${shortcut.key}`
 
 export const getAdjustedHeadingLevel = (
-  level: HeadingLevel,
+  level: HeadingLevel | null,
   direction: HeadingDirection,
 ): HeadingLevel | 'paragraph' => {
+  if (level === null) return direction === 'up' ? 6 : 'paragraph'
   if (direction === 'up') return Math.max(1, level - 1) as HeadingLevel
   if (level === 6) return 'paragraph'
   return (level + 1) as HeadingLevel

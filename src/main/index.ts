@@ -8,6 +8,7 @@ import { setWindowTitleForWorkspace } from './ipc/workspaceIpc';
 import { startBundledRagService, stopBundledRagService } from './services/rag/ragServiceProcess';
 import { prepareWindowsForQuit } from './services/app/quitCoordinator';
 import { getWindowChromeOptions } from '../shared/utils/window-chrome';
+import { createViewMenuTemplate } from '../shared/utils/app-menu';
 import './ipc/appSettingsIpc';
 import './ipc/ragIpc';
 import './ipc/appIpc';
@@ -58,16 +59,7 @@ const buildAppMenu = (win: BrowserWindow) => {
     },
     {
       label: '视图',
-      submenu: [
-        { role: 'reload', label: '重新加载' },
-        { role: 'toggleDevTools', label: '切换开发者工具' },
-        { type: 'separator' },
-        { role: 'resetZoom', label: '重置缩放' },
-        { role: 'zoomIn', label: '放大' },
-        { role: 'zoomOut', label: '缩小' },
-        { type: 'separator' },
-        { role: 'togglefullscreen', label: '切换全屏' },
-      ],
+      submenu: createViewMenuTemplate(),
     },
   ];
   if (process.platform === 'darwin') {

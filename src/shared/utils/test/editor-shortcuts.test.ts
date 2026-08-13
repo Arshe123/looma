@@ -111,6 +111,11 @@ describe('editor shortcut settings', () => {
 })
 
 describe('heading level adjustment', () => {
+  it('raises a paragraph through H6 toward H1', () => {
+    expect(getAdjustedHeadingLevel(null, 'up')).toBe(6)
+    expect(getAdjustedHeadingLevel(6, 'up')).toBe(5)
+  })
+
   it('raises headings toward H1 and holds the H1 boundary', () => {
     expect(getAdjustedHeadingLevel(3, 'up')).toBe(2)
     expect(getAdjustedHeadingLevel(1, 'up')).toBe(1)

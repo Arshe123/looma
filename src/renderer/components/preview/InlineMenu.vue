@@ -258,7 +258,7 @@ const getCurrentHeadingLevel = (editor: Editor): HeadingLevel | null => {
 
 const adjustCurrentHeading = (editor: Editor, direction: HeadingDirection) => {
   const currentLevel = getCurrentHeadingLevel(editor)
-  if (currentLevel === null) return false
+  if (currentLevel === null && direction === 'down') return false
   const nextLevel = getAdjustedHeadingLevel(currentLevel, direction)
   if (nextLevel === 'paragraph') return editor.chain().focus().setParagraph().run()
   return editor.chain().focus().setHeading({ level: nextLevel }).run()

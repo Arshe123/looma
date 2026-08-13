@@ -62,6 +62,19 @@ const inputPlaceholder = computed(() => {
   if (isGenerating.value) return 'Agent 正在执行...'
   return '让 Agent 读取、检索并处理当前工作空间'
 })
+const COMPOSER_MIN_HEIGHT = 58
+const COMPOSER_MAX_HEIGHT = 168
+const resizeComposer = () => {
+  nextTick(() => {
+    const textarea = composerRef.value
+    if (!textarea) return
+
+    textarea.style.height = 'auto'
+    const height = Math.min(Math.max(textarea.scrollHeight, COMPOSER_MIN_HEIGHT), COMPOSER_MAX_HEIGHT)
+    textarea.style.height = `${height}px`
+    textarea.style.overflowY = textarea.scrollHeight > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden'
+  })
+}
 const providerLabels: Record<string, string> = {
   ollama: 'Ollama',
   openai: 'OpenAI',
@@ -387,6 +400,7 @@ onMounted(() => {
   workspaceStore.removeAiAssistantMessagesByText(['Not Found'])
   backfillLegacyAiNames()
   scrollToBottom()
+  resizeComposer()
   checkIndexStatus().catch(console.error)
   aiAssistStore.refreshPendingFileReviews(workspaceStore.activeWorkspaceId).catch(console.error)
 })
@@ -396,6 +410,7 @@ onBeforeUnmount(() => {
 })
 
 watch(() => messages.value.length, scrollToBottom)
+watch(question, resizeComposer)
 watch(() => workspaceStore.activeWorkspaceId, (_nextWorkspaceId, oldWorkspaceId) => {
   aiAssistStore.cancelWorkspaceStreams(oldWorkspaceId).catch(console.error)
   aiAssistStore.cancelWorkspaceIndex(oldWorkspaceId).catch(console.error)
@@ -650,7 +665,7 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
         <textarea
           ref="composerRef"
           v-model="question"
-          class="h-[58px] w-full resize-none bg-transparent text-sm leading-6 text-text-main outline-none placeholder:text-text-subtle disabled:text-text-muted select-text"
+          class="min-h-[58px] max-h-[168px] w-full resize-none overflow-y-hidden bg-transparent text-sm leading-6 text-text-main outline-none placeholder:text-text-subtle disabled:text-text-muted select-text"
           :placeholder="inputPlaceholder"
           :disabled="!hasWorkspace || isGenerating"
           @keydown="handleComposerKeydown"

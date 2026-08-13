@@ -313,13 +313,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecord
     <div v-else class="flex min-h-0 flex-1 flex-col gap-4">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div class="text-sm font-medium text-text-main">快捷键中心</div>
           <p class="mt-1 text-xs leading-5 text-text-muted">
-            集中查看、启停和修改编辑器快捷键。点击组合键后直接按下新快捷键。
-          </p>
-          <p class="mt-1 text-xs leading-5 text-text-muted">
-            {{ platform === 'darwin' ? 'Command' : 'Ctrl' }} + 1～9 始终对应当前快速插入菜单的前 9 项；调整菜单顺序后，命令名称与实际操作会自动更新。
-            冲突组合键不会覆盖原配置，按 Esc 可取消录入。
+            集中查看、启停和修改编辑器快捷键。点击组合键后直接按下新快捷键。冲突组合键不会覆盖原配置，按 Esc 可取消录入。
           </p>
         </div>
         <button
@@ -340,7 +335,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecord
         {{ shortcutError }}
       </div>
 
-      <div class="grid min-h-[420px] overflow-hidden rounded-lg border border-border-soft lg:grid-cols-[190px_minmax(0,1fr)]">
+      <div class="grid min-h-[420px] overflow-hidden rounded-lg border border-border-soft lg:grid-cols-[150px_minmax(0,1fr)]">
         <nav class="flex gap-1 overflow-x-auto border-b border-border-soft bg-panel-soft p-2 lg:flex-col lg:border-b-0 lg:border-r">
           <button
             v-for="category in shortcutCategories"

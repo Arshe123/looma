@@ -330,7 +330,6 @@ onUnmounted(() => {
       <FileText :size="64" class="mb-6 opacity-20" />
       <h3 class="text-xl font-medium mb-2">欢迎来到您的笔记中</h3>
       <p class="max-w-xs text-sm opacity-60">从列表中选择一个笔记或创建一个新的笔记以开始。</p>
-      <div class="mt-6 text-sm text-text-muted">从侧边栏中选择一个文件。</div>
     </div>
   </div>
 </template>

@@ -53,11 +53,6 @@ watch(activeSection, (section) => {
 <template>
   <main class="flex-1 overflow-hidden bg-surface">
     <div class="mx-auto flex h-full w-full max-w-6xl flex-col px-5 py-6 md:px-8">
-      <div class="mb-6 shrink-0">
-        <h1 class="text-2xl font-semibold text-text-main">系统设置</h1>
-        <p class="mt-2 text-sm text-text-muted">管理应用级偏好，这些设置会持久化保留。</p>
-      </div>
-
       <div class="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
         <SettingsSectionNav
           v-model:active-section="activeSection"

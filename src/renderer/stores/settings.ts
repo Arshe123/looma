@@ -12,6 +12,10 @@ import {
   createDefaultEditorShortcutSettings,
   type EditorShortcutBinding,
 } from '@/shared/utils/editor-shortcuts'
+import {
+  createDefaultAppShortcutSettings,
+  type AppShortcutId,
+} from '@/shared/utils/app-shortcuts'
 
 type NamedEditorShortcut = 'headingLevelUp' | 'headingLevelDown'
 type EditorShortcutTarget = NamedEditorShortcut | number
@@ -26,6 +30,7 @@ export const useSettingsStore = defineStore('settings', {
   getters: {
     inlineMenuItems: (state) => state.settings.inlineMenu.items,
     editorShortcuts: (state) => state.settings.editor.shortcuts,
+    appShortcuts: (state) => state.settings.editor.appShortcuts,
     aiSettings: (state) => state.settings.ai,
   },
 
@@ -102,8 +107,14 @@ export const useSettingsStore = defineStore('settings', {
       await this.persist()
     },
 
+    async setAppShortcut(target: AppShortcutId, binding: EditorShortcutBinding) {
+      this.settings.editor.appShortcuts[target] = { ...binding, enabled: true }
+      await this.persist()
+    },
+
     async resetEditorShortcuts() {
       this.settings.editor.shortcuts = createDefaultEditorShortcutSettings()
+      this.settings.editor.appShortcuts = createDefaultAppShortcutSettings()
       await this.persist()
     },
 

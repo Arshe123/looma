@@ -33,12 +33,10 @@ const buildAppMenu = (win: BrowserWindow) => {
       submenu: [
         {
           label: '打开工作空间（新窗口）…',
-          accelerator: 'CommandOrControl+O',
           click: () => win.webContents.send('app:command', { id: 'workspace.switch' }),
         },
         {
           label: '新建工作空间（新窗口）…',
-          accelerator: 'CommandOrControl+Shift+N',
           click: () => win.webContents.send('app:command', { id: 'workspace.new' }),
         },
         { type: 'separator' },

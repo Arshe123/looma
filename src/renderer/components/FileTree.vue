@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
 import { ChevronRight, LoaderCircle, RefreshCw } from 'lucide-vue-next'
 import { useWorkspaceStore, type FsEntry } from '../stores/workspace'
+import { useSettingsStore } from '../stores/settings'
 import {
   FILE_TREE_CREATE_FILE_EVENT,
   FILE_TREE_REVEAL_ACTIVE_FILE_EVENT,
@@ -15,6 +16,7 @@ import {
   getRenameInputName,
 } from '@/shared/utils/file-tree-utils'
 import { handleFileTreeGlobalKeyDown } from '@/shared/utils/file-tree-shortcuts'
+import { formatAppShortcut } from '@/shared/utils/app-shortcuts'
 import { appendTreeGuides, type TreeGuidedRow } from '@/shared/utils/tree-row-guides'
 import { captureFileTreeDrop } from '@/shared/utils/external-file-drop'
 import { isMacPlatform } from '../../shared/utils/window-chrome'
@@ -23,6 +25,7 @@ const isMac = isMacPlatform((window as any).electronAPI?.platform ?? '')
 const platform = window.electronAPI.platform
 
 const workspaceStore = useWorkspaceStore()
+const settingsStore = useSettingsStore()
 const expanded = computed(() => workspaceStore.activeExpandedSet)
 const activeFileRel = computed(() => workspaceStore.activeFileRelativePath)
 const rootDirKey = computed(() => workspaceStore.keyOfDir(''))
@@ -537,6 +540,7 @@ const onGlobalKeyDown = (e: KeyboardEvent) => {
   handleFileTreeGlobalKeyDown({
     event: e,
     platform,
+    shortcuts: settingsStore.appShortcuts,
     selectedPaths: workspaceStore.selectedPaths,
     hasInlineEdit: Boolean(inlineEdit.value),
     activeElement: document.activeElement,
@@ -603,13 +607,13 @@ onUnmounted(() => {
           class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
           @click="workspaceStore.openWorkspaceInNewWindowFlow()"
         >
-          打开工作空间 ({{ isMac ? '⌘O' : 'Ctrl+O' }})
+          打开工作空间 ({{ formatAppShortcut(settingsStore.appShortcuts.openWorkspace, platform) }})
         </button>
         <button
           class="w-full px-3 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm cursor-pointer"
           @click="workspaceStore.newWorkspaceInNewWindowFlow()"
         >
-          新建工作空间 ({{ isMac ? '⌘⇧N' : 'Ctrl+Shift+N' }})
+          新建工作空间 ({{ formatAppShortcut(settingsStore.appShortcuts.newWorkspace, platform) }})
         </button>
       </div>
     </div>

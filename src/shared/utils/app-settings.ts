@@ -4,6 +4,11 @@ import {
   normalizeEditorShortcutSettings,
   type EditorShortcutSettings,
 } from './editor-shortcuts'
+import {
+  createDefaultAppShortcutSettings,
+  normalizeAppShortcutSettings,
+  type AppShortcutSettings,
+} from './app-shortcuts'
 
 export type AiProvider = 'ollama' | 'openai' | 'deepseek' | 'qwen' | 'custom'
 
@@ -33,6 +38,7 @@ export interface AppSettings {
   }
   editor: {
     shortcuts: EditorShortcutSettings
+    appShortcuts: AppShortcutSettings
   }
   ai: {
     chat: ChatProviderConfig & {
@@ -175,6 +181,7 @@ const createDefaultAppSettings = (): AppSettings => {
     },
     editor: {
       shortcuts: createDefaultEditorShortcutSettings(),
+      appShortcuts: createDefaultAppShortcutSettings(),
     },
     ai: {
       chat: {
@@ -371,6 +378,7 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
     },
     editor: {
       shortcuts: normalizeEditorShortcutSettings(editor.shortcuts),
+      appShortcuts: normalizeAppShortcutSettings(editor.appShortcuts),
     },
     ai: {
       chat: {

@@ -20,7 +20,7 @@ import {
   shouldCloseSidebarOnResize,
   shouldOpenSidebarOnResize,
 } from '@/renderer/utils/sidebar-layout';
-import { isPrimaryModifierPressed } from '@/shared/utils/platform-shortcuts';
+import { matchesAppShortcut } from '@/shared/utils/app-shortcuts';
 
 const workspaceStore = useWorkspaceStore();
 const settingsStore = useSettingsStore();
@@ -119,18 +119,17 @@ onMounted(() => {
 
   keyHandler = (e: KeyboardEvent) => {
     if (workspaceStore.inputDialogOpen || workspaceStore.confirmationDialogOpen) return
-    const commandKey = isPrimaryModifierPressed(e, platform)
-    if (commandKey && !e.shiftKey && (e.key === 'o' || e.key === 'O')) {
+    if (matchesAppShortcut(e, settingsStore.appShortcuts.openWorkspace, platform)) {
       e.preventDefault()
       workspaceStore.openWorkspaceInNewWindowFlow()
       return
     }
-    if (commandKey && e.shiftKey && (e.key === 'n' || e.key === 'N')) {
+    if (matchesAppShortcut(e, settingsStore.appShortcuts.newWorkspace, platform)) {
       e.preventDefault()
       workspaceStore.newWorkspaceInNewWindowFlow()
       return
     }
-    if (commandKey && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+    if (matchesAppShortcut(e, settingsStore.appShortcuts.commandPalette, platform)) {
       e.preventDefault()
       if (workspaceStore.commandPaletteOpen) workspaceStore.closeCommandPalette()
       else workspaceStore.openCommandPalette()

@@ -150,4 +150,22 @@ describe('normalizeAppSettings editor shortcuts', () => {
       enabled: false,
     })
   })
+
+  it('adds and preserves customizable always-enabled application shortcuts', () => {
+    const settings = normalizeAppSettings({
+      editor: {
+        appShortcuts: {
+          newFile: { key: 'K', ctrl: true, alt: true, enabled: false },
+        },
+      },
+    })
+
+    expect(settings.editor.appShortcuts.openWorkspace).toMatchObject({ key: 'O', enabled: true })
+    expect(settings.editor.appShortcuts.newFile).toMatchObject({
+      key: 'K',
+      ctrl: true,
+      alt: true,
+      enabled: true,
+    })
+  })
 })

@@ -1,11 +1,12 @@
 import { isTextEditingTarget } from './editing-target'
-import { isPrimaryModifierPressed } from './platform-shortcuts'
+import { matchesAppShortcut, type AppShortcutSettings } from './app-shortcuts'
 
-type FileTreeKeyEvent = Pick<KeyboardEvent, 'key' | 'target' | 'preventDefault' | 'ctrlKey' | 'metaKey'>
+type FileTreeKeyEvent = Pick<KeyboardEvent, 'key' | 'target' | 'preventDefault' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey'>
 
 type FileTreeShortcutHandlers = {
   event: FileTreeKeyEvent
   platform: string
+  shortcuts: AppShortcutSettings
   selectedPaths: string[]
   hasInlineEdit: boolean
   activeElement: EventTarget | null
@@ -18,12 +19,10 @@ type FileTreeShortcutHandlers = {
   onError?: (error: unknown) => void
 }
 
-const isClipboardShortcut = (event: FileTreeKeyEvent, key: string, platform: string) =>
-  event.key.toLowerCase() === key && isPrimaryModifierPressed(event, platform)
-
 export const handleFileTreeGlobalKeyDown = ({
   event,
   platform,
+  shortcuts,
   selectedPaths,
   hasInlineEdit,
   activeElement,
@@ -42,31 +41,32 @@ export const handleFileTreeGlobalKeyDown = ({
     return true
   }
 
-  if (isClipboardShortcut(event, 'c', platform) && selectedPaths.length > 0) {
+  if (matchesAppShortcut(event, shortcuts.copyFiles, platform) && selectedPaths.length > 0) {
     event.preventDefault()
     Promise.resolve(copyEntries()).catch(onError)
     return true
   }
 
-  if (isClipboardShortcut(event, 'x', platform) && selectedPaths.length > 0) {
+  if (matchesAppShortcut(event, shortcuts.cutFiles, platform) && selectedPaths.length > 0) {
     event.preventDefault()
     Promise.resolve(cutEntries()).catch(onError)
     return true
   }
 
-  if (isClipboardShortcut(event, 'v', platform)) {
+  if (matchesAppShortcut(event, shortcuts.pasteFiles, platform)) {
     event.preventDefault()
     Promise.resolve(pasteEntries()).catch(onError)
     return true
   }
 
-  if (event.key === 'F2' && selectedPaths.length === 1 && !hasInlineEdit) {
+  if (matchesAppShortcut(event, shortcuts.renameFile, platform) && selectedPaths.length === 1 && !hasInlineEdit) {
     event.preventDefault()
     Promise.resolve(startRename(selectedPaths[0])).catch(onError)
     return true
   }
 
-  if (event.key === 'Delete' && selectedPaths.length > 0) {
+  if (matchesAppShortcut(event, shortcuts.deleteFiles, platform) && selectedPaths.length > 0) {
+    event.preventDefault()
     Promise.resolve(deleteEntries(selectedPaths)).catch(onError)
     return true
   }

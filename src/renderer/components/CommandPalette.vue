@@ -2,7 +2,8 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Search } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../stores/workspace'
-import { formatPrimaryShortcut } from '@/shared/utils/platform-shortcuts'
+import { useSettingsStore } from '../stores/settings'
+import { formatAppShortcut } from '@/shared/utils/app-shortcuts'
 
 type CommandItem = { 
   id: string; 
@@ -11,6 +12,7 @@ type CommandItem = {
 }
 
 const workspaceStore = useWorkspaceStore()
+const settingsStore = useSettingsStore()
 const platform = window.electronAPI.platform
 const inputRef = ref<HTMLInputElement | null>(null)
 const activeIndex = ref(0)
@@ -24,13 +26,13 @@ const commands = computed<CommandItem[]>(() => [
   {
     id: 'workspace.switch',
     title: '打开工作空间',
-    shortcut: formatPrimaryShortcut('O', platform),
+    shortcut: formatAppShortcut(settingsStore.appShortcuts.openWorkspace, platform),
     run: () => workspaceStore.openWorkspaceInNewWindowFlow(),
   },
   {
     id: 'workspace.new',
     title: '新建工作空间',
-    shortcut: formatPrimaryShortcut('Shift+N', platform),
+    shortcut: formatAppShortcut(settingsStore.appShortcuts.newWorkspace, platform),
     run: () => workspaceStore.newWorkspaceInNewWindowFlow(),
   },
 ])

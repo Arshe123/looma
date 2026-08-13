@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   Check,
+  FileText,
+  Folders,
   GripVertical,
   Heading,
   Keyboard,
@@ -11,32 +13,42 @@ import {
   Trash2,
 } from 'lucide-vue-next'
 import { useSettingsStore } from '@/renderer/stores/settings'
+import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import {
   getMenuActions,
   inlineMenuActionLabel,
   resolveInlineMenuItems,
 } from '@/shared/utils/tiptap-menu-actions'
 import {
-  createDefaultEditorShortcutSettings,
   editorShortcutSignature,
   formatEditorShortcut,
   shortcutFromKeyboardEvent,
   type EditorShortcutBinding,
 } from '@/shared/utils/editor-shortcuts'
+import {
+  appShortcutFromKeyboardEvent,
+  createDefaultAppShortcutSettings,
+  getAppShortcutDefinitions,
+  type AppShortcutId,
+} from '@/shared/utils/app-shortcuts'
+import { createDefaultEditorShortcutSettings } from '@/shared/utils/editor-shortcuts'
 
-type ShortcutCategory = 'all' | 'heading' | 'menu' | 'modified'
-type ShortcutTarget = 'headingLevelUp' | 'headingLevelDown' | number
+type ShortcutCategory = 'all' | 'workspace' | 'file' | 'heading' | 'menu' | 'modified'
+type ShortcutTarget = 'headingLevelUp' | 'headingLevelDown' | AppShortcutId | number
 type ShortcutRow = {
-  target: ShortcutTarget
+  target: ShortcutTarget | string
   command: string
   description: string
   scope: string
   category: Exclude<ShortcutCategory, 'all' | 'modified'>
-  binding: EditorShortcutBinding
+  binding: EditorShortcutBinding | null
+  shortcut: string
+  editable: boolean
   configured: boolean
 }
 
 const settingsStore = useSettingsStore()
+const workspaceStore = useWorkspaceStore()
 const platform = window.electronAPI.platform
 const formatShortcut = (shortcut: EditorShortcutBinding) => formatEditorShortcut(shortcut, platform)
 const activePanel = ref<'menu' | 'shortcuts'>('shortcuts')
@@ -48,13 +60,33 @@ const shortcutError = ref('')
 const currentInlineMenuActions = computed(() => resolveInlineMenuItems(settingsStore.inlineMenuItems))
 
 const isInlineMenuActionAdded = (id: string) => settingsStore.inlineMenuItems.includes(id)
-const targetKey = (target: ShortcutTarget) => typeof target === 'number' ? `menu-${target}` : target
-const isSameTarget = (left: ShortcutTarget, right: ShortcutTarget) => targetKey(left) === targetKey(right)
+const targetKey = (target: ShortcutTarget | string) => typeof target === 'number' ? `menu-${target}` : target
+const isSameTarget = (left: ShortcutTarget | string, right: ShortcutTarget | string) => targetKey(left) === targetKey(right)
+const isEditableShortcutTarget = (target: ShortcutTarget | string): target is ShortcutTarget =>
+  typeof target === 'number'
+  || target === 'headingLevelUp'
+  || target === 'headingLevelDown'
+  || Object.prototype.hasOwnProperty.call(settingsStore.appShortcuts, target)
+const isAppShortcutTarget = (target: ShortcutTarget): target is AppShortcutId =>
+  typeof target === 'string'
+  && target !== 'headingLevelUp'
+  && target !== 'headingLevelDown'
 
 const shortcutRows = computed<ShortcutRow[]>(() => {
   const shortcuts = settingsStore.editorShortcuts
   const menuActions = currentInlineMenuActions.value.slice(0, 9)
   return [
+    ...getAppShortcutDefinitions(settingsStore.appShortcuts, platform).map((shortcut): ShortcutRow => ({
+      target: shortcut.settingKey,
+      command: shortcut.command,
+      description: shortcut.description,
+      scope: shortcut.scope,
+      category: shortcut.category,
+      binding: shortcut.binding,
+      shortcut: shortcut.shortcut,
+      editable: true,
+      configured: true,
+    })),
     {
       target: 'headingLevelUp',
       command: '提升标题级别',
@@ -62,6 +94,8 @@ const shortcutRows = computed<ShortcutRow[]>(() => {
       scope: '正文与标题段落',
       category: 'heading',
       binding: shortcuts.headingLevelUp,
+      shortcut: formatShortcut(shortcuts.headingLevelUp),
+      editable: true,
       configured: true,
     },
     {
@@ -71,6 +105,8 @@ const shortcutRows = computed<ShortcutRow[]>(() => {
       scope: '标题段落',
       category: 'heading',
       binding: shortcuts.headingLevelDown,
+      shortcut: formatShortcut(shortcuts.headingLevelDown),
+      editable: true,
       configured: true,
     },
     ...shortcuts.inlineMenuSlots.map((binding, index): ShortcutRow => {
@@ -82,6 +118,8 @@ const shortcutRows = computed<ShortcutRow[]>(() => {
         scope: '编辑器',
         category: 'menu',
         binding,
+        shortcut: formatShortcut(binding),
+        editable: true,
         configured: Boolean(action),
       }
     }),
@@ -89,13 +127,20 @@ const shortcutRows = computed<ShortcutRow[]>(() => {
 })
 
 const defaultShortcutRows = computed(() => {
-  const defaults = createDefaultEditorShortcutSettings()
-  return [defaults.headingLevelUp, defaults.headingLevelDown, ...defaults.inlineMenuSlots]
+  const editorDefaults = createDefaultEditorShortcutSettings()
+  const appDefaults = createDefaultAppShortcutSettings()
+  return new Map<ShortcutTarget, EditorShortcutBinding>([
+    ...(Object.entries(appDefaults) as Array<[AppShortcutId, EditorShortcutBinding]>),
+    ['headingLevelUp', editorDefaults.headingLevelUp],
+    ['headingLevelDown', editorDefaults.headingLevelDown],
+    ...editorDefaults.inlineMenuSlots.map((binding, index) => [index, binding] as const),
+  ])
 })
 
 const isRowModified = (row: ShortcutRow) => {
-  const index = shortcutRows.value.findIndex(item => isSameTarget(item.target, row.target))
-  const fallback = defaultShortcutRows.value[index]
+  if (!row.editable || !row.binding) return false
+  if (!isEditableShortcutTarget(row.target)) return false
+  const fallback = defaultShortcutRows.value.get(row.target)
   return Boolean(fallback)
     && (editorShortcutSignature(row.binding) !== editorShortcutSignature(fallback)
       || row.binding.enabled !== fallback.enabled)
@@ -111,8 +156,10 @@ const modifiedShortcutCount = computed(() => shortcutRows.value.filter(isRowModi
 
 const shortcutCategories = computed(() => [
   { id: 'all' as const, label: '全部快捷键', count: shortcutRows.value.length, icon: Keyboard },
+  { id: 'workspace' as const, label: '工作空间', count: shortcutRows.value.filter(row => row.category === 'workspace').length, icon: Folders },
+  { id: 'file' as const, label: '文件操作', count: shortcutRows.value.filter(row => row.category === 'file').length, icon: FileText },
   { id: 'heading' as const, label: '标题编辑', count: 2, icon: Heading },
-  { id: 'menu' as const, label: '快速插入', count: 9, icon: ListTree },
+  { id: 'menu' as const, label: '快速插入', count: shortcutRows.value.filter(row => row.category === 'menu').length, icon: ListTree },
   { id: 'modified' as const, label: '已修改', count: modifiedShortcutCount.value, icon: RotateCcw },
 ])
 
@@ -123,15 +170,18 @@ const moveInlineMenuItem = (toIndex: number) => {
 }
 
 const findShortcutConflict = (target: ShortcutTarget, binding: EditorShortcutBinding) =>
-  shortcutRows.value.find(row => !isSameTarget(row.target, target)
+  shortcutRows.value.find(row => row.binding && !isSameTarget(row.target, target)
     && editorShortcutSignature(row.binding) === editorShortcutSignature(binding))
 
-const startRecording = (target: ShortcutTarget) => {
+const startRecording = (target: ShortcutTarget | string) => {
+  if (!isEditableShortcutTarget(target)) return
   shortcutError.value = ''
   recordingTarget.value = target
 }
 
 const toggleShortcut = async (row: ShortcutRow) => {
+  if (!row.editable || !row.binding || !isEditableShortcutTarget(row.target)) return
+  if (isAppShortcutTarget(row.target)) return
   shortcutError.value = ''
   if (!row.binding.enabled) {
     const conflict = findShortcutConflict(row.target, row.binding)
@@ -157,15 +207,19 @@ const handleShortcutRecording = async (event: KeyboardEvent) => {
     return
   }
 
-  const candidate = shortcutFromKeyboardEvent(event, platform)
+  const candidate = isAppShortcutTarget(target)
+    ? appShortcutFromKeyboardEvent(event, platform)
+    : shortcutFromKeyboardEvent(event, platform)
   if (!candidate) {
-    shortcutError.value = platform === 'darwin'
-      ? '请按下包含 Command、Option 或 Control 的组合键；不能使用单个字符或仅修饰键。'
-      : '请按下包含 Ctrl、Alt 或 Meta 的组合键；不能使用单个字符或仅修饰键。'
+    shortcutError.value = isAppShortcutTarget(target)
+      ? '请按下组合键，或 F1～F12、Delete、退格键等功能键；不能使用单个字符或仅修饰键。'
+      : platform === 'darwin'
+        ? '请按下包含 Command、Option 或 Control 的组合键；不能使用单个字符或仅修饰键。'
+        : '请按下包含 Ctrl、Alt 或 Meta 的组合键；不能使用单个字符或仅修饰键。'
     return
   }
   const current = shortcutRows.value.find(row => isSameTarget(row.target, target))
-  if (!current) return
+  if (!current?.binding) return
   candidate.enabled = current.binding.enabled
   const conflict = findShortcutConflict(target, candidate)
   if (conflict) {
@@ -173,12 +227,20 @@ const handleShortcutRecording = async (event: KeyboardEvent) => {
     return
   }
 
-  await settingsStore.setEditorShortcut(target, candidate)
+  if (isAppShortcutTarget(target)) await settingsStore.setAppShortcut(target, candidate)
+  else await settingsStore.setEditorShortcut(target, candidate)
   recordingTarget.value = null
   shortcutError.value = ''
 }
 
 const resetEditorShortcuts = async () => {
+  const confirmed = await workspaceStore.requestConfirmation({
+    title: '恢复默认快捷键？',
+    message: '所有已修改的快捷键组合和启用状态都会恢复为默认设置。',
+    confirmText: '恢复默认',
+    cancelText: '取消',
+  })
+  if (!confirmed) return
   recordingTarget.value = null
   shortcutError.value = ''
   await settingsStore.resetEditorShortcuts()
@@ -314,7 +376,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecord
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p class="mt-1 text-xs leading-5 text-text-muted">
-            集中查看、启停和修改编辑器快捷键。点击组合键后直接按下新快捷键。冲突组合键不会覆盖原配置，按 Esc 可取消录入。
+            集中查看应用内全部快捷键。点击组合键即可修改；应用与文件操作命令始终启用，编辑器命令还可单独停用。冲突组合键不会覆盖原配置，按 Esc 可取消录入。
           </p>
         </div>
         <button
@@ -379,6 +441,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecord
                   {{ row.scope }}
                 </span>
                 <button
+                  v-if="row.editable"
                   type="button"
                   class="min-w-0 rounded-md border px-2 py-2 text-[10px] transition-colors"
                   :class="isSameTarget(recordingTarget ?? 'headingLevelUp', row.target) && recordingTarget !== null
@@ -390,10 +453,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecord
                   <span class="block truncate">
                     {{ isSameTarget(recordingTarget ?? 'headingLevelUp', row.target) && recordingTarget !== null
                       ? '请按组合键…'
-                      : formatShortcut(row.binding) }}
+                      : row.shortcut }}
                   </span>
                 </button>
+                <span
+                  v-else
+                  class="block min-w-0 truncate rounded-md border border-border-soft bg-panel-soft px-2 py-2 text-center text-[10px] text-text-main"
+                >
+                  {{ row.shortcut }}
+                </span>
                 <button
+                  v-if="row.editable && row.binding && isEditableShortcutTarget(row.target) && !isAppShortcutTarget(row.target)"
                   type="button"
                   class="relative mx-auto h-[18px] w-8 rounded-full transition-colors"
                   :class="row.binding.enabled ? 'bg-accent' : 'bg-text-subtle'"
@@ -406,6 +476,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecord
                     :class="row.binding.enabled ? 'left-[17px]' : 'left-0.5'"
                   />
                 </button>
+                <span v-else class="text-center text-[10px] text-text-subtle">固定启用</span>
               </div>
             </div>
 

@@ -65,6 +65,7 @@ describe('workspace modal state', () => {
     const inputDialog = readFileSync(resolve(process.cwd(), 'src/renderer/components/InputDialog.vue'), 'utf8')
     const confirmationDialog = readFileSync(resolve(process.cwd(), 'src/renderer/components/ConfirmationDialog.vue'), 'utf8')
     const historyPanel = readFileSync(resolve(process.cwd(), 'src/renderer/components/ai/AiConversationHistoryPanel.vue'), 'utf8')
+    const editorSettings = readFileSync(resolve(process.cwd(), 'src/renderer/components/settings/EditorSettings.vue'), 'utf8')
 
     expect(inputDialog).toContain('@pointerdown.self="cancel"')
     expect(inputDialog).not.toContain('class="absolute inset-0')
@@ -72,5 +73,12 @@ describe('workspace modal state', () => {
     expect(confirmationDialog).toContain('@pointerdown.self="cancel"')
     expect(historyPanel).not.toContain('window.confirm(')
     expect(historyPanel).toContain('workspaceStore.requestConfirmation({')
+    expect(editorSettings).not.toContain('window.confirm(')
+    expect(editorSettings).toContain("title: '恢复默认快捷键？'")
+    expect(editorSettings).toContain("confirmText: '恢复默认'")
+    expect(editorSettings).toContain('if (!confirmed) return')
+    expect(editorSettings.indexOf('if (!confirmed) return')).toBeLessThan(
+      editorSettings.indexOf('await settingsStore.resetEditorShortcuts()'),
+    )
   })
 })

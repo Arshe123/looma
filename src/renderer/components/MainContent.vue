@@ -2,6 +2,7 @@
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { FileQuestion, FileText } from 'lucide-vue-next'
 import { useWorkspaceStore, type FileWorkspaceTab } from '../stores/workspace'
+import { useSettingsStore } from '../stores/settings'
 import EditorLoadError from './editor/EditorLoadError.vue'
 import EditorTabs from './EditorTabs.vue'
 import SettingsPage from './SettingsPage.vue'
@@ -20,9 +21,10 @@ import {
   OPEN_NOTE_REF_EVENT,
   isHeadingAnchorMatch,
 } from '@/shared/utils/note-link-ref'
-import { isPrimaryModifierPressed } from '@/shared/utils/platform-shortcuts'
+import { matchesAppShortcut } from '@/shared/utils/app-shortcuts'
 
 const workspaceStore = useWorkspaceStore()
+const settingsStore = useSettingsStore()
 const platform = window.electronAPI.platform
 let keyHandler: ((e: KeyboardEvent) => void) | null = null
 
@@ -216,24 +218,23 @@ onMounted(() => {
   window.addEventListener('looma:jump-to-heading', jumpToHeading)
   window.addEventListener(OPEN_NOTE_REF_EVENT, openNoteRef)
   keyHandler = (e: KeyboardEvent) => {
-    const commandKey = isPrimaryModifierPressed(e, platform)
-    if (commandKey && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
+    if (matchesAppShortcut(e, settingsStore.appShortcuts.saveFile, platform)) {
       e.preventDefault()
       saveTrigger.value += 1
       return
     }
-    if (commandKey && !e.shiftKey && (e.key === 'n' || e.key === 'N')) {
+    if (matchesAppShortcut(e, settingsStore.appShortcuts.newFile, platform)) {
       e.preventDefault()
       window.dispatchEvent(new CustomEvent(FILE_TREE_CREATE_FILE_EVENT))
       return
     }
-    if (commandKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+    if (matchesAppShortcut(e, settingsStore.appShortcuts.undoFileOperation, platform)) {
       if (isTextEditingTarget(e.target) || isTextEditingTarget(document.activeElement)) return
       e.preventDefault()
       workspaceStore.undo()
       return
     }
-    if (commandKey && (e.key === 'y' || e.key === 'Y')) {
+    if (matchesAppShortcut(e, settingsStore.appShortcuts.redoFileOperation, platform)) {
       if (isTextEditingTarget(e.target) || isTextEditingTarget(document.activeElement)) return
       e.preventDefault()
       workspaceStore.redo()

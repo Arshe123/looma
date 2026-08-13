@@ -21,7 +21,7 @@ import {
   type HeadingLevel,
 } from '@/shared/utils/editor-shortcuts'
 import { getOverlayPositionAtLineNumber } from '@/shared/utils/tiptap-line-numbers'
-import { isPrimaryModifierPressed } from '@/shared/utils/platform-shortcuts'
+import { matchesAppShortcut } from '@/shared/utils/app-shortcuts'
 
 const props = defineProps<{
   editor: Editor
@@ -308,7 +308,7 @@ const handleKeyDown = (event: KeyboardEvent) => {
     return true
   }
 
-  if (event.key === 'Enter' && event.shiftKey && isPrimaryModifierPressed(event, platform)) {
+  if (matchesAppShortcut(event, settingsStore.appShortcuts.openInlineMenu, platform)) {
     event.preventDefault()
     event.stopImmediatePropagation()
     const mode = getCurrentMenuMode(editor)

@@ -2,10 +2,12 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Minus, Square, X, ChevronDown, FolderOpen, Plus, Command } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../stores/workspace'
+import { useSettingsStore } from '../stores/settings'
 import { isMacPlatform } from '../../shared/utils/window-chrome'
-import { formatPrimaryShortcut } from '../../shared/utils/platform-shortcuts'
+import { formatAppShortcut } from '../../shared/utils/app-shortcuts'
 
 const workspaceStore = useWorkspaceStore()
+const settingsStore = useSettingsStore()
 const isMac = isMacPlatform((window as any).electronAPI?.platform ?? '')
 const platform = window.electronAPI.platform
 
@@ -151,7 +153,7 @@ onUnmounted(() => {
                 <FolderOpen :size="16" class="text-text-muted" />
                 打开工作空间
               </span>
-              <span class="text-[11px] text-text-subtle">{{ formatPrimaryShortcut('O', platform) }}</span>
+              <span class="text-[11px] text-text-subtle">{{ formatAppShortcut(settingsStore.appShortcuts.openWorkspace, platform) }}</span>
             </button>
 
             <button
@@ -162,7 +164,7 @@ onUnmounted(() => {
                 <Plus :size="16" class="text-text-muted" />
                 新建工作空间（选择创建的位置）
               </span>
-              <span class="text-[11px] text-text-subtle">{{ formatPrimaryShortcut('Shift+N', platform) }}</span>
+              <span class="text-[11px] text-text-subtle">{{ formatAppShortcut(settingsStore.appShortcuts.newWorkspace, platform) }}</span>
             </button>
 
             <button
@@ -173,7 +175,7 @@ onUnmounted(() => {
                 <Command :size="16" class="text-text-muted" />
                 打开命令面板
               </span>
-              <span class="text-[11px] text-text-subtle">{{ formatPrimaryShortcut('Shift+P', platform) }}</span>
+              <span class="text-[11px] text-text-subtle">{{ formatAppShortcut(settingsStore.appShortcuts.commandPalette, platform) }}</span>
             </button>
           </div>
         </div>

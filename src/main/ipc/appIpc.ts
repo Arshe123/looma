@@ -1,6 +1,7 @@
 import { ipcMain, dialog, app, shell } from 'electron';
 import { mainWindow } from '../index';
 import { getWindowFromEvent } from './windowIpc';
+import { getAutoUpdateService } from '../services/app/autoUpdate';
 
 ipcMain.handle('app:showMessageBox', async (event, options: any) => {
   const win = getWindowFromEvent(event) ?? mainWindow;
@@ -10,6 +11,23 @@ ipcMain.handle('app:showMessageBox', async (event, options: any) => {
 
 // 返回当前应用版本（读取 package.json 的 version）
 ipcMain.handle('app:getVersion', () => app.getVersion());
+
+ipcMain.handle('app:update:getState', () => getAutoUpdateService().getState());
+
+ipcMain.handle('app:update:check', async () => {
+  const state = await getAutoUpdateService().check();
+  return { success: state.status !== 'error', state };
+});
+
+ipcMain.handle('app:update:download', async () => {
+  const state = await getAutoUpdateService().download();
+  return { success: state.status !== 'error', state };
+});
+
+ipcMain.handle('app:update:install', async () => {
+  const state = await getAutoUpdateService().install();
+  return { success: state.status !== 'error', state };
+});
 
 // 用系统默认浏览器打开外部链接（如更新下载地址）
 ipcMain.handle('app:openExternal', async (_event, url: string) => {

@@ -7,8 +7,10 @@ import { abortAllAgentRuns } from './ipc/agentIpc';
 import { setWindowTitleForWorkspace } from './ipc/workspaceIpc';
 import { startBundledRagService, stopBundledRagService } from './services/rag/ragServiceProcess';
 import { prepareWindowsForQuit } from './services/app/quitCoordinator';
+import { initializeAutoUpdateService } from './services/app/autoUpdate';
 import { getWindowChromeOptions } from '../shared/utils/window-chrome';
 import { createViewMenuTemplate } from '../shared/utils/app-menu';
+import { shouldAutoCheckUpdates } from '../shared/utils/update-policy';
 import './ipc/appSettingsIpc';
 import './ipc/ragIpc';
 import './ipc/appIpc';
@@ -198,6 +200,11 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
+    const updateService = initializeAutoUpdateService(prepareAppForUpdate);
+    if (shouldAutoCheckUpdates(process.platform, app.isPackaged)) {
+      setTimeout(() => void updateService.check(), 5_000);
+    }
+
     // The Python sidecar can take several seconds to cold-start. It is not
     // required to render the workspace shell, so never put it on the window's
     // critical startup path.
@@ -221,19 +228,36 @@ if (!gotLock) {
   });
 }
 
-const finishAppQuit = async () => {
+const cleanupBeforeQuit = async () => {
   abortAllAgentRuns();
 
-  try {
-    await prepareWindowsForQuit(BrowserWindow.getAllWindows());
-    await stopBundledRagService();
+  await prepareWindowsForQuit(BrowserWindow.getAllWindows());
+  await stopBundledRagService();
 
-    const state = await workspaceService.getState();
-    if (state.success && state.data) {
-      for (const ws of state.data.workspaces) {
-        await fileSystemService.emptyTrash(ws.id).catch(() => {});
-      }
+  const state = await workspaceService.getState();
+  if (state.success && state.data) {
+    for (const ws of state.data.workspaces) {
+      await fileSystemService.emptyTrash(ws.id).catch(() => {});
     }
+  }
+};
+
+const prepareAppForUpdate = async () => {
+  quitInProgress = true;
+  try {
+    await cleanupBeforeQuit();
+  } catch (error) {
+    console.error(`[update] ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    // Let electron-updater own the final quit so it can launch the installer.
+    quitAllowed = true;
+  }
+};
+
+const finishAppQuit = async () => {
+
+  try {
+    await cleanupBeforeQuit();
   } catch (error) {
     console.error(`[quit] ${error instanceof Error ? error.message : String(error)}`);
   } finally {

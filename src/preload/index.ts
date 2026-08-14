@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { UpdateState } from '../shared/types/app-update';
 
 type FsEventPayload = { workspaceId: string; event: string; relativePath: string; origin: 'editor' | 'external' };
 type RagStreamEventPayload =
@@ -56,6 +57,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     showMessageBox: (options: any) => ipcRenderer.invoke('app:showMessageBox', options),
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
+    update: {
+      getState: () => ipcRenderer.invoke('app:update:getState'),
+      check: () => ipcRenderer.invoke('app:update:check'),
+      download: () => ipcRenderer.invoke('app:update:download'),
+      install: () => ipcRenderer.invoke('app:update:install'),
+      onState: (listener: (payload: UpdateState) => void) => {
+        const handler = (_: unknown, payload: UpdateState) => listener(payload);
+        ipcRenderer.on('app:update:state', handler);
+        return () => ipcRenderer.removeListener('app:update:state', handler);
+      },
+    },
   },
   workspace: {
     selectDir: () => ipcRenderer.invoke('workspace:selectDir'),

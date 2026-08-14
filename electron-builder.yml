@@ -7,6 +7,12 @@ directories:
 
 asar: true
 
+publish:
+  provider: github
+  owner: Arshe123
+  repo: looma
+  releaseType: release
+
 files:
   - dist/**/*
   - dist-electron/**/*

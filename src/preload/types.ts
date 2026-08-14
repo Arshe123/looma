@@ -2,6 +2,7 @@ import type { Result } from '../shared/types/Result'
 import type { AgentEvent, AgentPendingFileReview, AgentSource } from '../shared/types/agent-events'
 import type { AgentRun, AgentTask } from '../shared/types/agent-state'
 import type { AppSettings as AppSettingsPayload } from '../shared/utils/app-settings'
+import type { UpdateActionResult, UpdateState } from '../shared/types/app-update'
 
 interface TextFileChunkPayload {
   content: string;
@@ -282,6 +283,13 @@ interface ElectronAPI {
     showMessageBox: (options: any) => Promise<{ response: number; checkboxChecked: boolean }>;
     getVersion: () => Promise<string>;
     openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+    update: {
+      getState: () => Promise<UpdateState>;
+      check: () => Promise<UpdateActionResult>;
+      download: () => Promise<UpdateActionResult>;
+      install: () => Promise<UpdateActionResult>;
+      onState: (listener: (payload: UpdateState) => void) => () => void;
+    };
   };
   workspace: {
     selectDir: () => Promise<string | null>;

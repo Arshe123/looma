@@ -55,6 +55,7 @@ nsis:
   deleteAppDataOnUninstall: false
 
 electronFuses:
+  resetAdHocDarwinSignature: true
   runAsNode: false
   enableCookieEncryption: true
   enableNodeOptionsEnvironmentVariable: false

@@ -6,6 +6,7 @@ import {
   Folders,
   GripVertical,
   Heading,
+  Highlighter,
   Keyboard,
   ListTree,
   Plus,
@@ -33,8 +34,17 @@ import {
 } from '@/shared/utils/app-shortcuts'
 import { createDefaultEditorShortcutSettings } from '@/shared/utils/editor-shortcuts'
 
-type ShortcutCategory = 'all' | 'workspace' | 'file' | 'heading' | 'menu' | 'modified'
-type ShortcutTarget = 'headingLevelUp' | 'headingLevelDown' | AppShortcutId | number
+type ShortcutCategory = 'all' | 'workspace' | 'file' | 'heading' | 'format' | 'menu' | 'modified'
+type ShortcutTarget =
+  | 'headingLevelUp'
+  | 'headingLevelDown'
+  | 'bold'
+  | 'italic'
+  | 'strike'
+  | 'inlineCode'
+  | 'highlight'
+  | AppShortcutId
+  | number
 type ShortcutRow = {
   target: ShortcutTarget | string
   command: string
@@ -66,11 +76,21 @@ const isEditableShortcutTarget = (target: ShortcutTarget | string): target is Sh
   typeof target === 'number'
   || target === 'headingLevelUp'
   || target === 'headingLevelDown'
+  || target === 'bold'
+  || target === 'italic'
+  || target === 'strike'
+  || target === 'inlineCode'
+  || target === 'highlight'
   || Object.prototype.hasOwnProperty.call(settingsStore.appShortcuts, target)
 const isAppShortcutTarget = (target: ShortcutTarget): target is AppShortcutId =>
   typeof target === 'string'
   && target !== 'headingLevelUp'
   && target !== 'headingLevelDown'
+  && target !== 'bold'
+  && target !== 'italic'
+  && target !== 'strike'
+  && target !== 'inlineCode'
+  && target !== 'highlight'
 
 const shortcutRows = computed<ShortcutRow[]>(() => {
   const shortcuts = settingsStore.editorShortcuts
@@ -109,6 +129,61 @@ const shortcutRows = computed<ShortcutRow[]>(() => {
       editable: true,
       configured: true,
     },
+    {
+      target: 'bold',
+      command: '加粗',
+      description: '用 ** 包裹选中文字',
+      scope: '富文本编辑器',
+      category: 'format',
+      binding: shortcuts.bold,
+      shortcut: formatShortcut(shortcuts.bold),
+      editable: true,
+      configured: true,
+    },
+    {
+      target: 'italic',
+      command: '斜体',
+      description: '用 * 包裹选中文字',
+      scope: '富文本编辑器',
+      category: 'format',
+      binding: shortcuts.italic,
+      shortcut: formatShortcut(shortcuts.italic),
+      editable: true,
+      configured: true,
+    },
+    {
+      target: 'strike',
+      command: '删除线',
+      description: '用 ~~ 包裹选中文字',
+      scope: '富文本编辑器',
+      category: 'format',
+      binding: shortcuts.strike,
+      shortcut: formatShortcut(shortcuts.strike),
+      editable: true,
+      configured: true,
+    },
+    {
+      target: 'inlineCode',
+      command: '行内代码',
+      description: '用反引号包裹选中文字',
+      scope: '富文本编辑器',
+      category: 'format',
+      binding: shortcuts.inlineCode,
+      shortcut: formatShortcut(shortcuts.inlineCode),
+      editable: true,
+      configured: true,
+    },
+    {
+      target: 'highlight',
+      command: '切换文字高亮',
+      description: '用 == 包裹选中文字，再次触发可取消高亮',
+      scope: '富文本编辑器',
+      category: 'format',
+      binding: shortcuts.highlight,
+      shortcut: formatShortcut(shortcuts.highlight),
+      editable: true,
+      configured: true,
+    },
     ...shortcuts.inlineMenuSlots.map((binding, index): ShortcutRow => {
       const action = menuActions[index]
       return {
@@ -133,6 +208,11 @@ const defaultShortcutRows = computed(() => {
     ...(Object.entries(appDefaults) as Array<[AppShortcutId, EditorShortcutBinding]>),
     ['headingLevelUp', editorDefaults.headingLevelUp],
     ['headingLevelDown', editorDefaults.headingLevelDown],
+    ['bold', editorDefaults.bold],
+    ['italic', editorDefaults.italic],
+    ['strike', editorDefaults.strike],
+    ['inlineCode', editorDefaults.inlineCode],
+    ['highlight', editorDefaults.highlight],
     ...editorDefaults.inlineMenuSlots.map((binding, index) => [index, binding] as const),
   ])
 })
@@ -159,6 +239,7 @@ const shortcutCategories = computed(() => [
   { id: 'workspace' as const, label: '工作空间', count: shortcutRows.value.filter(row => row.category === 'workspace').length, icon: Folders },
   { id: 'file' as const, label: '文件操作', count: shortcutRows.value.filter(row => row.category === 'file').length, icon: FileText },
   { id: 'heading' as const, label: '标题编辑', count: 2, icon: Heading },
+  { id: 'format' as const, label: '文字格式', count: shortcutRows.value.filter(row => row.category === 'format').length, icon: Highlighter },
   { id: 'menu' as const, label: '快速插入', count: shortcutRows.value.filter(row => row.category === 'menu').length, icon: ListTree },
   { id: 'modified' as const, label: '已修改', count: modifiedShortcutCount.value, icon: RotateCcw },
 ])

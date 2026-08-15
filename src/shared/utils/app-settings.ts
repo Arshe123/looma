@@ -35,6 +35,7 @@ export type ConversationContextStrategy = 'sliding_window' | 'summary'
 export interface AppSettings {
   inlineMenu: {
     items: string[]
+    version: number
   }
   editor: {
     shortcuts: EditorShortcutSettings
@@ -70,6 +71,12 @@ export interface AppSettings {
 
 const defaultInlineMenuItems = (): string[] =>
   [...DEFAULT_INLINE_MENU_ACTION_IDS]
+
+const INLINE_MENU_VERSION = 2
+const PREVIOUS_DEFAULT_INLINE_MENU_ACTION_IDS = [
+  'h2', 'h3', 'h4', 'h5', 'h6', 'bulletList', 'orderedList',
+  'taskList', 'blockquote', 'codeBlock', 'image', 'table', 'horizontalRule',
+] as const
 
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 
@@ -178,6 +185,7 @@ const createDefaultAppSettings = (): AppSettings => {
   return {
     inlineMenu: {
       items: defaultInlineMenuItems(),
+      version: INLINE_MENU_VERSION,
     },
     editor: {
       shortcuts: createDefaultEditorShortcutSettings(),
@@ -336,10 +344,12 @@ export const getDefaultEmbeddingProviderConfig = (provider: AiProvider): Embeddi
 export const normalizeAppSettings = (value: unknown): AppSettings => {
   const defaults = createDefaultAppSettings()
   if (!value || typeof value !== 'object') return defaults
-  const inlineMenu = (value as { inlineMenu?: unknown }).inlineMenu
-  const items = inlineMenu && typeof inlineMenu === 'object'
-    ? (inlineMenu as { items?: unknown }).items
-    : undefined
+  const inlineMenu = asRecord((value as { inlineMenu?: unknown }).inlineMenu)
+  const normalizedInlineMenuItems = normalizeInlineMenuItemsForSettings(inlineMenu.items)
+  const isPreviousUntouchedDefault = inlineMenu.version === undefined
+    && normalizedInlineMenuItems.length === PREVIOUS_DEFAULT_INLINE_MENU_ACTION_IDS.length
+    && normalizedInlineMenuItems.every((item, index) => item === PREVIOUS_DEFAULT_INLINE_MENU_ACTION_IDS[index])
+  if (isPreviousUntouchedDefault) normalizedInlineMenuItems.push('highlight')
   const editor = asRecord((value as { editor?: unknown }).editor)
   const ai = (value as { ai?: unknown }).ai
   const rawAi = asRecord(ai)
@@ -374,7 +384,8 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
 
   return {
     inlineMenu: {
-      items: normalizeInlineMenuItemsForSettings(items),
+      items: normalizedInlineMenuItems,
+      version: INLINE_MENU_VERSION,
     },
     editor: {
       shortcuts: normalizeEditorShortcutSettings(editor.shortcuts),

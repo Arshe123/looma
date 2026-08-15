@@ -10,8 +10,16 @@ export type EditorShortcutBinding = {
 export type EditorShortcutSettings = {
   headingLevelUp: EditorShortcutBinding
   headingLevelDown: EditorShortcutBinding
+  bold: EditorShortcutBinding
+  italic: EditorShortcutBinding
+  strike: EditorShortcutBinding
+  inlineCode: EditorShortcutBinding
+  highlight: EditorShortcutBinding
   inlineMenuSlots: EditorShortcutBinding[]
 }
+
+export type TextFormatShortcutId = 'bold' | 'italic' | 'strike' | 'inlineCode' | 'highlight'
+export type TextFormatShortcutAction = TextFormatShortcutId | 'blocked' | null
 
 export type EditorShortcutEvent = Pick<
   KeyboardEvent,
@@ -38,6 +46,11 @@ const binding = (key: string): EditorShortcutBinding => ({
 export const createDefaultEditorShortcutSettings = (): EditorShortcutSettings => ({
   headingLevelUp: binding('='),
   headingLevelDown: binding('-'),
+  bold: binding('B'),
+  italic: binding('I'),
+  strike: { ...binding('S'), shift: true },
+  inlineCode: binding('E'),
+  highlight: binding('L'),
   inlineMenuSlots: Array.from({ length: 9 }, (_, index) => binding(String(index + 1))),
 })
 
@@ -84,6 +97,11 @@ export const normalizeEditorShortcutSettings = (value: unknown): EditorShortcutS
   return {
     headingLevelUp: normalizeEditorShortcutBinding(raw.headingLevelUp, defaults.headingLevelUp),
     headingLevelDown: normalizeEditorShortcutBinding(raw.headingLevelDown, defaults.headingLevelDown),
+    bold: normalizeEditorShortcutBinding(raw.bold, defaults.bold),
+    italic: normalizeEditorShortcutBinding(raw.italic, defaults.italic),
+    strike: normalizeEditorShortcutBinding(raw.strike, defaults.strike),
+    inlineCode: normalizeEditorShortcutBinding(raw.inlineCode, defaults.inlineCode),
+    highlight: normalizeEditorShortcutBinding(raw.highlight, defaults.highlight),
     inlineMenuSlots: defaults.inlineMenuSlots.map((fallback, index) =>
       normalizeEditorShortcutBinding(rawSlots[index], fallback)),
   }
@@ -124,6 +142,26 @@ export const matchesEditorShortcut = (
     && event.altKey === shortcut.alt
     && eventShift === shortcut.shift
     && modifiers.meta === shortcut.meta
+}
+
+const TEXT_FORMAT_SHORTCUT_IDS: TextFormatShortcutId[] = [
+  'bold', 'italic', 'strike', 'inlineCode', 'highlight',
+]
+
+export const getTextFormatShortcutAction = (
+  event: EditorShortcutEvent,
+  shortcuts: EditorShortcutSettings,
+  platform = '',
+): TextFormatShortcutAction => {
+  const configured = TEXT_FORMAT_SHORTCUT_IDS.find(id =>
+    matchesEditorShortcut(event, shortcuts[id], platform))
+  if (configured) return configured
+
+  const defaults = createDefaultEditorShortcutSettings()
+  const matchesNativeTiptapBinding = TEXT_FORMAT_SHORTCUT_IDS
+    .filter(id => id !== 'highlight')
+    .some(id => matchesEditorShortcut(event, defaults[id], platform))
+  return matchesNativeTiptapBinding ? 'blocked' : null
 }
 
 export const formatEditorShortcut = (shortcut: EditorShortcutBinding, platform: string | number = '') => {

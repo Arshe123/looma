@@ -85,6 +85,38 @@ describe('normalizeAppSettings Agent-only migration', () => {
 })
 
 describe('normalizeAppSettings inline menu customization', () => {
+  it('includes highlight in the default inline menu', () => {
+    expect(defaultAppSettings.inlineMenu.items).toContain('highlight')
+  })
+
+  it('adds highlight to the previous untouched default menu', () => {
+    const settings = normalizeAppSettings({
+      inlineMenu: {
+        items: [
+          'h2', 'h3', 'h4', 'h5', 'h6', 'bulletList', 'orderedList',
+          'taskList', 'blockquote', 'codeBlock', 'image', 'table', 'horizontalRule',
+        ],
+      },
+    })
+
+    expect(settings.inlineMenu.items.at(-1)).toBe('highlight')
+    expect(settings.inlineMenu.version).toBe(2)
+  })
+
+  it('does not re-add highlight after it is removed from the current menu version', () => {
+    const settings = normalizeAppSettings({
+      inlineMenu: {
+        version: 2,
+        items: [
+          'h2', 'h3', 'h4', 'h5', 'h6', 'bulletList', 'orderedList',
+          'taskList', 'blockquote', 'codeBlock', 'image', 'table', 'horizontalRule',
+        ],
+      },
+    })
+
+    expect(settings.inlineMenu.items).not.toContain('highlight')
+  })
+
   it('preserves a customized menu without the image action', () => {
     const settings = normalizeAppSettings({
       inlineMenu: {
@@ -116,6 +148,15 @@ describe('normalizeAppSettings editor shortcuts', () => {
 
     expect(settings.editor.shortcuts.headingLevelUp).toMatchObject({
       key: '=',
+      ctrl: true,
+      enabled: true,
+    })
+    expect(settings.editor.shortcuts.bold).toMatchObject({ key: 'B', ctrl: true, enabled: true })
+    expect(settings.editor.shortcuts.italic).toMatchObject({ key: 'I', ctrl: true, enabled: true })
+    expect(settings.editor.shortcuts.strike).toMatchObject({ key: 'S', ctrl: true, shift: true, enabled: true })
+    expect(settings.editor.shortcuts.inlineCode).toMatchObject({ key: 'E', ctrl: true, enabled: true })
+    expect(settings.editor.shortcuts.highlight).toMatchObject({
+      key: 'L',
       ctrl: true,
       enabled: true,
     })

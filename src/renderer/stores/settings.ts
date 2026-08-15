@@ -17,7 +17,14 @@ import {
   type AppShortcutId,
 } from '@/shared/utils/app-shortcuts'
 
-type NamedEditorShortcut = 'headingLevelUp' | 'headingLevelDown'
+type NamedEditorShortcut =
+  | 'headingLevelUp'
+  | 'headingLevelDown'
+  | 'bold'
+  | 'italic'
+  | 'strike'
+  | 'inlineCode'
+  | 'highlight'
 type EditorShortcutTarget = NamedEditorShortcut | number
 
 export const useSettingsStore = defineStore('settings', {

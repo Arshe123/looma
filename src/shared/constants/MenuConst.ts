@@ -12,4 +12,5 @@ export const DEFAULT_INLINE_MENU_ACTION_IDS = [
   'image',
   'table',
   'horizontalRule',
+  'highlight',
 ] as const

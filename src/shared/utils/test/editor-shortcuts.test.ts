@@ -3,6 +3,7 @@ import {
   createDefaultEditorShortcutSettings,
   formatEditorShortcut,
   getAdjustedHeadingLevel,
+  getTextFormatShortcutAction,
   matchesEditorShortcut,
   normalizeEditorShortcutSettings,
   shortcutFromKeyboardEvent,
@@ -18,6 +19,53 @@ const keyboardEvent = (overrides: Partial<KeyboardEvent> = {}) => ({
 }) as KeyboardEvent
 
 describe('editor shortcut settings', () => {
+  it('provides the standard rich-text format shortcuts', () => {
+    const shortcuts = createDefaultEditorShortcutSettings()
+
+    expect(formatEditorShortcut(shortcuts.bold)).toBe('Ctrl + B')
+    expect(formatEditorShortcut(shortcuts.italic)).toBe('Ctrl + I')
+    expect(formatEditorShortcut(shortcuts.strike)).toBe('Ctrl + Shift + S')
+    expect(formatEditorShortcut(shortcuts.inlineCode)).toBe('Ctrl + E')
+    expect(formatEditorShortcut(shortcuts.highlight)).toBe('Ctrl + L')
+  })
+
+  it('resolves configured format shortcuts on Windows and macOS', () => {
+    const shortcuts = createDefaultEditorShortcutSettings()
+
+    expect(getTextFormatShortcutAction(
+      keyboardEvent({ key: 'b' }),
+      shortcuts,
+    )).toBe('bold')
+    expect(getTextFormatShortcutAction(
+      keyboardEvent({ key: 'i', ctrlKey: false, metaKey: true }),
+      shortcuts,
+      'darwin',
+    )).toBe('italic')
+  })
+
+  it('blocks TipTap native bindings when a format shortcut is disabled or changed', () => {
+    const disabled = createDefaultEditorShortcutSettings()
+    disabled.bold.enabled = false
+    expect(getTextFormatShortcutAction(keyboardEvent({ key: 'b' }), disabled)).toBe('blocked')
+
+    const customized = createDefaultEditorShortcutSettings()
+    customized.italic.key = 'K'
+    expect(getTextFormatShortcutAction(keyboardEvent({ key: 'i' }), customized)).toBe('blocked')
+    expect(getTextFormatShortcutAction(keyboardEvent({ key: 'k' }), customized)).toBe('italic')
+  })
+
+  it('uses Ctrl+L for toggling text highlight', () => {
+    const shortcut = createDefaultEditorShortcutSettings().highlight
+
+    expect(formatEditorShortcut(shortcut)).toBe('Ctrl + L')
+    expect(matchesEditorShortcut(keyboardEvent({ key: 'l' }), shortcut)).toBe(true)
+    expect(matchesEditorShortcut(
+      keyboardEvent({ key: 'l', ctrlKey: false, metaKey: true }),
+      shortcut,
+      'darwin',
+    )).toBe(true)
+  })
+
   it('creates independent Ctrl+1 through Ctrl+9 menu bindings', () => {
     const first = createDefaultEditorShortcutSettings()
     const second = createDefaultEditorShortcutSettings()

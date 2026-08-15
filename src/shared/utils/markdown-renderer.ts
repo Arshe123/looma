@@ -15,6 +15,24 @@ markdown.use(taskLists, {
   labelAfter: true,
 })
 
+const highlightRule = (state: any, silent: boolean) => {
+  const start = state.pos
+  if (state.src.slice(start, start + 2) !== '==') return false
+  const end = state.src.indexOf('==', start + 2)
+  if (end <= start + 2) return false
+
+  if (!silent) {
+    state.push('mark_open', 'mark', 1)
+    const text = state.push('text', '', 0)
+    text.content = state.src.slice(start + 2, end)
+    state.push('mark_close', 'mark', -1)
+  }
+  state.pos = end + 2
+  return true
+}
+
+markdown.inline.ruler.before('emphasis', 'highlight', highlightRule)
+
 const openExternalLinkRule = markdown.renderer.rules.link_open
 const FILE_SYMLINK_ICON = '<span class="looma-link-icon looma-note-ref-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 18 3-3-3-3"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M4 11V4a2 2 0 0 1 2-2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h7"/></svg></span>'
 const LINK_ICON = '<span class="looma-link-icon looma-external-link-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>'

@@ -9,8 +9,6 @@ export type MarkdownImageTarget = {
   widthPercent?: number
 }
 
-export type ImageResizeDirection = 'right' | 'bottom' | 'bottomRight'
-
 export const MIN_IMAGE_WIDTH_PERCENT = 10
 export const MAX_IMAGE_WIDTH_PERCENT = 100
 
@@ -20,14 +18,12 @@ export const clampImageWidthPercent = (value: number) => Math.min(
 )
 
 export const computeResizedImageWidthPercent = ({
-  direction,
   startWidth,
   startHeight,
   containerWidth,
   deltaX,
   deltaY,
 }: {
-  direction: ImageResizeDirection
   startWidth: number
   startHeight: number
   containerWidth: number
@@ -37,13 +33,9 @@ export const computeResizedImageWidthPercent = ({
   if (startWidth <= 0 || startHeight <= 0 || containerWidth <= 0) return MAX_IMAGE_WIDTH_PERCENT
   const widthFromHorizontal = startWidth + deltaX
   const widthFromVertical = (startHeight + deltaY) * (startWidth / startHeight)
-  const nextWidth = direction === 'right'
+  const nextWidth = Math.abs(deltaX) >= Math.abs(deltaY * (startWidth / startHeight))
     ? widthFromHorizontal
-    : direction === 'bottom'
-      ? widthFromVertical
-      : Math.abs(deltaX) >= Math.abs(deltaY * (startWidth / startHeight))
-        ? widthFromHorizontal
-        : widthFromVertical
+    : widthFromVertical
   return clampImageWidthPercent((nextWidth / containerWidth) * 100)
 }
 

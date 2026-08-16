@@ -65,11 +65,10 @@ describe('tiptap image insertion helpers', () => {
     })).toBe('![架构图](assets/architecture.png){width=60%}')
   })
 
-  it('clamps persisted widths and derives proportional resizing from each handle', () => {
+  it('clamps persisted widths and derives proportional resizing from the corner handle', () => {
     expect(clampImageWidthPercent(4)).toBe(10)
     expect(clampImageWidthPercent(120)).toBe(100)
     expect(computeResizedImageWidthPercent({
-      direction: 'right',
       startWidth: 400,
       startHeight: 200,
       containerWidth: 800,
@@ -77,19 +76,10 @@ describe('tiptap image insertion helpers', () => {
       deltaY: 0,
     })).toBe(60)
     expect(computeResizedImageWidthPercent({
-      direction: 'bottom',
       startWidth: 400,
       startHeight: 200,
       containerWidth: 800,
       deltaX: 0,
-      deltaY: 40,
-    })).toBe(60)
-    expect(computeResizedImageWidthPercent({
-      direction: 'bottomRight',
-      startWidth: 400,
-      startHeight: 200,
-      containerWidth: 800,
-      deltaX: 40,
       deltaY: 40,
     })).toBe(60)
   })

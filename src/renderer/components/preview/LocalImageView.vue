@@ -5,7 +5,6 @@ import { CodeXml } from 'lucide-vue-next'
 import {
   computeResizedImageWidthPercent,
   formatMarkdownImage,
-  type ImageResizeDirection,
   parseMarkdownImageBlock,
 } from '@/shared/utils/tiptap-image-insertion'
 
@@ -26,7 +25,6 @@ const resizing = ref(false)
 const previewWidthPercent = ref<number | null>(null)
 let resolveRunId = 0
 let resizeStart: {
-  direction: ImageResizeDirection
   clientX: number
   clientY: number
   width: number
@@ -186,7 +184,6 @@ const handleResizeMove = (event: PointerEvent) => {
   if (!resizeStart) return
   event.preventDefault()
   previewWidthPercent.value = computeResizedImageWidthPercent({
-    direction: resizeStart.direction,
     startWidth: resizeStart.width,
     startHeight: resizeStart.height,
     containerWidth: resizeStart.containerWidth,
@@ -205,7 +202,7 @@ const handleResizeEnd = () => {
   }
 }
 
-const startResize = (direction: ImageResizeDirection, event: PointerEvent) => {
+const startResize = (event: PointerEvent) => {
   const image = imageRef.value
   const wrapper = getWrapperElement()
   if (!image || !wrapper) return
@@ -216,7 +213,6 @@ const startResize = (direction: ImageResizeDirection, event: PointerEvent) => {
   const containerWidth = wrapper.parentElement?.clientWidth || wrapper.clientWidth
   if (imageRect.width <= 0 || imageRect.height <= 0 || containerWidth <= 0) return
   resizeStart = {
-    direction,
     clientX: event.clientX,
     clientY: event.clientY,
     width: imageRect.width,
@@ -305,24 +301,10 @@ onBeforeUnmount(() => {
       <template v-if="props.selected && !editingMarkdown">
         <button
           type="button"
-          class="local-image-resize-handle local-image-resize-right"
-          aria-label="从右侧等比例缩放图片"
-          tabindex="-1"
-          @pointerdown="startResize('right', $event)"
-        />
-        <button
-          type="button"
-          class="local-image-resize-handle local-image-resize-bottom"
-          aria-label="从下侧等比例缩放图片"
-          tabindex="-1"
-          @pointerdown="startResize('bottom', $event)"
-        />
-        <button
-          type="button"
           class="local-image-resize-handle local-image-resize-bottom-right"
           aria-label="从右下角等比例缩放图片"
           tabindex="-1"
-          @pointerdown="startResize('bottomRight', $event)"
+          @pointerdown="startResize($event)"
         />
       </template>
     </div>
@@ -395,20 +377,6 @@ onBeforeUnmount(() => {
   background: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
   touch-action: none;
-}
-
-.tiptap .local-image-resize-right {
-  top: 50%;
-  right: -5px;
-  transform: translateY(-50%);
-  cursor: ew-resize;
-}
-
-.tiptap .local-image-resize-bottom {
-  bottom: -5px;
-  left: 50%;
-  transform: translateX(-50%);
-  cursor: ns-resize;
 }
 
 .tiptap .local-image-resize-bottom-right {

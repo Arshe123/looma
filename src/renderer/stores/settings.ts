@@ -36,6 +36,7 @@ export const useSettingsStore = defineStore('settings', {
 
   getters: {
     inlineMenuItems: (state) => state.settings.inlineMenu.items,
+    showLineNumbers: (state) => state.settings.editor.showLineNumbers,
     editorShortcuts: (state) => state.settings.editor.shortcuts,
     appShortcuts: (state) => state.settings.editor.appShortcuts,
     aiSettings: (state) => state.settings.ai,
@@ -101,6 +102,11 @@ export const useSettingsStore = defineStore('settings', {
 
     async resetInlineMenu() {
       this.settings.inlineMenu.items = defaultInlineMenuItems()
+      await this.persist()
+    },
+
+    async setShowLineNumbers(value: boolean) {
+      this.settings.editor.showLineNumbers = value
       await this.persist()
     },
 

@@ -143,6 +143,22 @@ describe('normalizeAppSettings inline menu customization', () => {
 })
 
 describe('normalizeAppSettings editor shortcuts', () => {
+  it('enables rich-text line numbers for existing settings by default', () => {
+    const settings = normalizeAppSettings({ inlineMenu: { items: ['h2'] } })
+
+    expect(settings.editor.showLineNumbers).toBe(true)
+  })
+
+  it('preserves a disabled rich-text line-number setting', () => {
+    const settings = normalizeAppSettings({
+      editor: {
+        showLineNumbers: false,
+      },
+    })
+
+    expect(settings.editor.showLineNumbers).toBe(false)
+  })
+
   it('adds default editor shortcuts to existing settings', () => {
     const settings = normalizeAppSettings({ inlineMenu: { items: ['h2'] } })
 

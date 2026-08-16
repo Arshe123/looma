@@ -61,7 +61,7 @@ const settingsStore = useSettingsStore()
 const workspaceStore = useWorkspaceStore()
 const platform = window.electronAPI.platform
 const formatShortcut = (shortcut: EditorShortcutBinding) => formatEditorShortcut(shortcut, platform)
-const activePanel = ref<'menu' | 'shortcuts'>('shortcuts')
+const activePanel = ref<'appearance' | 'menu' | 'shortcuts'>('appearance')
 const activeShortcutCategory = ref<ShortcutCategory>('all')
 const draggedInlineMenuIndex = ref<number | null>(null)
 const recordingTarget = ref<ShortcutTarget | null>(null)
@@ -337,6 +337,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecord
       <button
         type="button"
         class="border-b-2 px-0.5 pb-3 text-sm transition-colors"
+        :class="activePanel === 'appearance' ? 'border-accent font-medium text-text-main' : 'border-transparent text-text-muted hover:text-text-main'"
+        @click="activePanel = 'appearance'"
+      >
+        编辑器外观
+      </button>
+      <button
+        type="button"
+        class="border-b-2 px-0.5 pb-3 text-sm transition-colors"
         :class="activePanel === 'menu' ? 'border-accent font-medium text-text-main' : 'border-transparent text-text-muted hover:text-text-main'"
         @click="activePanel = 'menu'"
       >
@@ -352,7 +360,31 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecord
       </button>
     </div>
 
-    <div v-if="activePanel === 'menu'" class="flex min-h-0 flex-col gap-4">
+    <div v-if="activePanel === 'appearance'" class="flex min-h-0 flex-col gap-4">
+      <div class="flex items-center justify-between gap-4 rounded-lg border border-border-soft bg-panel p-4">
+        <div class="min-w-0">
+          <div class="text-sm font-medium text-text-main">显示富文本行号</div>
+          <p class="mt-1 text-xs leading-5 text-text-muted">
+            在富文本编辑器左侧显示与 Markdown 源码对应的行号。
+          </p>
+        </div>
+        <button
+          type="button"
+          class="relative h-[22px] w-10 shrink-0 rounded-full transition-colors"
+          :class="settingsStore.showLineNumbers ? 'bg-accent' : 'bg-text-subtle'"
+          :aria-label="`${settingsStore.showLineNumbers ? '关闭' : '开启'}富文本行号`"
+          :aria-pressed="settingsStore.showLineNumbers"
+          @click="settingsStore.setShowLineNumbers(!settingsStore.showLineNumbers)"
+        >
+          <span
+            class="absolute top-0.5 h-[18px] w-[18px] rounded-full bg-white shadow-sm transition-all"
+            :class="settingsStore.showLineNumbers ? 'left-5' : 'left-0.5'"
+          />
+        </button>
+      </div>
+    </div>
+
+    <div v-else-if="activePanel === 'menu'" class="flex min-h-0 flex-col gap-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <div class="text-sm font-medium text-text-main">富文本编辑器快速插入菜单</div>

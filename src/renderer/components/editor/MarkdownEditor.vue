@@ -2,6 +2,7 @@
 import { defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Columns, Edit3, Eye } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
+import { useSettingsStore } from '@/renderer/stores/settings'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import type TiptapPreviewComponent from '../preview/TiptapPreview.vue'
 import type EditorComponent from './Editor.vue'
@@ -31,6 +32,7 @@ const emit = defineEmits<{
 }>()
 
 const workspaceStore = useWorkspaceStore()
+const settingsStore = useSettingsStore()
 const viewMode = ref<'split' | 'editor' | 'preview'>('preview')
 const splitRatio = ref(0.5)
 const splitContainerRef = ref<HTMLElement | null>(null)
@@ -273,6 +275,7 @@ defineExpose({
         :content="props.content"
         :filePath="props.filePath"
         :relativeFilePath="props.relativeFilePath"
+        :show-line-numbers="settingsStore.showLineNumbers"
         @update:content="(v) => emit('update:content', v)"
         @scroll-sync="syncSplitScrollFromPreview"
       />

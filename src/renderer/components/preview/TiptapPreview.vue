@@ -76,6 +76,7 @@ const props = defineProps<{
   content: string
   filePath: string
   relativeFilePath: string
+  showLineNumbers: boolean
 }>()
 
 const workspaceStore = useWorkspaceStore()
@@ -1009,6 +1010,7 @@ defineExpose({
   <div
     ref="previewContainerRef"
     class="h-full w-full bg-panel overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar"
+    :class="{ 'line-numbers-hidden': !props.showLineNumbers }"
     @dragover="handleExternalImageDragOver"
   >
     <editor-content v-if="editor" :editor="editor" class="h-full" />
@@ -1135,6 +1137,10 @@ defineExpose({
   /* 小字号的视觉中心原先比正文偏上，向下微调后与正文行盒居中。 */
   transform: translateY(0.16rem);
   transition: opacity 0.12s ease;
+}
+
+.tiptap-preview-container.line-numbers-hidden .looma-line-number {
+  visibility: hidden;
 }
 
 .tiptap-preview-container .looma-line-number-active {

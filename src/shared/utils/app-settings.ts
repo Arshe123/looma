@@ -38,6 +38,7 @@ export interface AppSettings {
     version: number
   }
   editor: {
+    showLineNumbers: boolean
     shortcuts: EditorShortcutSettings
     appShortcuts: AppShortcutSettings
   }
@@ -188,6 +189,7 @@ const createDefaultAppSettings = (): AppSettings => {
       version: INLINE_MENU_VERSION,
     },
     editor: {
+      showLineNumbers: true,
       shortcuts: createDefaultEditorShortcutSettings(),
       appShortcuts: createDefaultAppShortcutSettings(),
     },
@@ -388,6 +390,7 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
       version: INLINE_MENU_VERSION,
     },
     editor: {
+      showLineNumbers: normalizeBoolean(editor.showLineNumbers, defaults.editor.showLineNumbers),
       shortcuts: normalizeEditorShortcutSettings(editor.shortcuts),
       appShortcuts: normalizeAppShortcutSettings(editor.appShortcuts),
     },

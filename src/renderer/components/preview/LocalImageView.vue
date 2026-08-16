@@ -3,7 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NodeViewWrapper, nodeViewProps } from '@tiptap/vue-3'
 import { CodeXml } from 'lucide-vue-next'
 import {
+  computeResizedImageWidthPercent,
   formatMarkdownImage,
+  type ImageResizeDirection,
   parseMarkdownImageBlock,
 } from '@/shared/utils/tiptap-image-insertion'
 
@@ -15,11 +17,22 @@ const PREVIEW_IMAGE_SETTLED_EVENT = 'looma:preview-image-settled'
 const renderedSrc = ref('')
 const loadState = ref<ImageLoadState>('idle')
 const wrapperRef = ref<any | null>(null)
+const imageRef = ref<HTMLImageElement | null>(null)
 const markdownInputRef = ref<HTMLInputElement | null>(null)
 const editingMarkdown = ref(false)
 const markdownDraft = ref('')
 const markdownError = ref('')
+const resizing = ref(false)
+const previewWidthPercent = ref<number | null>(null)
 let resolveRunId = 0
+let resizeStart: {
+  direction: ImageResizeDirection
+  clientX: number
+  clientY: number
+  width: number
+  height: number
+  containerWidth: number
+} | null = null
 
 const originalSrc = computed(() => (
   typeof props.node.attrs.src === 'string' ? props.node.attrs.src : ''
@@ -33,11 +46,19 @@ const titleText = computed(() => (
   typeof props.node.attrs.title === 'string' ? props.node.attrs.title : ''
 ))
 
-const width = computed(() => props.node.attrs.width ?? undefined)
-const height = computed(() => props.node.attrs.height ?? undefined)
+const persistedWidthPercent = computed<number | null>(() => {
+  const value = props.node.attrs.widthPercent
+  return typeof value === 'number' && value >= 10 && value <= 100 ? value : null
+})
+const imageFrameStyle = computed(() => {
+  const widthPercent = previewWidthPercent.value ?? persistedWidthPercent.value
+  return widthPercent === null ? undefined : { width: `${widthPercent}%` }
+})
 const currentMarkdown = computed(() => formatMarkdownImage({
   alt: altText.value,
   src: originalSrc.value,
+  title: titleText.value || undefined,
+  widthPercent: persistedWidthPercent.value ?? undefined,
 }))
 const imageLineNumberDecoration = computed(() => (
   (props.decorations as any[]).find(decoration => decoration.spec?.imageLineNumber === true)
@@ -140,6 +161,76 @@ const startMarkdownEdit = () => {
   })
 }
 
+const selectImage = () => {
+  const position = props.getPos()
+  if (typeof position !== 'number') return
+  props.editor.chain().focus().setNodeSelection(position).run()
+}
+
+const handleImageClick = () => {
+  selectImage()
+}
+
+const handleImageDoubleClick = () => {
+  selectImage()
+  startMarkdownEdit()
+}
+
+const stopResizeListeners = () => {
+  window.removeEventListener('pointermove', handleResizeMove)
+  window.removeEventListener('pointerup', handleResizeEnd)
+  window.removeEventListener('pointercancel', handleResizeEnd)
+}
+
+const handleResizeMove = (event: PointerEvent) => {
+  if (!resizeStart) return
+  event.preventDefault()
+  previewWidthPercent.value = computeResizedImageWidthPercent({
+    direction: resizeStart.direction,
+    startWidth: resizeStart.width,
+    startHeight: resizeStart.height,
+    containerWidth: resizeStart.containerWidth,
+    deltaX: event.clientX - resizeStart.clientX,
+    deltaY: event.clientY - resizeStart.clientY,
+  })
+}
+
+const handleResizeEnd = () => {
+  if (!resizeStart) return
+  resizeStart = null
+  resizing.value = false
+  stopResizeListeners()
+  if (previewWidthPercent.value !== null) {
+    props.updateAttributes({ widthPercent: previewWidthPercent.value })
+  }
+}
+
+const startResize = (direction: ImageResizeDirection, event: PointerEvent) => {
+  const image = imageRef.value
+  const wrapper = getWrapperElement()
+  if (!image || !wrapper) return
+  event.preventDefault()
+  event.stopPropagation()
+  selectImage()
+  const imageRect = image.getBoundingClientRect()
+  const containerWidth = wrapper.parentElement?.clientWidth || wrapper.clientWidth
+  if (imageRect.width <= 0 || imageRect.height <= 0 || containerWidth <= 0) return
+  resizeStart = {
+    direction,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    width: imageRect.width,
+    height: imageRect.height,
+    containerWidth,
+  }
+  previewWidthPercent.value = persistedWidthPercent.value
+    ?? Math.round((imageRect.width / containerWidth) * 100)
+  resizing.value = true
+  window.addEventListener('pointermove', handleResizeMove, { passive: false })
+  window.addEventListener('pointerup', handleResizeEnd)
+  window.addEventListener('pointercancel', handleResizeEnd)
+}
+
 const saveMarkdownEdit = () => {
   const target = parseMarkdownImageBlock(markdownDraft.value.trim())
   if (!target) {
@@ -150,6 +241,8 @@ const saveMarkdownEdit = () => {
   props.updateAttributes({
     alt: target.alt,
     src: target.src,
+    title: target.title ?? null,
+    widthPercent: target.widthPercent ?? null,
   })
   editingMarkdown.value = false
   markdownError.value = ''
@@ -177,6 +270,8 @@ onMounted(() => document.addEventListener('pointerdown', handleDocumentPointerDo
 
 onBeforeUnmount(() => {
   resolveRunId += 1
+  resizeStart = null
+  stopResizeListeners()
   document.removeEventListener('pointerdown', handleDocumentPointerDown, true)
 })
 </script>
@@ -185,7 +280,7 @@ onBeforeUnmount(() => {
   <NodeViewWrapper
     ref="wrapperRef"
     class="local-image-node"
-    :class="{ 'is-markdown-editing': editingMarkdown }"
+    :class="{ 'is-markdown-editing': editingMarkdown, 'is-resizing': resizing }"
     contenteditable="false"
   >
     <span
@@ -195,18 +290,42 @@ onBeforeUnmount(() => {
       :data-line="imageLineNumber"
       aria-hidden="true"
     >{{ imageLineNumber }}</span>
-    <img
-      v-if="renderedSrc"
-      :src="renderedSrc"
-      :alt="altText"
-      :title="titleText || '点击编辑图片 Markdown'"
-      :width="width"
-      :height="height"
-      draggable="true"
-      @load="handleImageLoad"
-      @error="handleImageError"
-      @click.stop="startMarkdownEdit"
-    >
+    <div v-if="renderedSrc" class="local-image-resize-frame" :style="imageFrameStyle">
+      <img
+        ref="imageRef"
+        :src="renderedSrc"
+        :alt="altText"
+        :title="titleText || '单击选择，双击编辑图片 Markdown'"
+        draggable="true"
+        @load="handleImageLoad"
+        @error="handleImageError"
+        @click.stop="handleImageClick"
+        @dblclick.stop="handleImageDoubleClick"
+      >
+      <template v-if="props.selected && !editingMarkdown">
+        <button
+          type="button"
+          class="local-image-resize-handle local-image-resize-right"
+          aria-label="从右侧等比例缩放图片"
+          tabindex="-1"
+          @pointerdown="startResize('right', $event)"
+        />
+        <button
+          type="button"
+          class="local-image-resize-handle local-image-resize-bottom"
+          aria-label="从下侧等比例缩放图片"
+          tabindex="-1"
+          @pointerdown="startResize('bottom', $event)"
+        />
+        <button
+          type="button"
+          class="local-image-resize-handle local-image-resize-bottom-right"
+          aria-label="从右下角等比例缩放图片"
+          tabindex="-1"
+          @pointerdown="startResize('bottomRight', $event)"
+        />
+      </template>
+    </div>
     <div
       v-else
       class="local-image-placeholder"
@@ -244,6 +363,58 @@ onBeforeUnmount(() => {
   position: relative;
   margin: 0.85em 0;
   border-radius: 8px;
+}
+
+.tiptap .local-image-resize-frame,
+.markdown-body .local-image-resize-frame {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.tiptap .local-image-resize-frame[style] img,
+.markdown-body .local-image-resize-frame[style] img {
+  width: 100%;
+  max-height: none;
+}
+
+.tiptap .local-image-node.ProseMirror-selectednode img,
+.tiptap .local-image-node.is-resizing img {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tiptap .local-image-resize-handle {
+  position: absolute;
+  z-index: 2;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 2px solid var(--panel-bg);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  touch-action: none;
+}
+
+.tiptap .local-image-resize-right {
+  top: 50%;
+  right: -5px;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+
+.tiptap .local-image-resize-bottom {
+  bottom: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+
+.tiptap .local-image-resize-bottom-right {
+  right: -5px;
+  bottom: -5px;
+  cursor: nwse-resize;
 }
 
 .tiptap .local-image-node > .looma-image-line-number {

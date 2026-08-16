@@ -13,6 +13,7 @@ import {
   prepareMarkdownForRichText,
   serializeMarkdownAst,
 } from '../markdown-rich-text'
+import { ResizableMarkdownImage } from '../resizable-markdown-image'
 
 const createManager = () => new MarkdownManager({
   extensions: [
@@ -25,6 +26,10 @@ const createManager = () => new MarkdownManager({
     TableHeader,
     TableCell,
   ],
+})
+
+const createResizableImageManager = () => new MarkdownManager({
+  extensions: [StarterKit, ResizableMarkdownImage.configure({ inline: false })],
 })
 
 const serialize = (manager: MarkdownManager, doc: JSONContent) => serializeMarkdownAst({
@@ -51,6 +56,22 @@ describe('official @tiptap/markdown AST serialization', () => {
 
     expect(serialize(manager, doc)).toContain('| A')
     expect(serialize(manager, doc)).toContain('| 1')
+  })
+
+  it('preserves a percentage image width through the Tiptap Markdown AST', () => {
+    const manager = createResizableImageManager()
+    const markdown = '![架构图](assets/architecture.png){width=60%}'
+    const doc = manager.parse(markdown)
+
+    expect(doc.content?.[0]?.attrs?.widthPercent).toBe(60)
+    expect(serialize(manager, doc)).toBe(markdown)
+  })
+
+  it('keeps an existing image title while persisting its width', () => {
+    const manager = createResizableImageManager()
+    const markdown = '![架构图](assets/architecture.png "产品架构"){width=60%}'
+
+    expect(serialize(manager, manager.parse(markdown))).toBe(markdown)
   })
 
   it('uses nbsp for consecutive empty paragraphs and reparses the same structure', () => {

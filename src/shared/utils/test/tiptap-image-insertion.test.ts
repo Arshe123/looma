@@ -3,6 +3,8 @@ import { EditorState, TextSelection } from '@tiptap/pm/state'
 import type { Editor } from '@tiptap/vue-3'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  clampImageWidthPercent,
+  computeResizedImageWidthPercent,
   MARKDOWN_IMAGE_CURSOR_OFFSET,
   MARKDOWN_IMAGE_TEMPLATE,
   formatMarkdownImage,
@@ -48,6 +50,48 @@ describe('tiptap image insertion helpers', () => {
       alt: '产品封面',
       src: 'assets/product-cover.png',
     })).toBe('![产品封面](assets/product-cover.png)')
+  })
+
+  it('round-trips a persisted percentage width extension', () => {
+    expect(parseMarkdownImageBlock('![架构图](assets/architecture.png){width=60%}')).toEqual({
+      alt: '架构图',
+      src: 'assets/architecture.png',
+      widthPercent: 60,
+    })
+    expect(formatMarkdownImage({
+      alt: '架构图',
+      src: 'assets/architecture.png',
+      widthPercent: 60,
+    })).toBe('![架构图](assets/architecture.png){width=60%}')
+  })
+
+  it('clamps persisted widths and derives proportional resizing from each handle', () => {
+    expect(clampImageWidthPercent(4)).toBe(10)
+    expect(clampImageWidthPercent(120)).toBe(100)
+    expect(computeResizedImageWidthPercent({
+      direction: 'right',
+      startWidth: 400,
+      startHeight: 200,
+      containerWidth: 800,
+      deltaX: 80,
+      deltaY: 0,
+    })).toBe(60)
+    expect(computeResizedImageWidthPercent({
+      direction: 'bottom',
+      startWidth: 400,
+      startHeight: 200,
+      containerWidth: 800,
+      deltaX: 0,
+      deltaY: 40,
+    })).toBe(60)
+    expect(computeResizedImageWidthPercent({
+      direction: 'bottomRight',
+      startWidth: 400,
+      startHeight: 200,
+      containerWidth: 800,
+      deltaX: 40,
+      deltaY: 40,
+    })).toBe(60)
   })
 
   it('accepts local absolute paths and rejects an empty source', () => {

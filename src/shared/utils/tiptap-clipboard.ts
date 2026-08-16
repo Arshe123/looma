@@ -63,6 +63,10 @@ export const getTiptapClipboardCopyText = (state: EditorState) => {
     return formatMarkdownImage({
       alt: typeof selection.node.attrs.alt === 'string' ? selection.node.attrs.alt : '',
       src: typeof selection.node.attrs.src === 'string' ? selection.node.attrs.src : '',
+      title: typeof selection.node.attrs.title === 'string' ? selection.node.attrs.title : undefined,
+      widthPercent: typeof selection.node.attrs.widthPercent === 'number'
+        ? selection.node.attrs.widthPercent
+        : undefined,
     })
   }
   if (selection.empty) return null

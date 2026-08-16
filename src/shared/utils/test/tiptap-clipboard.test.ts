@@ -19,7 +19,7 @@ const schema = new Schema({
     image: {
       group: 'block',
       selectable: true,
-      attrs: { src: {}, alt: { default: null } },
+      attrs: { src: {}, alt: { default: null }, widthPercent: { default: null } },
     },
     text: { group: 'inline' },
   },
@@ -71,6 +71,18 @@ describe('tiptap clipboard helpers', () => {
     state = state.apply(state.tr.setSelection(NodeSelection.create(state.doc, 0)))
 
     expect(getTiptapClipboardCopyText(state)).toBe('![架构图](assets/架构图.png)')
+  })
+
+  it('keeps a resized image width when copying its Markdown', () => {
+    const image = schema.nodes.image.create({
+      src: 'assets/架构图.png',
+      alt: '架构图',
+      widthPercent: 60,
+    })
+    let state = EditorState.create({ schema, doc: schema.nodes.doc.create(null, [image]) })
+    state = state.apply(state.tr.setSelection(NodeSelection.create(state.doc, 0)))
+
+    expect(getTiptapClipboardCopyText(state)).toBe('![架构图](assets/架构图.png){width=60%}')
   })
 
   it('formats a right-clicked note reference for quick copy', () => {

@@ -8,7 +8,6 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import Placeholder from '@tiptap/extension-placeholder'
 import { Highlight } from '@tiptap/extension-highlight'
-import Image from '@tiptap/extension-image'
 import { TableRow } from '@tiptap/extension-table-row'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableCell } from '@tiptap/extension-table-cell'
@@ -71,6 +70,7 @@ import {
 import { LineNumbers } from '@/shared/utils/tiptap-line-numbers'
 import { LinkIcons } from '@/shared/utils/tiptap-link-icons'
 import { getNoteRefClickIntent } from '@/shared/utils/note-ref-interaction'
+import { ResizableMarkdownImage } from '@/shared/utils/resizable-markdown-image'
 
 const props = defineProps<{
   content: string
@@ -261,7 +261,7 @@ const CodeBlockWithHeader = CodeBlock.extend({
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
 const resolvedImageCache = new Map<string, string | null>()
 
-const LocalImage = Image.extend({
+const LocalImage = ResizableMarkdownImage.extend({
   addStorage() {
     return {
       resolveImageSrc,

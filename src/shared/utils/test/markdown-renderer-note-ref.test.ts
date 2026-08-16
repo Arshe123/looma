@@ -25,4 +25,14 @@ describe('renderMarkdown note ref links', () => {
     expect(renderMarkdown('![图](image.png)')).not.toContain('looma-note-ref')
     expect(renderMarkdown('[锚](#标题)')).not.toContain('looma-note-ref')
   })
+
+  it('applies a validated image width extension without rendering the attribute text', () => {
+    const html = renderMarkdown('![图](image.png){width=60%}')
+    expect(html).toContain('style="width: 60%; height: auto;"')
+    expect(html).not.toContain('{width=60%}')
+  })
+
+  it('leaves invalid image width extensions as text', () => {
+    expect(renderMarkdown('![图](image.png){width=101%}')).toContain('{width=101%}')
+  })
 })

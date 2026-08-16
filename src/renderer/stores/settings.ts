@@ -16,6 +16,7 @@ import {
   createDefaultAppShortcutSettings,
   type AppShortcutId,
 } from '@/shared/utils/app-shortcuts'
+import { normalizeRichTextZoom } from '@/shared/utils/rich-text-zoom'
 
 type NamedEditorShortcut =
   | 'headingLevelUp'
@@ -37,6 +38,7 @@ export const useSettingsStore = defineStore('settings', {
   getters: {
     inlineMenuItems: (state) => state.settings.inlineMenu.items,
     showLineNumbers: (state) => state.settings.editor.showLineNumbers,
+    richTextZoom: (state) => state.settings.editor.richTextZoom,
     editorShortcuts: (state) => state.settings.editor.shortcuts,
     appShortcuts: (state) => state.settings.editor.appShortcuts,
     aiSettings: (state) => state.settings.ai,
@@ -107,6 +109,11 @@ export const useSettingsStore = defineStore('settings', {
 
     async setShowLineNumbers(value: boolean) {
       this.settings.editor.showLineNumbers = value
+      await this.persist()
+    },
+
+    async setRichTextZoom(value: number) {
+      this.settings.editor.richTextZoom = normalizeRichTextZoom(value)
       await this.persist()
     },
 

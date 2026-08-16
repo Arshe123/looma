@@ -9,6 +9,7 @@ import {
   normalizeAppShortcutSettings,
   type AppShortcutSettings,
 } from './app-shortcuts'
+import { DEFAULT_RICH_TEXT_ZOOM, normalizeRichTextZoom } from './rich-text-zoom'
 
 export type AiProvider = 'ollama' | 'openai' | 'deepseek' | 'qwen' | 'custom'
 
@@ -39,6 +40,7 @@ export interface AppSettings {
   }
   editor: {
     showLineNumbers: boolean
+    richTextZoom: number
     shortcuts: EditorShortcutSettings
     appShortcuts: AppShortcutSettings
   }
@@ -190,6 +192,7 @@ const createDefaultAppSettings = (): AppSettings => {
     },
     editor: {
       showLineNumbers: true,
+      richTextZoom: DEFAULT_RICH_TEXT_ZOOM,
       shortcuts: createDefaultEditorShortcutSettings(),
       appShortcuts: createDefaultAppShortcutSettings(),
     },
@@ -391,6 +394,7 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
     },
     editor: {
       showLineNumbers: normalizeBoolean(editor.showLineNumbers, defaults.editor.showLineNumbers),
+      richTextZoom: normalizeRichTextZoom(editor.richTextZoom),
       shortcuts: normalizeEditorShortcutSettings(editor.shortcuts),
       appShortcuts: normalizeAppShortcutSettings(editor.appShortcuts),
     },

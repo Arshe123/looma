@@ -9,6 +9,7 @@ import {
   Highlighter,
   Keyboard,
   ListTree,
+  Minus,
   Plus,
   RotateCcw,
   Trash2,
@@ -33,6 +34,12 @@ import {
   type AppShortcutId,
 } from '@/shared/utils/app-shortcuts'
 import { createDefaultEditorShortcutSettings } from '@/shared/utils/editor-shortcuts'
+import {
+  DEFAULT_RICH_TEXT_ZOOM,
+  MAX_RICH_TEXT_ZOOM,
+  MIN_RICH_TEXT_ZOOM,
+  RICH_TEXT_ZOOM_STEP,
+} from '@/shared/utils/rich-text-zoom'
 
 type ShortcutCategory = 'all' | 'workspace' | 'file' | 'heading' | 'format' | 'menu' | 'modified'
 type ShortcutTarget =
@@ -361,6 +368,43 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleShortcutRecord
     </div>
 
     <div v-if="activePanel === 'appearance'" class="flex min-h-0 flex-col gap-4">
+      <div class="flex items-center justify-between gap-4 rounded-lg border border-border-soft bg-panel p-4">
+        <div class="min-w-0">
+          <div class="text-sm font-medium text-text-main">富文本内容大小</div>
+          <p class="mt-1 text-xs leading-5 text-text-muted">
+            调整普通富文本和大文件预览的文字大小，也可以在编辑器中按住 Ctrl/Command 滚动滚轮。
+          </p>
+        </div>
+        <div class="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            class="flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-40"
+            title="减小富文本内容"
+            :disabled="settingsStore.richTextZoom <= MIN_RICH_TEXT_ZOOM"
+            @click="settingsStore.setRichTextZoom(settingsStore.richTextZoom - RICH_TEXT_ZOOM_STEP)"
+          >
+            <Minus :size="15" />
+          </button>
+          <span class="w-12 text-center text-xs font-medium text-text-main">{{ settingsStore.richTextZoom }}%</span>
+          <button
+            type="button"
+            class="flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-40"
+            title="增大富文本内容"
+            :disabled="settingsStore.richTextZoom >= MAX_RICH_TEXT_ZOOM"
+            @click="settingsStore.setRichTextZoom(settingsStore.richTextZoom + RICH_TEXT_ZOOM_STEP)"
+          >
+            <Plus :size="15" />
+          </button>
+          <button
+            type="button"
+            class="ml-1 rounded-md border border-border-soft px-2 py-1.5 text-xs text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main"
+            @click="settingsStore.setRichTextZoom(DEFAULT_RICH_TEXT_ZOOM)"
+          >
+            100%
+          </button>
+        </div>
+      </div>
+
       <div class="flex items-center justify-between gap-4 rounded-lg border border-border-soft bg-panel p-4">
         <div class="min-w-0">
           <div class="text-sm font-medium text-text-main">显示富文本行号</div>

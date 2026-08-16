@@ -7,6 +7,8 @@ import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import type TiptapPreviewComponent from '../preview/TiptapPreview.vue'
 import type EditorComponent from './Editor.vue'
 import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
+import { isPrimaryModifierPressed } from '@/shared/utils/platform-shortcuts'
+import { getNextRichTextZoom } from '@/shared/utils/rich-text-zoom'
 
 const Editor = defineAsyncComponent(() => import('./Editor.vue'))
 const TiptapPreview = defineAsyncComponent(() => import('../preview/TiptapPreview.vue'))
@@ -40,13 +42,18 @@ const editorRef = ref<InstanceType<typeof EditorComponent> | null>(null)
 const previewRef = ref<InstanceType<typeof TiptapPreviewComponent> | null>(null)
 const chunkedPreviewRef = ref<any>(null)
 const isPreparingFullContent = ref(false)
+const zoomIndicatorVisible = ref(false)
 let isResizingSplit = false
 let previousBodyCursor = ''
 let previousBodyUserSelect = ''
 let isSyncingScroll = false
 let ignoreEditorScrollUntil = 0
 let ignorePreviewScrollUntil = 0
+let lastZoomWheelAt = 0
+let zoomIndicatorTimer: number | null = null
 const SCROLL_SYNC_GUARD_MS = 180
+const ZOOM_WHEEL_THROTTLE_MS = 80
+const ZOOM_INDICATOR_DURATION_MS = 900
 
 const clampSplitRatio = (ratio: number) => Math.min(Math.max(ratio, 0.2), 0.8)
 
@@ -134,6 +141,43 @@ const syncSplitScrollFromPreview = (state: ScrollSyncState) => {
   editorRef.value?.applyScrollState?.(state)
 }
 
+const getRenderedPreviewScrollState = () => props.useChunkedPreview
+  ? chunkedPreviewRef.value?.getScrollState?.()
+  : previewRef.value?.getScrollState?.()
+
+const applyRenderedPreviewScrollState = (state?: ScrollSyncState | null) => {
+  if (!state) return
+  if (props.useChunkedPreview) chunkedPreviewRef.value?.applyScrollState?.(state)
+  else previewRef.value?.applyScrollState?.(state)
+}
+
+const showZoomIndicator = () => {
+  zoomIndicatorVisible.value = true
+  if (zoomIndicatorTimer !== null) window.clearTimeout(zoomIndicatorTimer)
+  zoomIndicatorTimer = window.setTimeout(() => {
+    zoomIndicatorVisible.value = false
+    zoomIndicatorTimer = null
+  }, ZOOM_INDICATOR_DURATION_MS)
+}
+
+const handleRichTextZoomWheel = (event: WheelEvent) => {
+  if (!isPrimaryModifierPressed(event, window.electronAPI.platform) || event.deltaY === 0) return
+  event.preventDefault()
+
+  const now = Date.now()
+  if (now - lastZoomWheelAt < ZOOM_WHEEL_THROTTLE_MS) return
+  lastZoomWheelAt = now
+
+  const nextZoom = getNextRichTextZoom(settingsStore.richTextZoom, event.deltaY)
+  showZoomIndicator()
+  if (nextZoom === settingsStore.richTextZoom) return
+  const scrollState = getRenderedPreviewScrollState()
+  void settingsStore.setRichTextZoom(nextZoom)
+  nextTick(() => {
+    requestAnimationFrame(() => applyRenderedPreviewScrollState(scrollState))
+  })
+}
+
 const setViewMode = async (nextMode: 'split' | 'editor' | 'preview') => {
   if (viewMode.value === nextMode) return
   if (nextMode !== 'preview' && (props.isPartial || props.isLoading)) {
@@ -168,6 +212,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopSplitResize()
+  if (zoomIndicatorTimer !== null) window.clearTimeout(zoomIndicatorTimer)
 })
 
 watch(viewMode, () => {
@@ -253,7 +298,21 @@ defineExpose({
       style="-webkit-app-region: no-drag"
       @pointerdown="startSplitResize"
     />
-    <div v-if="viewMode !== 'editor'" class="flex-1 overflow-hidden" :class="{ 'border-l border-border-soft': viewMode === 'split' }">
+    <div
+      v-if="viewMode !== 'editor'"
+      class="rich-text-zoom-scope relative flex-1 overflow-hidden"
+      :class="{ 'border-l border-border-soft': viewMode === 'split' }"
+      :style="{ '--rich-text-font-size': `${settingsStore.richTextZoom / 100}rem` }"
+      @wheel="handleRichTextZoomWheel"
+    >
+      <div
+        v-if="zoomIndicatorVisible"
+        class="pointer-events-none absolute left-1/2 top-4 z-30 -translate-x-1/2 rounded-lg border border-border-soft bg-panel/90 px-3 py-1.5 text-sm font-semibold text-text-main shadow-lg backdrop-blur-xs"
+        role="status"
+        aria-live="polite"
+      >
+        {{ settingsStore.richTextZoom }}%
+      </div>
       <div v-if="isLoading" class="h-full flex items-center justify-center text-sm text-text-muted">
         正在加载笔记首屏内容...
       </div>

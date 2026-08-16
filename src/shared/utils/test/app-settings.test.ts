@@ -143,6 +143,13 @@ describe('normalizeAppSettings inline menu customization', () => {
 })
 
 describe('normalizeAppSettings editor shortcuts', () => {
+  it('defaults and normalizes the persisted rich-text zoom', () => {
+    expect(normalizeAppSettings({}).editor.richTextZoom).toBe(100)
+    expect(normalizeAppSettings({ editor: { richTextZoom: 125 } }).editor.richTextZoom).toBe(125)
+    expect(normalizeAppSettings({ editor: { richTextZoom: 20 } }).editor.richTextZoom).toBe(75)
+    expect(normalizeAppSettings({ editor: { richTextZoom: 500 } }).editor.richTextZoom).toBe(200)
+  })
+
   it('enables rich-text line numbers for existing settings by default', () => {
     const settings = normalizeAppSettings({ inlineMenu: { items: ['h2'] } })
 

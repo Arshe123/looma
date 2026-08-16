@@ -80,6 +80,10 @@
   font-synthesis: style;
 }
 
+.rich-text-zoom-scope .markdown-body {
+  font-size: var(--rich-text-font-size, 1rem);
+}
+
 :root:not([data-theme]) {
   color-scheme: light;
   --bg: #f4f5f7;

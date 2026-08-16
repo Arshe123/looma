@@ -335,6 +335,9 @@ interface ElectronAPI {
     }) => Promise<Result<DraftRecoveryRecordPayload>>;
     get: (workspaceId: string, relativePath: string, diskContent: string) => Promise<Result<DraftRecoveryResultPayload>>;
     remove: (workspaceId: string, relativePath: string, expectedRevision?: string) => Promise<Result<boolean>>;
+    move: (workspaceId: string, fromRelativePath: string, toRelativePath: string, expectedRevision: string) => Promise<Result<boolean>>;
+    movePaths: (workspaceId: string, items: { from: string; to: string }[]) => Promise<Result<number>>;
+    removePaths: (workspaceId: string, relativePaths: string[]) => Promise<Result<number>>;
   };
   workspaceAi: {
     get: (workspaceId: string) => Promise<Result<AiAssistantStatePayload>>;

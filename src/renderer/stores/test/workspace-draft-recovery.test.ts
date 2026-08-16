@@ -126,4 +126,102 @@ describe('workspace draft recovery', () => {
     expect(newerRevision).not.toBe(firstRevision)
     expect(removeDraft).toHaveBeenCalledWith(workspace.id, 'note.md', firstRevision)
   })
+
+  it('continues the original-file save when recovery persistence rejects', async () => {
+    const writeMarkdown = vi.fn().mockResolvedValue({ success: true })
+    ;(window as any).electronAPI = {
+      file: { writeMarkdown },
+      draftRecovery: {
+        save: vi.fn().mockRejectedValue(new Error('disk full')),
+        remove: vi.fn().mockResolvedValue({ success: true }),
+      },
+    }
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.activeFileRelativePath = 'note.md'
+    store.activeFilePath = '/notes/note.md'
+    store.openedTextFileContents['note.md'] = createTextState('saved')
+    store.setActiveFileContent('draft', 'note.md')
+
+    const result = await store.saveActiveFileContent('draft', 'note.md')
+
+    expect(result.success).toBe(true)
+    expect(writeMarkdown).toHaveBeenCalledWith('/notes/note.md', 'draft', 'saved')
+    expect(store.openedTextFileContents['note.md'].isSaving).toBe(false)
+  })
+
+  it('requires confirmation before a recovered conflict can overwrite external changes', async () => {
+    const writeMarkdown = vi.fn()
+    ;(window as any).electronAPI = {
+      app: { showMessageBox: vi.fn().mockResolvedValue({ response: 1 }) },
+      file: { writeMarkdown },
+      draftRecovery: {
+        save: vi.fn().mockResolvedValue({ success: true }),
+        remove: vi.fn().mockResolvedValue({ success: true }),
+      },
+    }
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.activeFileRelativePath = 'note.md'
+    store.activeFilePath = '/notes/note.md'
+    store.openedTextFileContents['note.md'] = {
+      ...createTextState('external change'),
+      content: 'recovered draft',
+      recoveryRevision: 'recovered-revision',
+      recoveryConflict: true,
+    }
+
+    const result = await store.saveActiveFileContent('recovered draft', 'note.md')
+
+    expect(result.success).toBe(false)
+    expect(writeMarkdown).not.toHaveBeenCalled()
+    expect(store.isFileDirty('note.md')).toBe(true)
+  })
+
+  it('migrates a dirty recovery draft when its open file is renamed', async () => {
+    const saveDraft = vi.fn().mockResolvedValue({ success: true })
+    const movePaths = vi.fn().mockResolvedValue({ success: true, data: 1 })
+    ;(window as any).electronAPI = {
+      draftRecovery: {
+        save: saveDraft,
+        movePaths,
+        remove: vi.fn().mockResolvedValue({ success: true }),
+      },
+    }
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.openedTextFileContents['old/note.md'] = {
+      ...createTextState('saved'),
+      content: 'draft',
+      recoveryRevision: 'revision-1',
+    }
+
+    store.syncOpenedFilesAfterMove([{ from: 'old', to: 'new' }])
+    await store.migrateDraftRecoveryAfterMove([{ from: 'old', to: 'new' }])
+
+    expect(movePaths).toHaveBeenCalledWith(workspace.id, [{ from: 'old', to: 'new' }])
+    expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({ relativePath: 'new/note.md', draftContent: 'draft' }))
+  })
+
+  it('removes the matching recovery revision after a file is deleted', async () => {
+    const removeDraft = vi.fn().mockResolvedValue({ success: true, data: true })
+    ;(window as any).electronAPI = {
+      draftRecovery: { removePaths: removeDraft },
+    }
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.openedTextFileContents['folder/note.md'] = {
+      ...createTextState('saved'),
+      content: 'draft',
+      recoveryRevision: 'revision-1',
+    }
+
+    await store.removeDraftRecoveryForPaths(['folder'])
+
+    expect(removeDraft).toHaveBeenCalledWith(workspace.id, ['folder'])
+  })
 })

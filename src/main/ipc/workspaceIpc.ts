@@ -118,6 +118,7 @@ ipcMain.handle('workspaceMeta:set', async (_, workspaceId: string, meta: any) =>
 
 ipcMain.handle('draftRecovery:save', async (_, input: SaveDraftInput) => {
   try {
+    if (!await getWorkspaceById(input.workspaceId)) return { success: false, error: '工作空间不存在' };
     const data = await getDraftRecoveryStore().save(input);
     return { success: true, data };
   } catch (error: any) {
@@ -127,6 +128,7 @@ ipcMain.handle('draftRecovery:save', async (_, input: SaveDraftInput) => {
 
 ipcMain.handle('draftRecovery:get', async (_, workspaceId: string, relativePath: string, diskContent: string) => {
   try {
+    if (!await getWorkspaceById(workspaceId)) return { success: false, error: '工作空间不存在' };
     const data = await getDraftRecoveryStore().get(workspaceId, relativePath, diskContent);
     return { success: true, data };
   } catch (error: any) {
@@ -136,10 +138,41 @@ ipcMain.handle('draftRecovery:get', async (_, workspaceId: string, relativePath:
 
 ipcMain.handle('draftRecovery:remove', async (_, workspaceId: string, relativePath: string, expectedRevision?: string) => {
   try {
+    if (!await getWorkspaceById(workspaceId)) return { success: false, error: '工作空间不存在' };
     const data = await getDraftRecoveryStore().remove(workspaceId, relativePath, expectedRevision);
     return { success: true, data };
   } catch (error: any) {
     return { success: false, error: `清理恢复草稿失败: ${error?.message ?? String(error)}` };
+  }
+});
+
+ipcMain.handle('draftRecovery:move', async (_, workspaceId: string, fromRelativePath: string, toRelativePath: string, expectedRevision: string) => {
+  try {
+    if (!await getWorkspaceById(workspaceId)) return { success: false, error: '工作空间不存在' };
+    const data = await getDraftRecoveryStore().move(workspaceId, fromRelativePath, toRelativePath, expectedRevision);
+    return { success: true, data };
+  } catch (error: any) {
+    return { success: false, error: `迁移恢复草稿失败: ${error?.message ?? String(error)}` };
+  }
+});
+
+ipcMain.handle('draftRecovery:movePaths', async (_, workspaceId: string, items: { from: string; to: string }[]) => {
+  try {
+    if (!await getWorkspaceById(workspaceId)) return { success: false, error: '工作空间不存在' };
+    const data = await getDraftRecoveryStore().movePaths(workspaceId, items);
+    return { success: true, data };
+  } catch (error: any) {
+    return { success: false, error: `批量迁移恢复草稿失败: ${error?.message ?? String(error)}` };
+  }
+});
+
+ipcMain.handle('draftRecovery:removePaths', async (_, workspaceId: string, relativePaths: string[]) => {
+  try {
+    if (!await getWorkspaceById(workspaceId)) return { success: false, error: '工作空间不存在' };
+    const data = await getDraftRecoveryStore().removePaths(workspaceId, relativePaths);
+    return { success: true, data };
+  } catch (error: any) {
+    return { success: false, error: `批量清理恢复草稿失败: ${error?.message ?? String(error)}` };
   }
 });
 

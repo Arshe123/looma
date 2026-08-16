@@ -93,6 +93,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('draftRecovery:get', workspaceId, relativePath, diskContent),
     remove: (workspaceId: string, relativePath: string, expectedRevision?: string) =>
       ipcRenderer.invoke('draftRecovery:remove', workspaceId, relativePath, expectedRevision),
+    move: (workspaceId: string, fromRelativePath: string, toRelativePath: string, expectedRevision: string) =>
+      ipcRenderer.invoke('draftRecovery:move', workspaceId, fromRelativePath, toRelativePath, expectedRevision),
+    movePaths: (workspaceId: string, items: { from: string; to: string }[]) =>
+      ipcRenderer.invoke('draftRecovery:movePaths', workspaceId, items),
+    removePaths: (workspaceId: string, relativePaths: string[]) =>
+      ipcRenderer.invoke('draftRecovery:removePaths', workspaceId, relativePaths),
   },
   workspaceAi: {
     get: (workspaceId: string) => ipcRenderer.invoke('workspaceAi:get', workspaceId),

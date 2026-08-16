@@ -43,6 +43,31 @@ describe('DraftRecoveryStore', () => {
     expect(await readdir(rootDir)).toHaveLength(1)
   })
 
+  it('commits each replacement to a new filename before retiring the previous record', async () => {
+    await store.save({
+      workspaceId: WORKSPACE_ID,
+      relativePath: RELATIVE_PATH,
+      draftContent: 'first',
+      baseContent: 'saved',
+      revision: 'revision-1',
+    })
+    const [workspaceDirectory] = await readdir(rootDir)
+    const firstFiles = (await readdir(path.join(rootDir, workspaceDirectory))).filter((name) => name.endsWith('.json'))
+
+    await store.save({
+      workspaceId: WORKSPACE_ID,
+      relativePath: RELATIVE_PATH,
+      draftContent: 'second',
+      baseContent: 'saved',
+      revision: 'revision-2',
+    })
+    const secondFiles = (await readdir(path.join(rootDir, workspaceDirectory))).filter((name) => name.endsWith('.json'))
+
+    expect(firstFiles).toHaveLength(1)
+    expect(secondFiles).toHaveLength(1)
+    expect(secondFiles[0]).not.toBe(firstFiles[0])
+  })
+
   it('reports a conflict when the file changed outside Looma', async () => {
     await store.save({
       workspaceId: WORKSPACE_ID,
@@ -88,6 +113,44 @@ describe('DraftRecoveryStore', () => {
     expect(await store.get(WORKSPACE_ID, RELATIVE_PATH, 'saved')).toEqual({ status: 'none' })
   })
 
+  it('moves a matching recovery revision to a renamed path', async () => {
+    await store.save({
+      workspaceId: WORKSPACE_ID,
+      relativePath: 'old/note.md',
+      draftContent: 'draft',
+      baseContent: 'saved',
+      revision: 'revision-1',
+    })
+
+    expect(await store.move(WORKSPACE_ID, 'old/note.md', 'new/note.md', 'revision-1')).toBe(true)
+    expect(await store.get(WORKSPACE_ID, 'old/note.md', 'saved')).toEqual({ status: 'none' })
+    const moved = await store.get(WORKSPACE_ID, 'new/note.md', 'saved')
+    expect(moved.status).toBe('restorable')
+    if (moved.status !== 'none') {
+      expect(moved.draft.relativePath).toBe('new/note.md')
+      expect(moved.draft.draftContent).toBe('draft')
+    }
+  })
+
+  it('moves dormant drafts under a renamed directory without renderer state', async () => {
+    await store.save({ workspaceId: WORKSPACE_ID, relativePath: 'old/a.md', draftContent: 'draft a', baseContent: 'saved a', revision: 'a-1' })
+    await store.save({ workspaceId: WORKSPACE_ID, relativePath: 'old/nested/b.md', draftContent: 'draft b', baseContent: 'saved b', revision: 'b-1' })
+
+    expect(await store.movePaths(WORKSPACE_ID, [{ from: 'old', to: 'renamed' }])).toBe(2)
+    expect((await store.get(WORKSPACE_ID, 'renamed/a.md', 'saved a')).status).toBe('restorable')
+    expect((await store.get(WORKSPACE_ID, 'renamed/nested/b.md', 'saved b')).status).toBe('restorable')
+    expect(await store.get(WORKSPACE_ID, 'old/a.md', 'saved a')).toEqual({ status: 'none' })
+  })
+
+  it('removes dormant drafts under a deleted directory without renderer state', async () => {
+    await store.save({ workspaceId: WORKSPACE_ID, relativePath: 'deleted/a.md', draftContent: 'draft a', baseContent: 'saved a', revision: 'a-1' })
+    await store.save({ workspaceId: WORKSPACE_ID, relativePath: 'kept/b.md', draftContent: 'draft b', baseContent: 'saved b', revision: 'b-1' })
+
+    expect(await store.removePaths(WORKSPACE_ID, ['deleted'])).toBe(1)
+    expect(await store.get(WORKSPACE_ID, 'deleted/a.md', 'saved a')).toEqual({ status: 'none' })
+    expect((await store.get(WORKSPACE_ID, 'kept/b.md', 'saved b')).status).toBe('restorable')
+  })
+
   it('ignores corrupt records without losing later valid writes', async () => {
     await store.save({
       workspaceId: WORKSPACE_ID,
@@ -113,7 +176,9 @@ describe('DraftRecoveryStore', () => {
     const restored = await store.get(WORKSPACE_ID, RELATIVE_PATH, 'saved')
     expect(restored.status).not.toBe('none')
     if (restored.status !== 'none') expect(restored.draft.draftContent).toBe('second')
-    expect((await readdir(workspacePath)).every((name) => !name.endsWith('.tmp'))).toBe(true)
-    expect(JSON.parse(await readFile(path.join(workspacePath, recordName), 'utf8')).schemaVersion).toBe(1)
+    const remainingNames = await readdir(workspacePath)
+    expect(remainingNames.every((name) => !name.endsWith('.tmp'))).toBe(true)
+    const [validRecordName] = remainingNames.filter((name) => name.endsWith('.json'))
+    expect(JSON.parse(await readFile(path.join(workspacePath, validRecordName), 'utf8')).schemaVersion).toBe(1)
   })
 })

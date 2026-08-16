@@ -1135,6 +1135,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!state) return
       const workspaceId = this.activeWorkspaceId
       this.cancelDraftRecoveryTimer(tab.relativePath)
+      const recoveryRevision = state.recoveryRevision
       this.openedTextFileContents[tab.relativePath] = {
         ...state,
         content: state.loadedContent,
@@ -1142,7 +1143,9 @@ export const useWorkspaceStore = defineStore('workspace', {
         recoveryRevision: undefined,
         recoveryConflict: false,
       }
-      if (workspaceId) window.electronAPI.draftRecovery?.remove(workspaceId, tab.relativePath).catch(() => {})
+      if (workspaceId && recoveryRevision) {
+        window.electronAPI.draftRecovery?.remove(workspaceId, tab.relativePath, recoveryRevision).catch(() => {})
+      }
       this.mirrorActiveTextFileState(tab.relativePath)
     },
 
@@ -1247,8 +1250,41 @@ export const useWorkspaceStore = defineStore('workspace', {
       for (const path of Object.keys(this.openedTextFileContents)) {
         const rel = normalizeDir(path)
         if (targets.some((target) => isSameOrChildPath(target, rel))) {
+          this.cancelDraftRecoveryTimer(rel)
           delete this.openedTextFileContents[rel]
         }
+      }
+    },
+
+    async removeDraftRecoveryForPaths(relativePaths: string[]) {
+      const workspaceId = this.activeWorkspaceId
+      const recoveryApi = window.electronAPI.draftRecovery
+      if (!workspaceId || !recoveryApi?.removePaths) return
+      const targets = relativePaths.map(normalizeDir).filter(Boolean)
+      for (const [relativePath, state] of Object.entries(this.openedTextFileContents) as [string, OpenTextFileState][]) {
+        const rel = normalizeDir(relativePath)
+        if (!targets.some((target) => isSameOrChildPath(target, rel))) continue
+        this.cancelDraftRecoveryTimer(rel)
+        state.recoveryRevision = undefined
+      }
+      try {
+        const result = await recoveryApi.removePaths(workspaceId, targets)
+        if (!result.success) this.setError(result.error || '恢复草稿清理失败')
+      } catch (error) {
+        this.setError(`恢复草稿清理失败: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    },
+
+    async migrateDraftRecoveryAfterMove(items: { from: string; to: string }[]) {
+      const workspaceId = this.activeWorkspaceId
+      const recoveryApi = window.electronAPI.draftRecovery
+      if (!workspaceId || !recoveryApi?.movePaths) return
+      const result = await recoveryApi.movePaths(workspaceId, items).catch(() => null)
+      if (!result?.success) this.setError(result?.error || '恢复草稿未能跟随文件移动')
+      for (const [relativePath, state] of Object.entries(this.openedTextFileContents) as [string, OpenTextFileState][]) {
+        const rel = normalizeDir(relativePath)
+        if (!items.some((item) => isSameOrChildPath(normalizeDir(item.to), rel))) continue
+        if (state.content !== state.loadedContent) await this.persistDraftRecoveryNow(rel)
       }
     },
 
@@ -1335,6 +1371,10 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     syncOpenedFilesAfterMove(items: { from: string; to: string }[]) {
+      for (const relativePath of Object.keys(this.openedTextFileContents)) {
+        const rel = normalizeDir(relativePath)
+        if (remapByMoves(rel, items) !== rel) this.cancelDraftRecoveryTimer(rel)
+      }
       const result = remapFileTabsByMoves(this.tabs, items)
       this.tabs = result.tabs
       const activeTab = this.activeTabId ? this.tabs.find((tab) => tab.id === this.activeTabId) : null
@@ -1360,6 +1400,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (this.syncOpenedFilesAfterRemoval(removedPaths)) {
           shouldSaveMeta = true
         }
+        await this.removeDraftRecoveryForPaths(removedPaths)
 
         await this.syncSelectionAfterRemoval(removedPaths)
       }
@@ -1372,6 +1413,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (this.syncOpenedFilesAfterMove(movedItems)) {
           shouldSaveMeta = true
         }
+        await this.migrateDraftRecoveryAfterMove(movedItems)
 
         const nextSelectedPaths = this.selectedPaths.map((path) => remapByMoves(path, movedItems))
         if (nextSelectedPaths.some((path, index) => path !== this.selectedPaths[index])) {
@@ -1939,15 +1981,21 @@ export const useWorkspaceStore = defineStore('workspace', {
       state.recoveryRevision = revision
       const recoveryApi = window.electronAPI.draftRecovery
       if (!recoveryApi) return revision
-      const result = await recoveryApi.save({
-        workspaceId,
-        relativePath: rel,
-        draftContent: state.content,
-        baseContent: state.loadedContent,
-        revision,
-      })
-      if (!result.success && this.activeWorkspaceId === workspaceId) {
-        state.saveError = result.error || '恢复草稿保存失败'
+      try {
+        const result = await recoveryApi.save({
+          workspaceId,
+          relativePath: rel,
+          draftContent: state.content,
+          baseContent: state.loadedContent,
+          revision,
+        })
+        if (!result.success && this.activeWorkspaceId === workspaceId) {
+          state.saveError = result.error || '恢复草稿保存失败'
+        }
+      } catch (error) {
+        if (this.activeWorkspaceId === workspaceId) {
+          state.saveError = `恢复草稿保存失败: ${error instanceof Error ? error.message : String(error)}`
+        }
       }
       return revision
     },
@@ -1959,9 +2007,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!workspaceId || !rel || !state || state.isPartial) return
       this.cancelDraftRecoveryTimer(rel)
       if (state.content === state.loadedContent) {
+        const recoveryRevision = state.recoveryRevision
         state.recoveryRevision = undefined
         state.recoveryConflict = false
-        window.electronAPI.draftRecovery?.remove(workspaceId, rel).catch(() => {})
+        if (recoveryRevision) {
+          window.electronAPI.draftRecovery?.remove(workspaceId, rel, recoveryRevision).catch(() => {})
+        }
         return
       }
       state.recoveryRevision = createDraftRecoveryRevision()
@@ -2260,6 +2311,20 @@ export const useWorkspaceStore = defineStore('workspace', {
       const next = wasPartial
         ? completeState?.content ?? ''
         : content ?? completeState?.content ?? (rel === this.activeFileRelativePath ? this.activeFileContent : '')
+      if (completeState?.recoveryConflict) {
+        const confirmation = await window.electronAPI.app.showMessageBox({
+          type: 'warning',
+          title: '检测到外部修改',
+          message: `${pathBase(rel)} 在 Looma 关闭期间被其他程序修改。是否用恢复的未保存内容覆盖磁盘文件？`,
+          buttons: ['覆盖磁盘文件', '取消'],
+          defaultId: 1,
+          cancelId: 1,
+        })
+        if (confirmation.response !== 0) {
+          return { success: false as const, error: '已取消覆盖外部修改的文件' }
+        }
+        completeState.recoveryConflict = false
+      }
       this.openedTextFileContents[rel] = {
         ...(completeState || currentState),
         content: next,
@@ -2299,6 +2364,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (workspaceId && savingRevision) {
         await window.electronAPI.draftRecovery?.remove(workspaceId, rel, savingRevision).catch(() => {})
       }
+      if (stillDirty) this.scheduleDraftRecovery(rel)
       return r
     },
 
@@ -2415,6 +2481,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (this.syncOpenedFilesAfterRemoval(deletedPaths)) {
           this.saveWorkspaceMeta().catch(() => {})
         }
+        await this.removeDraftRecoveryForPaths(deletedPaths)
 
         await this.syncSelectionAfterRemoval(deletedPaths)
       }
@@ -2460,6 +2527,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           if (activeAfterMove) this.activateFileTab(activeAfterMove)
           this.saveWorkspaceMeta().catch(() => {})
         }
+        await this.migrateDraftRecoveryAfterMove(items)
       }
     },
 
@@ -2482,6 +2550,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (this.activeFileRelativePath === from) this.activateFileTab(to)
         this.saveWorkspaceMeta().catch(() => {})
       }
+      await this.migrateDraftRecoveryAfterMove([{ from, to }])
 
       this.undoStack.unshift({ type: 'move', items: [{ from, to }] })
       this.redoStack = []

@@ -37,6 +37,8 @@ export interface OpenTextFileState {
   totalBytes?: number
   loadRequestId?: number
   useChunkedPreview?: boolean
+  recoveryRevision?: string
+  recoveryConflict?: boolean
 }
 
 export type AiAssistantMessageRole = 'assistant' | 'user' | 'system'

@@ -40,6 +40,12 @@ export type { AgentDiffViewState, AiAssistantConversation, AiAssistantMessage, A
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
 let pendingConfirmationResolve: ((confirmed: boolean) => void) | null = null
+const DRAFT_RECOVERY_DEBOUNCE_MS = 300
+const draftRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+let draftRecoveryRevisionCounter = 0
+
+const draftRecoveryKey = (workspaceId: string, relativePath: string) => `${workspaceId}\u0000${relativePath}`
+const createDraftRecoveryRevision = () => `${Date.now()}-${++draftRecoveryRevisionCounter}`
 
 export type ConfirmationDialogOptions = {
   title: string
@@ -1127,11 +1133,16 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (tab.kind !== 'file') return
       const state = this.openedTextFileContents[tab.relativePath]
       if (!state) return
+      const workspaceId = this.activeWorkspaceId
+      this.cancelDraftRecoveryTimer(tab.relativePath)
       this.openedTextFileContents[tab.relativePath] = {
         ...state,
         content: state.loadedContent,
         saveError: '',
+        recoveryRevision: undefined,
+        recoveryConflict: false,
       }
+      if (workspaceId) window.electronAPI.draftRecovery?.remove(workspaceId, tab.relativePath).catch(() => {})
       this.mirrorActiveTextFileState(tab.relativePath)
     },
 
@@ -1908,6 +1919,97 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeSystemPage = page
     },
 
+    cancelDraftRecoveryTimer(relativePath: string) {
+      const workspaceId = this.activeWorkspaceId
+      const rel = normalizeDir(relativePath)
+      if (!workspaceId || !rel) return
+      const key = draftRecoveryKey(workspaceId, rel)
+      const timer = draftRecoveryTimers.get(key)
+      if (timer) clearTimeout(timer)
+      draftRecoveryTimers.delete(key)
+    },
+
+    async persistDraftRecoveryNow(relativePath: string) {
+      const workspaceId = this.activeWorkspaceId
+      const rel = normalizeDir(relativePath)
+      const state = this.openedTextFileContents[rel]
+      if (!workspaceId || !rel || !state || state.isPartial || state.content === state.loadedContent) return
+      this.cancelDraftRecoveryTimer(rel)
+      const revision = state.recoveryRevision || createDraftRecoveryRevision()
+      state.recoveryRevision = revision
+      const recoveryApi = window.electronAPI.draftRecovery
+      if (!recoveryApi) return revision
+      const result = await recoveryApi.save({
+        workspaceId,
+        relativePath: rel,
+        draftContent: state.content,
+        baseContent: state.loadedContent,
+        revision,
+      })
+      if (!result.success && this.activeWorkspaceId === workspaceId) {
+        state.saveError = result.error || '恢复草稿保存失败'
+      }
+      return revision
+    },
+
+    scheduleDraftRecovery(relativePath: string) {
+      const workspaceId = this.activeWorkspaceId
+      const rel = normalizeDir(relativePath)
+      const state = this.openedTextFileContents[rel]
+      if (!workspaceId || !rel || !state || state.isPartial) return
+      this.cancelDraftRecoveryTimer(rel)
+      if (state.content === state.loadedContent) {
+        state.recoveryRevision = undefined
+        state.recoveryConflict = false
+        window.electronAPI.draftRecovery?.remove(workspaceId, rel).catch(() => {})
+        return
+      }
+      state.recoveryRevision = createDraftRecoveryRevision()
+      const draftContent = state.content
+      const baseContent = state.loadedContent
+      const revision = state.recoveryRevision
+      const key = draftRecoveryKey(workspaceId, rel)
+      const timer = setTimeout(() => {
+        draftRecoveryTimers.delete(key)
+        window.electronAPI.draftRecovery?.save({
+          workspaceId,
+          relativePath: rel,
+          draftContent,
+          baseContent,
+          revision,
+        }).then((result) => {
+          if (!result.success && this.activeWorkspaceId === workspaceId) {
+            const current = this.openedTextFileContents[rel]
+            if (current?.recoveryRevision === revision) current.saveError = result.error || '恢复草稿保存失败'
+          }
+        }).catch(() => {})
+      }, DRAFT_RECOVERY_DEBOUNCE_MS)
+      draftRecoveryTimers.set(key, timer)
+    },
+
+    async restoreDraftRecovery(relativePath: string, diskContent: string) {
+      const workspaceId = this.activeWorkspaceId
+      const rel = normalizeDir(relativePath)
+      const recoveryApi = window.electronAPI.draftRecovery
+      if (!workspaceId || !rel || !recoveryApi) return
+      const result = await recoveryApi.get(workspaceId, rel, diskContent)
+      if (!result.success || !result.data || result.data.status === 'none') return
+      if (this.activeWorkspaceId !== workspaceId) return
+      const current = this.openedTextFileContents[rel]
+      if (!current || current.isPartial || current.content !== diskContent || current.loadedContent !== diskContent) return
+      const conflict = result.data.status === 'conflict'
+      this.openedTextFileContents[rel] = {
+        ...current,
+        content: result.data.draft.draftContent,
+        loadedContent: diskContent,
+        recoveryRevision: result.data.draft.revision,
+        recoveryConflict: conflict,
+        saveError: conflict ? '文件在 Looma 关闭期间被外部修改，已恢复未保存草稿；保存前请确认内容。' : '',
+      }
+      this.mirrorActiveTextFileState(rel)
+      if (conflict) this.setError(this.openedTextFileContents[rel].saveError)
+    },
+
     setActiveFileContent(content: string, relativePath?: string) {
       const rel = normalizeDir(relativePath ?? this.activeFileRelativePath)
       if (!rel) return
@@ -1931,6 +2033,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (rel === this.activeFileRelativePath) {
         this.activeFileContent = content
       }
+      this.scheduleDraftRecovery(rel)
     },
 
     async loadActiveFileContent() {
@@ -1984,6 +2087,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           useChunkedPreview: false,
         }
         this.mirrorActiveTextFileState(rel)
+        await this.restoreDraftRecovery(rel, r.data)
         return r
       }
 
@@ -2034,6 +2138,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         useChunkedPreview: r.data.totalBytes >= LARGE_NOTE_BYTES,
       }
       this.mirrorActiveTextFileState(rel)
+      if (!isPartial) await this.restoreDraftRecovery(rel, r.data.content)
       return r
     },
 
@@ -2069,7 +2174,10 @@ export const useWorkspaceStore = defineStore('workspace', {
       current.nextOffset = result.data.nextOffset
       current.totalBytes = result.data.totalBytes
       current.isPartial = !result.data.done
-      if (result.data.done) current.loadedContent = current.content
+      if (result.data.done) {
+        current.loadedContent = current.content
+        await this.restoreDraftRecovery(rel, current.content)
+      }
       this.mirrorActiveTextFileState(rel)
       return result
     },
@@ -2160,6 +2268,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         saveError: '',
       }
       this.mirrorActiveTextFileState(rel)
+      const workspaceId = this.activeWorkspaceId
+      const savingRevision = await this.persistDraftRecoveryNow(rel)
       const expectedContent = completeState?.loadedContent
       const r = await window.electronAPI.file.writeMarkdown(absPath, next, expectedContent)
       const latestState = this.openedTextFileContents[rel]
@@ -2174,14 +2284,21 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.mirrorActiveTextFileState(rel)
         return r
       }
+      const latestContent = latestState?.content ?? next
+      const stillDirty = latestContent !== next
       this.openedTextFileContents[rel] = {
         ...latestState,
-        content: next,
+        content: latestContent,
         loadedContent: next,
         isSaving: false,
         saveError: '',
+        recoveryRevision: stillDirty ? latestState?.recoveryRevision : undefined,
+        recoveryConflict: stillDirty ? latestState?.recoveryConflict : false,
       }
       this.mirrorActiveTextFileState(rel)
+      if (workspaceId && savingRevision) {
+        await window.electronAPI.draftRecovery?.remove(workspaceId, rel, savingRevision).catch(() => {})
+      }
       return r
     },
 

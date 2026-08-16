@@ -1,4 +1,4 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron';
+import { ipcMain, dialog, BrowserWindow, app } from 'electron';
 import { workspaceAiService } from '../services/workspace/workspaceAiService';
 import { workspaceMetaService } from '../services/workspace/workspaceMetaService';
 import { workspaceService } from '../services/workspace/workspaceService';
@@ -7,6 +7,13 @@ import { getWindowFromEvent } from './windowIpc';
 import fs from 'fs/promises';
 import path from 'path';
 import { formatPrimaryShortcut } from '../../shared/utils/platform-shortcuts';
+import { DraftRecoveryStore, type SaveDraftInput } from '../services/workspace/draftRecoveryStore';
+
+let draftRecoveryStore: DraftRecoveryStore | null = null;
+const getDraftRecoveryStore = () => {
+  draftRecoveryStore ??= new DraftRecoveryStore(path.join(app.getPath('userData'), 'recovery-drafts'));
+  return draftRecoveryStore;
+};
 
 const getWorkspacePathById = async (workspaceId: string) => {
   const state = await workspaceService.getState();
@@ -107,6 +114,33 @@ ipcMain.handle('workspaceMeta:get', async (_, workspaceId: string) => {
 
 ipcMain.handle('workspaceMeta:set', async (_, workspaceId: string, meta: any) => {
   return await workspaceMetaService.setMeta(workspaceId, meta);
+});
+
+ipcMain.handle('draftRecovery:save', async (_, input: SaveDraftInput) => {
+  try {
+    const data = await getDraftRecoveryStore().save(input);
+    return { success: true, data };
+  } catch (error: any) {
+    return { success: false, error: `保存恢复草稿失败: ${error?.message ?? String(error)}` };
+  }
+});
+
+ipcMain.handle('draftRecovery:get', async (_, workspaceId: string, relativePath: string, diskContent: string) => {
+  try {
+    const data = await getDraftRecoveryStore().get(workspaceId, relativePath, diskContent);
+    return { success: true, data };
+  } catch (error: any) {
+    return { success: false, error: `读取恢复草稿失败: ${error?.message ?? String(error)}` };
+  }
+});
+
+ipcMain.handle('draftRecovery:remove', async (_, workspaceId: string, relativePath: string, expectedRevision?: string) => {
+  try {
+    const data = await getDraftRecoveryStore().remove(workspaceId, relativePath, expectedRevision);
+    return { success: true, data };
+  } catch (error: any) {
+    return { success: false, error: `清理恢复草稿失败: ${error?.message ?? String(error)}` };
+  }
 });
 
 ipcMain.handle('workspaceAi:get', async (_, workspaceId: string) => {

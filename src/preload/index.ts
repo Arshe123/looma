@@ -86,6 +86,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     set: (workspaceId: string, meta: unknown) =>
       ipcRenderer.invoke('workspaceMeta:set', workspaceId, meta),
   },
+  draftRecovery: {
+    save: (input: { workspaceId: string; relativePath: string; draftContent: string; baseContent: string; revision: string }) =>
+      ipcRenderer.invoke('draftRecovery:save', input),
+    get: (workspaceId: string, relativePath: string, diskContent: string) =>
+      ipcRenderer.invoke('draftRecovery:get', workspaceId, relativePath, diskContent),
+    remove: (workspaceId: string, relativePath: string, expectedRevision?: string) =>
+      ipcRenderer.invoke('draftRecovery:remove', workspaceId, relativePath, expectedRevision),
+  },
   workspaceAi: {
     get: (workspaceId: string) => ipcRenderer.invoke('workspaceAi:get', workspaceId),
     set: (workspaceId: string, state: unknown) => ipcRenderer.invoke('workspaceAi:set', workspaceId, state),

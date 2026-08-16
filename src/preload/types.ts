@@ -12,6 +12,20 @@ interface TextFileChunkPayload {
   done: boolean;
 }
 
+interface DraftRecoveryRecordPayload {
+  schemaVersion: 1;
+  workspaceId: string;
+  relativePath: string;
+  draftContent: string;
+  baseContentHash: string;
+  revision: string;
+  updatedAt: number;
+}
+
+type DraftRecoveryResultPayload =
+  | { status: 'none' }
+  | { status: 'restorable' | 'conflict'; draft: DraftRecoveryRecordPayload };
+
 type SidebarPanelId = 'files' | 'outline' | 'ai';
 
 interface SidebarPanelState {
@@ -310,6 +324,17 @@ interface ElectronAPI {
   workspaceMeta: {
     get: (workspaceId: string) => Promise<Result<WorkspaceMetaPayload>>;
     set: (workspaceId: string, meta: WorkspaceMetaPayload) => Promise<Result<void>>;
+  };
+  draftRecovery: {
+    save: (input: {
+      workspaceId: string;
+      relativePath: string;
+      draftContent: string;
+      baseContent: string;
+      revision: string;
+    }) => Promise<Result<DraftRecoveryRecordPayload>>;
+    get: (workspaceId: string, relativePath: string, diskContent: string) => Promise<Result<DraftRecoveryResultPayload>>;
+    remove: (workspaceId: string, relativePath: string, expectedRevision?: string) => Promise<Result<boolean>>;
   };
   workspaceAi: {
     get: (workspaceId: string) => Promise<Result<AiAssistantStatePayload>>;

@@ -76,6 +76,10 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+.markdown-body {
+  font-synthesis: style;
+}
+
 :root:not([data-theme]) {
   color-scheme: light;
   --bg: #f4f5f7;

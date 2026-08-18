@@ -336,6 +336,7 @@ defineExpose({
         :relativeFilePath="props.relativeFilePath"
         :show-line-numbers="settingsStore.showLineNumbers"
         @update:content="(v) => emit('update:content', v)"
+        @save="(v) => emit('save', v)"
         @scroll-sync="syncSplitScrollFromPreview"
       />
     </div>

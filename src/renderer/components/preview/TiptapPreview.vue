@@ -83,6 +83,7 @@ const workspaceStore = useWorkspaceStore()
 
 const emit = defineEmits<{
   (e: 'update:content', value: string): void
+  (e: 'save', value: string): void
   (e: 'scroll-sync', value: ScrollSyncState): void
 }>()
 
@@ -90,6 +91,7 @@ let isUpdatingFromExternal = false
 let lastEmittedContent = ''
 let isUnmounting = false
 let pendingMarkdownEmitTimer: number | null = null
+let autoSaveTimer: number | null = null
 let pendingCodeHighlightTimer: number | null = null
 let pendingHeadingTarget: MarkdownOutlineItem | null = null
 let pendingHeadingClearTimer: number | null = null
@@ -112,6 +114,7 @@ const lowlight = createLowlight(common)
 const PREVIEW_IMAGE_SETTLED_EVENT = 'looma:preview-image-settled'
 const HEADING_REANCHOR_WINDOW_MS = 1000
 const MARKDOWN_EMIT_DEBOUNCE_MS = 150
+const AUTOSAVE_DEBOUNCE_MS = 1000
 const CODE_HIGHLIGHT_IDLE_MS = 300
 const deferredLowlightKey = new PluginKey('loomaDeferredLowlight')
 
@@ -793,6 +796,29 @@ const scheduleMarkdownEmit = () => {
   }, MARKDOWN_EMIT_DEBOUNCE_MS)
 }
 
+const clearPendingAutoSave = () => {
+  if (!autoSaveTimer) return
+  window.clearTimeout(autoSaveTimer)
+  autoSaveTimer = null
+}
+
+const flushAndEmitSave = () => {
+  clearPendingAutoSave()
+  const currentEditor = editor.value
+  if (!currentEditor || isUnmounting || currentEditor.isDestroyed || isUpdatingFromExternal) return
+  const flushed = emitCurrentMarkdown()
+  const markdown = flushed !== undefined ? flushed : lastEmittedContent
+  if (markdown) emit('save', markdown)
+}
+
+const scheduleAutoSave = () => {
+  clearPendingAutoSave()
+  autoSaveTimer = window.setTimeout(() => {
+    autoSaveTimer = null
+    flushAndEmitSave()
+  }, AUTOSAVE_DEBOUNCE_MS)
+}
+
 const clearPendingCodeHighlight = () => {
   if (!pendingCodeHighlightTimer) return
   window.clearTimeout(pendingCodeHighlightTimer)
@@ -929,12 +955,17 @@ onMounted(() => {
       if (isUpdatingFromExternal) return
       maybeOpenNoteRefPicker(editor)
       scheduleMarkdownEmit()
+      scheduleAutoSave()
     },
     onTransaction: ({ editor, transaction }) => {
       if (isUnmounting || editor.isDestroyed) return
       if (!transaction.docChanged) return
       if (!selectionIsInCodeBlock(editor)) return
       scheduleCodeHighlightRefresh(editor)
+    },
+    onBlur: () => {
+      if (isUnmounting || !editor.value || editor.value.isDestroyed) return
+      if (autoSaveTimer) flushAndEmitSave()
     },
   })
 
@@ -945,7 +976,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  emitCurrentMarkdown()
+  flushAndEmitSave()
   isUnmounting = true
   previewContainerRef.value?.removeEventListener(PREVIEW_IMAGE_SETTLED_EVENT, reanchorPendingHeading)
   previewContainerRef.value?.removeEventListener('click', handleNoteRefClick, true)
@@ -954,6 +985,7 @@ onBeforeUnmount(() => {
   if (scrollSyncFrame !== null) cancelAnimationFrame(scrollSyncFrame)
   if (noteRefValidationTimer !== null) window.clearTimeout(noteRefValidationTimer)
   clearPendingMarkdownEmit()
+  clearPendingAutoSave()
   clearPendingCodeHighlight()
   clearPendingHeadingTarget()
   const currentEditor = editor.value
@@ -974,6 +1006,7 @@ watch(
       }
     }
     if (newContent === lastEmittedContent) return
+    clearPendingAutoSave()
 
     const scrollState = getPreviewScrollState()
     isUpdatingFromExternal = true
@@ -1012,6 +1045,7 @@ defineExpose({
     applyPreviewScrollState(state)
   },
   flushPendingMarkdownEmit() {
+    clearPendingAutoSave()
     return emitCurrentMarkdown()
   },
 })

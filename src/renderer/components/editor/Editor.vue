@@ -4,6 +4,8 @@ import { EditorView, basicSetup } from 'codemirror';
 import { markdown } from '@codemirror/lang-markdown';
 import { codeFolding } from '@codemirror/language';
 import { EditorState, Compartment } from '@codemirror/state';
+import { keymap } from '@codemirror/view';
+import { indentWithTab } from '@codemirror/commands';
 import { useWorkspaceStore } from '../../stores/workspace';
 import {
   findBestTextAnchor,
@@ -303,6 +305,7 @@ const createEditor = () => {
     extensions: [
       basicSetup,
       codeFolding({ placeholderDOM: createFoldPlaceholder }),
+      keymap.of([indentWithTab]),
       langCompartment.of(getLangExtension()),
       themeCompartment.of(getThemeExtension()),
       lineWrapCompartment.of(getLineWrapExtension()),

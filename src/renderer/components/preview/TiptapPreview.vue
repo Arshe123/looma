@@ -896,6 +896,19 @@ onMounted(() => {
           void copyRichTextSelection().catch(console.error)
           return true
         }
+        if (event.key === 'Tab' && editor.value && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          event.preventDefault()
+          if (editor.value.isActive('listItem')) {
+            if (event.shiftKey) {
+              editor.value.chain().focus().liftListItem('listItem').run()
+            } else {
+              editor.value.chain().focus().sinkListItem('listItem').run()
+            }
+          } else {
+            editor.value.chain().focus().insertContent('\t').run()
+          }
+          return true
+        }
         if (event.key !== 'Enter' || !editor.value) return false
         return handleMarkdownNoteRefEnter(editor.value, {
           onEmptyLabel: showNoteRefLabelRequired,

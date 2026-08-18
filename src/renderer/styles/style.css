@@ -33,7 +33,7 @@
   --accent: #3b82f6;
   --accent-hover: #2563eb;
   --accent-soft: #dbeafe;
-  --editor-active-line-bg: #eff6ff;
+  --editor-active-line-bg: rgb(59 130 246 / 0.07);
   --success: #16a34a;
   --danger: #dc2626;
   --warning: #d97706;
@@ -55,7 +55,7 @@
   --accent: #6ea8ff;
   --accent-hover: #8bbcff;
   --accent-soft: rgb(110 168 255 / 0.18);
-  --editor-active-line-bg: rgb(255 255 255 / 0.055);
+  --editor-active-line-bg: rgb(255 255 255 / 0.04);
   --success: #63c174;
   --danger: #ff7373;
   --warning: #f3b35d;
@@ -97,7 +97,7 @@
   --accent: #3b82f6;
   --accent-hover: #2563eb;
   --accent-soft: #dbeafe;
-  --editor-active-line-bg: #eff6ff;
+  --editor-active-line-bg: rgb(59 130 246 / 0.07);
   --success: #16a34a;
   --danger: #dc2626;
   --warning: #d97706;

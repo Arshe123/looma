@@ -876,6 +876,10 @@ onMounted(() => {
           openOnClick: false,
           autolink: true,
           linkOnPaste: true,
+          // 仅自动链接带显式协议的 URL，避免 "Agent.md" / "note.md" 这类
+          // 文件名被 fuzzy 识别成 http:// 链接。与 markdown-renderer.ts 的
+          // linkify.set({ fuzzyLink: false }) 保持一致。
+          shouldAutoLink: (url: string) => /^[a-z][a-z0-9+.-]*:\/\//i.test(url),
         },
       }),
       CodeBlockWithHeader.configure({

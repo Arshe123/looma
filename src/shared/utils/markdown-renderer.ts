@@ -9,11 +9,89 @@ const markdown = new MarkdownIt({
   typographer: false,
 })
 
+// 关闭 fuzzy link 识别：避免 "Agent.md" / "test.md" 这类文件名被识别成 http:// 链接。
+// 仅保留显式协议（https://、mailto: 等）的自动链接。
+markdown.linkify.set({ fuzzyLink: false })
+
 markdown.use(taskLists, {
   enabled: false,
   label: true,
   labelAfter: true,
 })
+
+// 任何 Unicode 标点/符号,出现在 ** 开标记右侧或闭标记左侧时会让 CommonMark emphasis 判定失败。
+// 中文写作里既会用到 CJK 标点(“”（），。),也会用到英文标点(" ' ( ) , . : ; ! ?),
+// 因此这里使用 \p{P} (标点) + \p{S} (符号) 完整覆盖,不再局限于 CJK 范围。
+const isBoundaryPunctCp = (cp: number): boolean =>
+  /[\p{P}\p{S}]/u.test(String.fromCodePoint(cp))
+
+const isPunctCharCp = (cp: number): boolean =>
+  markdown.utils.isPunctChar(String.fromCodePoint(cp))
+
+const isWhiteSpaceCp = (cp: number): boolean => markdown.utils.isWhiteSpace(cp)
+
+/**
+ * CommonMark 规定 ** 开标记右侧 / 闭标记左侧紧邻标点时不视为 emphasis 分隔符。
+ * 中英文混排里 bold 内侧紧邻 “”""（）(),.:;!? 等标点极常见,导致 AI 输出/笔记里
+ * `**...）**`、`**"..."**`、`**bold.**` 被原样渲染成 `**...**`。
+ *
+ * 该规则在默认 emphasis 之前运行：仅当默认判定失败、且失败原因仅是
+ * 开标记右侧 / 闭标记左侧是标点/符号时,接管并生成 strong token。
+ * 默认能解析的样本（含英文 bold、嵌套 bold、italic）一律放行，不重复消费。
+ */
+const strongCjkFixRule = (state: any, silent: boolean): boolean => {
+  const start = state.pos
+  if (state.src.charCodeAt(start) !== 0x2a || state.src.charCodeAt(start + 1) !== 0x2a) {
+    return false
+  }
+  // 反斜杠转义的 \** 不处理
+  if (start > 0 && state.src.charCodeAt(start - 1) === 0x5c) return false
+
+  let pos = start + 2
+  // eslint-disable-next-line no-cond-assign
+  while ((pos = state.src.indexOf('**', pos)) !== -1) {
+    if (pos === start + 2) {
+      pos += 2
+      continue
+    }
+
+    const beforeOpenCp = start > 0 ? state.src.codePointAt(start - 1)! : 0x20
+    const afterOpenCp = state.src.codePointAt(start + 2) ?? 0x20
+    const beforeCloseCp = state.src.codePointAt(pos - 1) ?? 0x20
+    const afterCloseCp = pos + 2 < state.src.length ? state.src.codePointAt(pos + 2)! : 0x20
+
+    const beforeOpenOk = !isWhiteSpaceCp(beforeOpenCp) && !isPunctCharCp(beforeOpenCp)
+    const afterCloseOk = !isWhiteSpaceCp(afterCloseCp) && !isPunctCharCp(afterCloseCp)
+
+    // CommonMark 默认失败的两种情形：开右侧是标点且左侧是文字，或闭左侧是标点且右侧是文字
+    const defaultOpenFails = isPunctCharCp(afterOpenCp) && beforeOpenOk
+    const defaultCloseFails = isPunctCharCp(beforeCloseCp) && afterCloseOk
+
+    // 默认能成功的情形不接管，避免与默认 emphasis 冲突
+    if (!defaultOpenFails && !defaultCloseFails) return false
+
+    // 接管条件: 默认失败仅因为对应位置是标点/符号 (含中英文标点)
+    const fixOpen = defaultOpenFails && isBoundaryPunctCp(afterOpenCp)
+    const fixClose = defaultCloseFails && isBoundaryPunctCp(beforeCloseCp)
+
+    if (!fixOpen && !fixClose) {
+      pos += 2
+      continue
+    }
+
+    if (!silent) {
+      state.push('strong_open', 'strong', 1)
+      const text = state.push('text', '', 0)
+      text.content = state.src.slice(start + 2, pos)
+      state.push('strong_close', 'strong', -1)
+    }
+    state.pos = pos + 2
+    return true
+  }
+  return false
+}
+
+markdown.inline.ruler.before('emphasis', 'strong_cjk_fix', strongCjkFixRule)
 
 const highlightRule = (state: any, silent: boolean) => {
   const start = state.pos

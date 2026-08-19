@@ -122,3 +122,71 @@ describe('prepareMarkdownForRichText', () => {
     expect(prepareMarkdownForRichText(markdown)).toBe(markdown)
   })
 })
+
+describe('CJK strong bold 边界（marked tokenizer）', () => {
+  const findBoldText = (doc: JSONContent): string[] => {
+    const results: string[] = []
+    const walk = (node: JSONContent) => {
+      if (node.marks?.some(mark => mark.type === 'bold') && node.text) {
+        results.push(node.text)
+      }
+      node.content?.forEach(walk)
+    }
+    walk(doc)
+    return results
+  }
+
+  it('中文引号包裹的 bold 解析为 bold mark', () => {
+    const manager = createManager()
+    const doc = manager.parse('日记里这个平台叫**“全球疫情数据分析和风险评估平台”**，也就是')
+    expect(findBoldText(doc)).toContain('“全球疫情数据分析和风险评估平台”')
+  })
+
+  it('中文括号结尾的 bold 解析为 bold mark', () => {
+    const manager = createManager()
+    const doc = manager.parse('准确来说，**8月13日（第9天）**就是')
+    expect(findBoldText(doc)).toContain('8月13日（第9天）')
+  })
+
+  it('默认能解析的英文 bold 仍走默认 tokenizer', () => {
+    const manager = createManager()
+    const doc = manager.parse('this is **bold** text')
+    expect(findBoldText(doc)).toContain('bold')
+  })
+
+  it('默认能解析的中文 bold 不受影响', () => {
+    const manager = createManager()
+    const doc = manager.parse('根据你的实习日记，**亚林哥是在实习第9天**让你去看')
+    expect(findBoldText(doc)).toContain('亚林哥是在实习第9天')
+  })
+
+  it('bold 内侧带空格仍不解析（CommonMark 默认行为）', () => {
+    const manager = createManager()
+    const doc = manager.parse('** bold ** should not match')
+    expect(findBoldText(doc)).toEqual([])
+  })
+
+  it('CJK bold 序列化回 markdown 仍保留 ** 语法', () => {
+    const manager = createManager()
+    const doc = manager.parse('准确来说，**8月13日（第9天）**就是')
+    expect(serialize(manager, doc)).toBe('准确来说，**8月13日（第9天）**就是')
+  })
+
+  it('英文双引号包裹的 bold 解析为 bold mark', () => {
+    const manager = createManager()
+    const doc = manager.parse('日记里叫**"平台"**，后续')
+    expect(findBoldText(doc)).toContain('"平台"')
+  })
+
+  it('英文括号包裹的 bold 解析为 bold mark', () => {
+    const manager = createManager()
+    const doc = manager.parse('前缀**(注释)**后缀')
+    expect(findBoldText(doc)).toContain('(注释)')
+  })
+
+  it('英文句号结尾的 bold 解析为 bold mark', () => {
+    const manager = createManager()
+    const doc = manager.parse('前缀**bold.**后缀')
+    expect(findBoldText(doc)).toContain('bold.')
+  })
+})

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
-import { ChevronRight, LoaderCircle, RefreshCw } from 'lucide-vue-next'
+import { ChevronRight, LoaderCircle, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { useWorkspaceStore, type FsEntry } from '../stores/workspace'
 import { useSettingsStore } from '../stores/settings'
 import {
@@ -78,6 +78,84 @@ const dropErrorMessage = ref('')
 const dropTechnicalDetail = ref('')
 type FileClipboardState = { mode: 'copy' | 'cut'; paths: string[] }
 const fileClipboard = ref<FileClipboardState | null>(null)
+
+type TrashEntryInfo = {
+  trashRelativePath: string
+  originalName: string
+  restoreTo: string
+  size: number
+  deletedAtMs: number
+  isDirectory: boolean
+}
+const trashDialogOpen = ref(false)
+const trashItems = ref<TrashEntryInfo[]>([])
+const trashLoading = ref(false)
+const trashError = ref('')
+
+const formatTrashSize = (item: TrashEntryInfo) => {
+  if (item.isDirectory) return '—'
+  const size = item.size
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`
+  return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`
+}
+
+const formatTrashTime = (ms: number) =>
+  new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(new Date(ms))
+
+const loadTrashItems = async () => {
+  const workspaceId = workspaceStore.activeWorkspaceId
+  if (!workspaceId) return
+  trashLoading.value = true
+  trashError.value = ''
+  try {
+    const r = await window.electronAPI.fs.listTrash(workspaceId)
+    if (r.success && r.data) {
+      trashItems.value = r.data
+    } else {
+      trashItems.value = []
+      trashError.value = r.error || '读取回收站失败'
+    }
+  } finally {
+    trashLoading.value = false
+  }
+}
+
+const openTrashDialog = () => {
+  trashDialogOpen.value = true
+  loadTrashItems().catch(console.error)
+}
+
+const closeTrashDialog = () => {
+  trashDialogOpen.value = false
+}
+
+const onTrashDialogKeyDown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape') closeTrashDialog()
+}
+
+const restoreTrashItem = async (item: TrashEntryInfo) => {
+  const workspaceId = workspaceStore.activeWorkspaceId
+  if (!workspaceId) return
+  trashError.value = ''
+  const r = await window.electronAPI.fs.restore(workspaceId, item.trashRelativePath, item.restoreTo)
+  if (!r.success) {
+    trashError.value = r.error || '恢复失败'
+    return
+  }
+  trashItems.value = trashItems.value.filter((i) => i.trashRelativePath !== item.trashRelativePath)
+  const parentDir = item.restoreTo.includes('/') ? item.restoreTo.split('/').slice(0, -1).join('/') : ''
+  await workspaceStore.loadDir(workspaceId, parentDir)
+  if (parentDir) await workspaceStore.ensureFileParentDirsExpanded(parentDir)
+}
 
 const inlineEditValue = computed({
   get: () => inlineEdit.value?.value ?? '',
@@ -575,6 +653,7 @@ onMounted(() => {
   window.addEventListener('blur', clearExternalDropState)
   window.addEventListener(FILE_TREE_CREATE_FILE_EVENT, onCreateFileRequest)
   window.addEventListener(FILE_TREE_REVEAL_ACTIVE_FILE_EVENT, onRevealActiveFileRequest)
+  window.addEventListener('keydown', onTrashDialogKeyDown)
 })
 
 watch(activeFileRel, (relativePath) => {
@@ -589,14 +668,22 @@ onUnmounted(() => {
   window.removeEventListener('blur', clearExternalDropState)
   window.removeEventListener(FILE_TREE_CREATE_FILE_EVENT, onCreateFileRequest)
   window.removeEventListener(FILE_TREE_REVEAL_ACTIVE_FILE_EVENT, onRevealActiveFileRequest)
+  window.removeEventListener('keydown', onTrashDialogKeyDown)
   rowElements.clear()
 })
 </script>
 
 <template>
   <div class="h-full min-h-0 flex flex-col">
-    <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main">
-      文件
+    <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main flex items-center justify-between">
+      <span>文件</span>
+      <button
+        title="回收站"
+        class="w-6 h-6 inline-flex items-center justify-center rounded text-text-muted hover:bg-accent-soft hover:text-text-main"
+        @click="openTrashDialog"
+      >
+        <Trash2 :size="16" />
+      </button>
     </div>
 
     <div v-if="workspaceStore.workspaces.length === 0" class="p-4">
@@ -812,6 +899,52 @@ onUnmounted(() => {
         <button class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft" @click="handleRevealInExplorer">
           在文件资源管理器中显示
         </button>
+      </div>
+    </div>
+  </div>
+
+  <div
+    v-if="trashDialogOpen"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-6"
+    @pointerdown.self="closeTrashDialog"
+  >
+    <div class="w-full max-w-lg rounded-xl border border-border-soft bg-panel shadow-2xl overflow-hidden" style="-webkit-app-region: no-drag">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-border-soft">
+        <div class="text-sm font-semibold text-text-main">回收站 · Looma 关闭时自动清空进入系统回收站</div>
+        <button
+          title="关闭"
+          class="w-6 h-6 inline-flex items-center justify-center rounded text-text-muted hover:bg-accent-soft hover:text-text-main"
+          @click="closeTrashDialog"
+        >
+          <span class="text-sm leading-none">✕</span>
+        </button>
+      </div>
+      <div class="max-h-[60vh] overflow-y-auto p-3">
+        <div v-if="trashLoading" class="py-8 text-center text-sm text-text-muted">正在加载…</div>
+        <div v-else-if="trashError" class="py-8 text-center text-sm text-danger">{{ trashError }}</div>
+        <div v-else-if="trashItems.length === 0" class="py-8 text-center text-sm text-text-muted">回收站是空的</div>
+        <div v-else class="flex flex-col gap-1">
+          <div
+            v-for="item in trashItems"
+            :key="item.trashRelativePath"
+            class="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-accent-soft"
+          >
+            <div class="flex-1 min-w-0">
+              <div class="text-sm text-text-main truncate select-none" :title="item.originalName">
+                {{ item.originalName }}
+              </div>
+              <div class="text-xs text-text-subtle">
+                {{ formatTrashTime(item.deletedAtMs) }} · {{ formatTrashSize(item) }}
+              </div>
+            </div>
+            <button
+              class="shrink-0 rounded-md bg-accent px-2.5 py-1 text-xs text-white hover:bg-accent-hover"
+              @click="restoreTrashItem(item)"
+            >
+              恢复
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

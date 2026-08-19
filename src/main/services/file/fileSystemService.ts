@@ -50,6 +50,15 @@ export interface ExternalCopyEntry {
   isDirectory: boolean
 }
 
+export interface TrashEntryInfo {
+  trashRelativePath: string
+  originalName: string
+  restoreTo: string
+  size: number
+  deletedAtMs: number
+  isDirectory: boolean
+}
+
 const toPosix = (p: string) => p.split(path.sep).join('/')
 
 const resolveInWorkspace = (workspacePath: string, relativePath: string) => {
@@ -235,6 +244,22 @@ const safeRename = async (oldPath: string, newPath: string) => {
 
 const getTrashDir = (workspaceId: string) => {
   return path.join(app.getPath('appData'), 'workspace-meta', 'looma', 'trash', workspaceId)
+}
+
+const parseTrashFileName = (fileName: string): { stamp: number; originalName: string; restoreTo: string } | null => {
+  const sepIdx = fileName.indexOf('_')
+  if (sepIdx <= 0) return null
+  const stamp = Number(fileName.slice(0, sepIdx))
+  if (!Number.isFinite(stamp) || stamp <= 0) return null
+  const encoded = fileName.slice(sepIdx + 1)
+  let decoded = encoded
+  try {
+    decoded = decodeURIComponent(encoded)
+  } catch {
+    // 旧格式文件名可能包含非法 % 序列，保留原始字符串
+  }
+  const originalName = decoded.split('/').pop() || decoded
+  return { stamp, originalName, restoreTo: decoded }
 }
 
 export const parseMacPlistFilePaths = (plistText: string): string[] => {
@@ -656,6 +681,39 @@ export const fileSystemService = {
     }
   },
 
+  async listTrash(workspaceId: string): Promise<Result<TrashEntryInfo[]>> {
+    try {
+      const trashDir = getTrashDir(workspaceId)
+      if (!(await pathExists(trashDir))) return { success: true, data: [] }
+
+      const entries = await fs.readdir(trashDir)
+      const items: TrashEntryInfo[] = []
+      for (const fileName of entries) {
+        const parsed = parseTrashFileName(fileName)
+        if (!parsed) continue
+        const abs = path.join(trashDir, fileName)
+        let stats: import('fs').Stats
+        try {
+          stats = await fs.stat(abs)
+        } catch {
+          continue
+        }
+        items.push({
+          trashRelativePath: toPosix(path.relative(trashDir, abs)),
+          originalName: parsed.originalName,
+          restoreTo: parsed.restoreTo,
+          size: stats.isDirectory() ? 0 : stats.size,
+          deletedAtMs: parsed.stamp,
+          isDirectory: stats.isDirectory(),
+        })
+      }
+      items.sort((a, b) => b.deletedAtMs - a.deletedAtMs)
+      return { success: true, data: items }
+    } catch (error: any) {
+      return { success: false, error: `读取回收站失败: ${error?.message ?? String(error)}` }
+    }
+  },
+
   async softDelete(workspaceId: string, workspacePath: string, targetRelativePath: string): Promise<Result<{ trashRelativePath: string }>> {
     try {
       const targetResolved = resolveInWorkspace(workspacePath, targetRelativePath)
@@ -663,9 +721,9 @@ export const fileSystemService = {
 
       const trashDir = getTrashDir(workspaceId)
       await ensureDir(trashDir)
-      const base = path.basename(targetResolved.target)
       const stamp = Date.now()
-      const trashAbs = path.join(trashDir, `${stamp}_${base}`)
+      const relPath = toPosix(path.relative(targetResolved.root, targetResolved.target))
+      const trashAbs = path.join(trashDir, `${stamp}_${encodeURIComponent(relPath)}`)
       await safeRename(targetResolved.target, trashAbs)
       return { success: true, data: { trashRelativePath: toPosix(path.relative(trashDir, trashAbs)) } }
     } catch (error: any) {

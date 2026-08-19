@@ -416,6 +416,14 @@ interface ElectronAPI {
     delete: (workspaceId: string, targetRelativePath: string) => Promise<Result<{ trashRelativePath: string }>>;
     restore: (workspaceId: string, trashRelativePath: string, restoreToRelativePath: string) => Promise<Result<void>>;
     emptyTrash: (workspaceId: string) => Promise<Result<void>>;
+    listTrash: (workspaceId: string) => Promise<Result<Array<{
+      trashRelativePath: string;
+      originalName: string;
+      restoreTo: string;
+      size: number;
+      deletedAtMs: number;
+      isDirectory: boolean;
+    }>>>;
     watchStart: (workspaceId: string) => Promise<Result<void>>;
     watchAdd: (workspaceId: string, dirRelativePaths: string[]) => Promise<Result<void>>;
     watchStop: (workspaceId: string) => Promise<Result<void>>;

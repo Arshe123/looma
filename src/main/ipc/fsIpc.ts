@@ -89,6 +89,10 @@ ipcMain.handle('fs:emptyTrash', async (_, workspaceId: string) => {
   return await fileSystemService.emptyTrash(workspaceId);
 });
 
+ipcMain.handle('fs:listTrash', async (_, workspaceId: string) => {
+  return await fileSystemService.listTrash(workspaceId);
+});
+
 ipcMain.handle('fs:watchStart', async (event, workspaceId: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };

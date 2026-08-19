@@ -13,6 +13,7 @@ interface BuildWorkspaceMetaInput {
   fileSessions: Record<string, EditorSession>
   outlineExpandedHeadingIds: Record<string, string[]>
   activeSidebarPanel?: SidebarPanelId | null
+  fileSortMode?: 'name' | 'created-asc' | 'created-desc'
 }
 
 const cloneNoteOrder = (noteOrder: Record<string, string[]>) => {
@@ -64,6 +65,7 @@ export const buildWorkspaceMetaPayload = (input: BuildWorkspaceMetaInput) => {
     outlineExpandedHeadingIds: cloneStringArrayRecord(input.outlineExpandedHeadingIds),
     outlineExpansionStateVersion: 1,
     activeSidebarPanel: input.activeSidebarPanel,
+    fileSortMode: input.fileSortMode,
   }
   return { cleanedSessions, meta }
 }

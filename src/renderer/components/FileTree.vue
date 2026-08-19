@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
-import { ChevronRight, LoaderCircle, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { CalendarArrowDown, CalendarArrowUp, ChevronRight, FilePlus2, FolderPlus, LoaderCircle, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { useWorkspaceStore, type FsEntry } from '../stores/workspace'
 import { useSettingsStore } from '../stores/settings'
 import {
@@ -50,9 +50,31 @@ type FlatEntryRow = TreeGuidedRow<FlatEntryRowBase>
 type FlatInlineCreateRow = TreeGuidedRow<FlatInlineCreateRowBase>
 type FlatRow = FlatEntryRow | FlatInlineCreateRow
 
+type FileSortMode = 'name' | 'created-asc' | 'created-desc'
+type SortCacheEntry = { source: FsEntry[]; sorted: FsEntry[] }
+const sortCache = new Map<string, SortCacheEntry>()
+
 const getChildren = (dirRelativePath: string) => {
   const key = workspaceStore.keyOfDir(dirRelativePath)
-  return workspaceStore.dirEntries[key] || []
+  const entries = workspaceStore.dirEntries[key] || []
+  if (workspaceStore.fileSortMode === 'name') return entries
+
+  const cacheKey = `${workspaceStore.fileSortMode}:${key}`
+  const cached = sortCache.get(cacheKey)
+  if (cached && cached.source === entries) return cached.sorted
+
+  const byBirthtime = (a: FsEntry, b: FsEntry) => (a.birthtimeMs ?? 0) - (b.birthtimeMs ?? 0)
+  const dirs = entries.filter((e) => e.isDirectory).slice()
+  const files = entries.filter((e) => !e.isDirectory).slice()
+  const sorted = workspaceStore.fileSortMode === 'created-asc'
+    ? [...dirs.sort(byBirthtime), ...files.sort(byBirthtime)]
+    : [...dirs.sort((a, b) => byBirthtime(b, a)), ...files.sort((a, b) => byBirthtime(b, a))]
+  sortCache.set(cacheKey, { source: entries, sorted })
+  return sorted
+}
+
+const toggleFileSort = (mode: Exclude<FileSortMode, 'name'>) => {
+  workspaceStore.setFileSortMode(workspaceStore.fileSortMode === mode ? 'name' : mode)
 }
 
 const getParentDirFromPath = async (path: string) => {
@@ -245,6 +267,14 @@ const startCreateFile = async (entry: FsEntry | null) => {
 const startCreateFileFromCurrentDir = async () => {
   closeMenu()
   await startCreateFileInDir(workspaceStore.getCurrentDir())
+}
+
+const startCreateFolderFromCurrentDir = async () => {
+  closeMenu()
+  const parentDir = workspaceStore.getCurrentDir()
+  await ensureDirExpanded(parentDir)
+  inlineEdit.value = { mode: 'create-folder', parentDir, targetPath: '', value: 'New Folder' }
+  await focusInlineInput()
 }
 
 const startCreateFolder = async (entry: FsEntry | null) => {
@@ -660,6 +690,10 @@ watch(activeFileRel, (relativePath) => {
   revealActiveFileRow(relativePath).catch(console.error)
 }, { immediate: true })
 
+watch(() => workspaceStore.activeWorkspaceId, () => {
+  sortCache.clear()
+})
+
 onUnmounted(() => {
   window.removeEventListener('pointerdown', onGlobalPointerDown)
   window.removeEventListener('keydown', onGlobalKeyDown)
@@ -675,15 +709,47 @@ onUnmounted(() => {
 
 <template>
   <div class="h-full min-h-0 flex flex-col">
-    <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main flex items-center justify-between">
+    <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main flex items-center justify-between gap-2">
       <span>文件</span>
-      <button
-        title="回收站"
-        class="w-6 h-6 inline-flex items-center justify-center rounded text-text-muted hover:bg-accent-soft hover:text-text-main"
-        @click="openTrashDialog"
-      >
-        <Trash2 :size="16" />
-      </button>
+      <div class="flex items-center gap-0.5">
+        <button
+          title="新建文件"
+          class="w-6 h-6 inline-flex items-center justify-center rounded text-text-muted hover:bg-accent-soft hover:text-text-main"
+          @click="startCreateFileFromCurrentDir"
+        >
+          <FilePlus2 :size="14" />
+        </button>
+        <button
+          title="新建文件夹"
+          class="w-6 h-6 inline-flex items-center justify-center rounded text-text-muted hover:bg-accent-soft hover:text-text-main"
+          @click="startCreateFolderFromCurrentDir"
+        >
+          <FolderPlus :size="14" />
+        </button>
+        <button
+          title="按创建时间升序"
+          class="w-6 h-6 inline-flex items-center justify-center rounded text-text-muted hover:bg-accent-soft hover:text-text-main"
+          :class="workspaceStore.fileSortMode === 'created-asc' ? 'text-text-main bg-accent-soft' : ''"
+          @click="toggleFileSort('created-asc')"
+        >
+          <CalendarArrowUp :size="14" />
+        </button>
+        <button
+          title="按创建时间降序"
+          class="w-6 h-6 inline-flex items-center justify-center rounded text-text-muted hover:bg-accent-soft hover:text-text-main"
+          :class="workspaceStore.fileSortMode === 'created-desc' ? 'text-text-main bg-accent-soft' : ''"
+          @click="toggleFileSort('created-desc')"
+        >
+          <CalendarArrowDown :size="14" />
+        </button>
+        <button
+          title="回收站"
+          class="w-6 h-6 inline-flex items-center justify-center rounded text-text-muted hover:bg-accent-soft hover:text-text-main"
+          @click="openTrashDialog"
+        >
+          <Trash2 :size="14" />
+        </button>
+      </div>
     </div>
 
     <div v-if="workspaceStore.workspaces.length === 0" class="p-4">
@@ -710,7 +776,7 @@ onUnmounted(() => {
       class="min-h-0 flex-1 overflow-y-auto px-2 pt-2 pb-2 focus-scrollbar"
       :class="externalDropRowKey === '__root__' ? 'border-l-2 border-accent bg-accent-soft/40' : ''"
       @click.self="workspaceStore.clearSelection()"
-      @contextmenu.self="(e) => { workspaceStore.clearSelection(); openMenu(e, { name: '', relativePath: '', isDirectory: true, size: 0, mtimeMs: 0 }) }"
+      @contextmenu.self="(e) => { workspaceStore.clearSelection(); openMenu(e, { name: '', relativePath: '', isDirectory: true, size: 0, mtimeMs: 0, birthtimeMs: 0 }) }"
       @dragover="handleRootDragOver"
       @dragleave="(e) => handleDragLeave(e, '__root__')"
       @drop="handleRootDrop"

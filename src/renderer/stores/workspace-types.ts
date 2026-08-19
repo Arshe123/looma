@@ -12,6 +12,7 @@ export interface FsEntry {
   isDirectory: boolean
   size: number
   mtimeMs: number
+  birthtimeMs: number
 }
 
 export interface EditorSession {
@@ -182,6 +183,7 @@ export interface WorkspaceMeta {
   outlineExpansionStateVersion?: 1
   activeSidebarPanel?: SidebarPanelId | null
   sidebarPanels?: SidebarPanelState[]
+  fileSortMode?: 'name' | 'created-asc' | 'created-desc'
 }
 
 export type ResolvedThemeName = 'light' | 'dark'

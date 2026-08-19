@@ -42,6 +42,7 @@ interface FsEntry {
   isDirectory: boolean
   size: number
   mtimeMs: number
+  birthtimeMs: number
 }
 
 export interface ExternalCopyEntry {
@@ -204,15 +205,27 @@ export const applyAgentFileProposal = async (
   ))
 }
 
-const toFsEntryFromDirent = (root: string, parentAbs: string, d: import('fs').Dirent): FsEntry => {
+const toFsEntryFromDirent = async (root: string, parentAbs: string, d: import('fs').Dirent): Promise<FsEntry> => {
   const abs = path.join(parentAbs, d.name)
   const rel = path.relative(root, abs)
+  let size = 0
+  let mtimeMs = 0
+  let birthtimeMs = 0
+  try {
+    const stats = await fs.stat(abs)
+    size = stats.size
+    mtimeMs = stats.mtimeMs
+    birthtimeMs = stats.birthtimeMs
+  } catch {
+    // 条目可能在 stat 前已被删除，保留默认值
+  }
   return {
     name: d.name,
     relativePath: toPosix(rel),
     isDirectory: d.isDirectory(),
-    size: 0,
-    mtimeMs: 0,
+    size,
+    mtimeMs,
+    birthtimeMs,
   }
 }
 
@@ -287,7 +300,7 @@ export const fileSystemService = {
       if (!resolved.ok) return { success: false, error: resolved.error }
 
       const items = await fs.readdir(resolved.target, { withFileTypes: true })
-      const entries = items.map((d) => toFsEntryFromDirent(resolved.root, resolved.target, d))
+      const entries = await Promise.all(items.map((d) => toFsEntryFromDirent(resolved.root, resolved.target, d)))
 
       entries.sort((a, b) => {
         if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1

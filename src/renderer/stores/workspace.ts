@@ -382,6 +382,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     lastError: '' as string,
     undoStack: [] as UndoAction[],
     redoStack: [] as UndoAction[],
+    fileSortMode: 'name' as 'name' | 'created-asc' | 'created-desc',
     theme: getStoredTheme() as ThemeName,
     resolvedTheme: resolveThemeName(getStoredTheme()) as ResolvedThemeName,
     hasElectronWindowAPI: false as boolean,
@@ -1724,6 +1725,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.activeSystemPage = null
         this.openedTextFileContents = {}
         this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
+        this.fileSortMode = 'name'
         this.resetAiAssistantState()
         this.fileSessions = {}
         this.outlineExpandedHeadingIds = {}
@@ -1755,6 +1757,9 @@ export const useWorkspaceStore = defineStore('workspace', {
         metaResult.data.activeSidebarPanel,
         metaResult.data.sidebarPanels,
       )
+      this.fileSortMode = metaResult.data.fileSortMode === 'created-asc' || metaResult.data.fileSortMode === 'created-desc'
+        ? metaResult.data.fileSortMode
+        : 'name'
       
       // Restore active tab
       if (this.activeTabId) {
@@ -1797,9 +1802,15 @@ export const useWorkspaceStore = defineStore('workspace', {
         activeFileRelativePath: this.activeFileRelativePath,
         fileSessions: this.fileSessions,
         outlineExpandedHeadingIds: this.outlineExpandedHeadingIds,
+        fileSortMode: this.fileSortMode,
       })
       this.fileSessions = cleanedSessions
       await window.electronAPI.workspaceMeta.set(id, meta)
+    },
+
+    setFileSortMode(mode: 'name' | 'created-asc' | 'created-desc') {
+      this.fileSortMode = mode
+      this.saveWorkspaceMeta().catch(() => {})
     },
 
     saveFileSession(relPath: string, session: Partial<EditorSession>, skipSaveMeta = false) {

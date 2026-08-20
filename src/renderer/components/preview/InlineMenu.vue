@@ -60,9 +60,9 @@ const activeMenuItems = computed(() => menuMode.value === 'table' ? tableMenuIte
 
 const getCurrentMenuMode = (editor: Editor) => isInTable(editor.state) ? 'table' : 'default'
 
-const isInNonEmptyCodeBlock = (editor: Editor) => {
+const isInCodeBlock = (editor: Editor) => {
   const parent = editor.state.selection.$anchor.parent
-  return parent.type.name === 'codeBlock' && parent.textContent.length > 0
+  return parent.type.name === 'codeBlock'
 }
 
 // 恢复被隐藏的行号；无目标元素时恢复全部
@@ -84,10 +84,13 @@ const updatePosition = () => {
     return
   }
 
-  if (isInNonEmptyCodeBlock(editor)) {
+  // 行菜单只服务于可转换的空文本块。代码块即使为空也已经有明确的块类型，
+  // 不能再次显示行菜单，否则通过 ``` 创建代码块时会在首行错误出现 “+”。
+  if (isInCodeBlock(editor)) {
     restoreLineNumbers(hiddenLineNumberEl)
     hiddenLineNumberEl = null
     menuVisible.value = false
+    panelVisible.value = false
     return
   }
 

@@ -1219,14 +1219,15 @@ defineExpose({
   display: none;
 }
 
-/* 代码块行号：跟随代码块自身的左内边距，避免被 code-block-shell 的定位上下文干扰 */
+/* 代码块行号：用紧凑 gutter 同时容纳行号和正文，避免与 pre 的内边距重复叠加。 */
 .tiptap-preview-container .code-block-content {
   position: relative;
-  padding-left: 3rem;
+  padding-left: 2.25rem;
 }
 
 .tiptap-preview-container .code-block-content .looma-line-number {
-  left: 0;
+  left: 0.25rem;
+  min-width: 1.5rem;
 }
 .markdown-body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;

@@ -178,7 +178,8 @@ onBeforeUnmount(() => {
   min-height: 2.75rem;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 0.85rem 5.75rem 0.85rem 1rem;
+  /* 左侧间距由 code-block-content 统一管理，避免与代码行号 gutter 重复叠加。 */
+  padding: 0.85rem 5.75rem 0.85rem 0;
   border: 0;
   border-radius: 0;
   color: inherit;

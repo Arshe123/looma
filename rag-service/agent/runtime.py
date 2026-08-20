@@ -351,6 +351,7 @@ class AgentRuntime:
                 plans: list[_ToolPlan] = []
                 batch_signatures: dict[str, _ToolPlan] = {}
                 assistant_calls: list[ChatToolCall] = []
+                displayed_thought_summaries: set[str] = set()
                 for call in batch_calls:
                     tool_steps += 1
                     step_id = f"step_{tool_steps}_{uuid.uuid4().hex[:12]}"
@@ -375,15 +376,24 @@ class AgentRuntime:
                             name=call.tool, arguments=call.arguments
                         ),
                     ))
+                    # Native providers expose one assistant content block for the
+                    # whole tool-call batch. Some provider adapters therefore put
+                    # the same display summary on every call. Keep distinct
+                    # per-call summaries, but emit a shared batch summary once.
+                    thought_summary = call.thought_summary.strip()
+                    if thought_summary in displayed_thought_summaries:
+                        thought_summary = ""
+                    else:
+                        displayed_thought_summaries.add(thought_summary)
                     yield event(
                         "timeline", run_id, step=tool_steps, stepId=step_id,
-                        status="running", summary=call.thought_summary,
+                        status="running", summary=thought_summary,
                     )
                     yield event(
                         "tool_call", run_id, step=tool_steps, stepId=step_id,
                         callId=call_id, tool=call.tool,
                         arguments=call.arguments,
-                        thought_summary=call.thought_summary,
+                        thought_summary=thought_summary,
                     )
 
                     if isinstance(call, AgentInvalidToolCall):

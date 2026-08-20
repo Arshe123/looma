@@ -82,9 +82,17 @@ export const projectAgentDisplayEvents = (events: AgentEvent[]): AgentConversati
   const approvalByArtifact = new Map(Object.values(approvals).map((approval) => [approval.artifactId, approval]))
   const artifactCallIds = new Set(events.flatMap(event => event.type === 'artifact_created' ? [event.payload.callId] : []))
   const result: AgentConversationDisplayEvent[] = []
+  const batchThoughtSummaries = new Set<string>()
 
   for (const event of ordered(events)) {
+    // Tool calls from one model decision are recorded before their results. Old
+    // ledgers may contain the same provider-level summary once per call, so use
+    // the first result as the batch boundary while projecting historical data.
+    if (event.type === 'tool_result_recorded') batchThoughtSummaries.clear()
     if (event.type === 'thought_summary') {
+      const summary = event.payload.summary.trim()
+      if (!summary || batchThoughtSummaries.has(summary)) continue
+      batchThoughtSummaries.add(summary)
       result.push({
         id: event.id,
         order: event.sequence,
@@ -92,7 +100,7 @@ export const projectAgentDisplayEvents = (events: AgentEvent[]): AgentConversati
         stepId: event.payload.stepId,
         callId: event.payload.callId,
         title: '思考摘要',
-        content: event.payload.summary,
+        content: summary,
         status: 'completed',
         createdAt: event.timestamp,
       })

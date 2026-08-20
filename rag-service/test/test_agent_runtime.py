@@ -250,6 +250,40 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1]["status"], "completed")
         self.assertIn("1 次内循环上限", events[-1]["answer"])
 
+    async def test_tool_batch_emits_a_shared_thought_summary_once(self):
+        first = AgentToolCall(
+            type="tool_call", thought_summary="读取前 7 天的日记。",
+            tool="workspace_search", arguments={"value": "a"},
+        )
+        second = AgentToolCall(
+            type="tool_call", thought_summary="读取前 7 天的日记。",
+            tool="rag_search", arguments={"value": "b"},
+        )
+        provider = FakeProvider([
+            AgentToolBatch(type="tool_calls", calls=[first, second]),
+            AgentFinalAnswer(type="final", answer="读取完成"),
+        ])
+
+        events = await collect(
+            build_runtime(provider, FakeTool(), FakeRagTool()),
+            input="读取日记", history=[],
+            config=AgentConfig(enabled_tools=["workspace_search", "rag_search"]),
+        )
+
+        calls = [event for event in events if event["type"] == "tool_call"]
+        running = [
+            event for event in events
+            if event["type"] == "timeline" and event["status"] == "running"
+        ]
+        self.assertEqual(
+            [event["thought_summary"] for event in calls],
+            ["读取前 7 天的日记。", ""],
+        )
+        self.assertEqual(
+            [event["summary"] for event in running],
+            ["读取前 7 天的日记。", ""],
+        )
+
     async def test_duplicate_calls_in_same_batch_reuse_first_success(self):
         tool = FakeTool(result={"entries": ["学习笔记", "灵光一闪"]})
         first = AgentToolCall(

@@ -99,6 +99,37 @@ describe('agent conversation display helpers', () => {
     expect(projected.timeline.find(step => step.id === 'step-1')).toMatchObject({ status: 'error' })
   })
 
+  it('projects a provider-level thought once per tool batch for legacy ledgers', () => {
+    const base = { taskId: 'task-1', runId: 'run-1' }
+    const thought = (id: string, sequence: number, stepId: string, callId: string) => ({
+      ...base, id, sequence, timestamp: sequence, family: 'execution', type: 'thought_summary',
+      payload: { stepId, callId, summary: '读取前 7 天的日记。' },
+    })
+    const call = (id: string, sequence: number, stepId: string, callId: string) => ({
+      ...base, id, sequence, timestamp: sequence, family: 'execution', type: 'tool_call_requested',
+      payload: { stepId, callId, tool: 'file_read', argumentsPreview: {}, argumentsDigest: id, startedAt: sequence },
+    })
+    const result = (id: string, sequence: number, stepId: string, callId: string) => ({
+      ...base, id, sequence, timestamp: sequence, family: 'execution', type: 'tool_result_recorded',
+      payload: { stepId, callId, tool: 'file_read', status: 'completed', durationMs: 1, uiSummary: '完成', modelContext: { facts: [], structuredData: {} } },
+    })
+    const events = [
+      thought('thought-1', 1, 'step-1', 'call-1'),
+      call('call-1', 2, 'step-1', 'call-1'),
+      thought('thought-2', 3, 'step-2', 'call-2'),
+      call('call-2', 4, 'step-2', 'call-2'),
+      result('result-1', 5, 'step-1', 'call-1'),
+      result('result-2', 6, 'step-2', 'call-2'),
+      thought('thought-3', 7, 'step-3', 'call-3'),
+      call('call-3', 8, 'step-3', 'call-3'),
+    ] as any
+
+    const displayEvents = projectAgentRunView(events, []).displayEvents
+    expect(displayEvents.filter(event => event.kind === 'thought').map(event => event.id))
+      .toEqual(['thought-1', 'thought-3'])
+    expect(displayEvents.filter(event => event.kind === 'tool_call')).toHaveLength(3)
+  })
+
   it('collapses every tool event after the final answer and keeps only the latest call live', () => {
     const events = [
       { id: 'thought-1', order: 1, kind: 'thought', stepId: 'step-1', callId: 'call-1', title: '思考', content: '第一步', status: 'completed', createdAt: 1 },

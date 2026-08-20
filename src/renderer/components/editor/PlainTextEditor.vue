@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
 import { Minus, Plus, WrapText } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import Editor from './Editor.vue'
@@ -21,6 +21,31 @@ const localContent = ref(props.content || '')
 const fontSize = ref(14)
 const wordWrap = ref(true)
 const editorRef = ref<InstanceType<typeof Editor> | null>(null)
+let hasActivatedOnce = false
+let restoreGeneration = 0
+
+const saveSnapshot = (skipSaveMeta = false) => {
+  if (workspaceStore.isWorkspaceTransitioning) return
+  const cmSnap = editorRef.value?.getSnapshot()
+  if (!cmSnap || !props.relativeFilePath) return
+  workspaceStore.saveFileSession(props.relativeFilePath, {
+    plaintext: { fontSize: fontSize.value, wordWrap: wordWrap.value },
+    codemirror: cmSnap,
+  }, skipSaveMeta)
+}
+
+const restoreSnapshot = async (focusEditor = false) => {
+  const generation = ++restoreGeneration
+  const snapshot = workspaceStore.fileSessions[props.relativeFilePath]?.codemirror
+  if (!snapshot) return
+  await nextTick()
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (generation !== restoreGeneration) return
+      editorRef.value?.applySnapshot(snapshot, { focus: focusEditor })
+    })
+  })
+}
 
 onMounted(() => {
   const session = workspaceStore.fileSessions[props.relativeFilePath]
@@ -30,9 +55,19 @@ onMounted(() => {
     fontSize.value = session.plaintext.fontSize
     wordWrap.value = session.plaintext.wordWrap
   }
-  if (session.codemirror && editorRef.value) {
-    setTimeout(() => editorRef.value?.applySnapshot(session.codemirror!), 50)
+  void restoreSnapshot(false)
+})
+
+onActivated(() => {
+  if (!hasActivatedOnce) {
+    hasActivatedOnce = true
+    return
   }
+  void restoreSnapshot(true)
+})
+
+onDeactivated(() => {
+  restoreGeneration += 1
 })
 
 watch([fontSize, wordWrap], ([fs, ww]) => {
@@ -78,14 +113,7 @@ const toggleWrap = () => {
 
 defineExpose({
   saveSnapshot(skipSaveMeta = false) {
-    if (workspaceStore.isWorkspaceTransitioning) return
-    const cmSnap = editorRef.value?.getSnapshot()
-    if (cmSnap && props.relativeFilePath) {
-      workspaceStore.saveFileSession(props.relativeFilePath, {
-        plaintext: { fontSize: fontSize.value, wordWrap: wordWrap.value },
-        codemirror: cmSnap,
-      }, skipSaveMeta)
-    }
+    saveSnapshot(skipSaveMeta)
   },
 })
 </script>

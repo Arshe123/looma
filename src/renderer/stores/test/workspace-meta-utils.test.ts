@@ -15,7 +15,15 @@ describe('buildWorkspaceMetaPayload tab persistence', () => {
       tabs,
       activeTabId: 'system:settings',
       fileSessions: {
-        'docs/a.md': { updatedAt: 1 },
+        'docs/a.md': {
+          updatedAt: 1,
+          markdown: {
+            viewMode: 'split',
+            editorScroll: { ratio: 0.4, sourceLine: 12.5 },
+            previewScroll: { ratio: 0.42, sourceLine: 13 },
+          },
+          codemirror: { anchor: 120, head: 120, scrollTop: 240 },
+        },
         'legacy.md': { updatedAt: 2 },
       },
       activeSidebarPanel: 'files',
@@ -29,7 +37,15 @@ describe('buildWorkspaceMetaPayload tab persistence', () => {
     expect(meta.openedFiles).toEqual(['docs/a.md'])
     expect(meta.activeFile).toBe('docs/a.md')
     expect(cleanedSessions).toEqual({
-      'docs/a.md': { updatedAt: 1 },
+      'docs/a.md': {
+        updatedAt: 1,
+        markdown: {
+          viewMode: 'split',
+          editorScroll: { ratio: 0.4, sourceLine: 12.5 },
+          previewScroll: { ratio: 0.42, sourceLine: 13 },
+        },
+        codemirror: { anchor: 120, head: 120, scrollTop: 240 },
+      },
     })
     expect(meta.outlineExpandedHeadingIds).toEqual({
       'file:docs/a.md': ['heading-0'],

@@ -1,3 +1,5 @@
+import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
+
 export interface Workspace {
   id: string
   name: string
@@ -17,7 +19,12 @@ export interface FsEntry {
 
 export interface EditorSession {
   updatedAt: number
-  markdown?: { viewMode: 'split' | 'editor' | 'preview'; splitRatio?: number }
+  markdown?: {
+    viewMode: 'split' | 'editor' | 'preview'
+    splitRatio?: number
+    editorScroll?: ScrollSyncState
+    previewScroll?: ScrollSyncState
+  }
   plaintext?: { fontSize: number; wordWrap: boolean }
   codemirror?: {
     anchor: number

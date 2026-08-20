@@ -1048,6 +1048,11 @@ defineExpose({
   applyScrollState(state: ScrollSyncState) {
     applyPreviewScrollState(state)
   },
+  focus() {
+    const currentEditor = editor.value
+    if (!currentEditor || currentEditor.isDestroyed) return
+    currentEditor.view.focus()
+  },
   flushPendingMarkdownEmit() {
     clearPendingAutoSave()
     return emitCurrentMarkdown()

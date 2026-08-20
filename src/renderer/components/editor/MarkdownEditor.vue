@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { defineAsyncComponent, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Columns, Edit3, Eye } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { useSettingsStore } from '@/renderer/stores/settings'
@@ -51,6 +51,8 @@ let ignoreEditorScrollUntil = 0
 let ignorePreviewScrollUntil = 0
 let lastZoomWheelAt = 0
 let zoomIndicatorTimer: number | null = null
+let hasActivatedOnce = false
+let restoreGeneration = 0
 const SCROLL_SYNC_GUARD_MS = 180
 const ZOOM_WHEEL_THROTTLE_MS = 80
 const ZOOM_INDICATOR_DURATION_MS = 900
@@ -59,12 +61,71 @@ const clampSplitRatio = (ratio: number) => Math.min(Math.max(ratio, 0.2), 0.8)
 
 const saveMarkdownSession = (skipSaveMeta = false) => {
   if (workspaceStore.isWorkspaceTransitioning) return
+  const existing = workspaceStore.fileSessions[props.relativeFilePath]?.markdown
   workspaceStore.saveFileSession(props.relativeFilePath, {
     markdown: {
       viewMode: viewMode.value,
       splitRatio: splitRatio.value,
+      editorScroll: existing?.editorScroll,
+      previewScroll: existing?.previewScroll,
     },
   }, skipSaveMeta)
+}
+
+const getMarkdownSnapshot = () => {
+  const existing = workspaceStore.fileSessions[props.relativeFilePath]?.markdown
+  return {
+    viewMode: viewMode.value,
+    splitRatio: splitRatio.value,
+    editorScroll: editorRef.value?.getScrollState?.() || existing?.editorScroll,
+    previewScroll: getRenderedPreviewScrollState() || existing?.previewScroll,
+  }
+}
+
+const saveSnapshot = (skipSaveMeta = false) => {
+  if (workspaceStore.isWorkspaceTransitioning) return
+  const cmSnap = editorRef.value?.getSnapshot()
+  workspaceStore.saveFileSession(props.relativeFilePath, {
+    markdown: getMarkdownSnapshot(),
+    ...(cmSnap ? { codemirror: cmSnap } : {}),
+  }, skipSaveMeta)
+}
+
+const restoreSnapshot = async (focusVisibleEditor = false) => {
+  const generation = ++restoreGeneration
+  const session = workspaceStore.fileSessions[props.relativeFilePath]
+  if (!session) return
+  const editorScroll = session.markdown?.editorScroll
+  const previewScroll = session.markdown?.previewScroll
+
+  await nextTick()
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (generation !== restoreGeneration) return
+      if (viewMode.value !== 'preview') {
+        if (session.codemirror) {
+          editorRef.value?.applySnapshot(session.codemirror, {
+            focus: focusVisibleEditor,
+          })
+          if (editorScroll) {
+            requestAnimationFrame(() => {
+              if (generation === restoreGeneration) {
+                editorRef.value?.applyScrollState?.(editorScroll)
+              }
+            })
+          }
+        } else if (editorScroll) {
+          editorRef.value?.applyScrollState?.(editorScroll)
+        }
+      }
+      if (viewMode.value !== 'editor' && previewScroll) {
+        applyRenderedPreviewScrollState(previewScroll)
+      }
+      if (focusVisibleEditor && viewMode.value === 'preview') {
+        previewRef.value?.focus?.()
+      }
+    })
+  })
 }
 
 const stopSplitResize = () => {
@@ -204,10 +265,20 @@ onMounted(async () => {
       isPreparingFullContent.value = false
       if (!result.success) viewMode.value = 'preview'
     }
-    if (session.codemirror && editorRef.value) {
-      setTimeout(() => editorRef.value?.applySnapshot(session.codemirror!), 50)
-    }
   }
+  void restoreSnapshot(false)
+})
+
+onActivated(() => {
+  if (!hasActivatedOnce) {
+    hasActivatedOnce = true
+    return
+  }
+  void restoreSnapshot(true)
+})
+
+onDeactivated(() => {
+  restoreGeneration += 1
 })
 
 onUnmounted(() => {
@@ -257,19 +328,7 @@ defineExpose({
     }
   },
   saveSnapshot(skipSaveMeta = false) {
-    if (workspaceStore.isWorkspaceTransitioning) return
-    const cmSnap = editorRef.value?.getSnapshot()
-    if (cmSnap && props.relativeFilePath) {
-      workspaceStore.saveFileSession(props.relativeFilePath, {
-        markdown: {
-          viewMode: viewMode.value,
-          splitRatio: splitRatio.value,
-        },
-        codemirror: cmSnap,
-      }, skipSaveMeta)
-    } else {
-      saveMarkdownSession(skipSaveMeta)
-    }
+    saveSnapshot(skipSaveMeta)
   },
 })
 </script>

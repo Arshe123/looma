@@ -465,7 +465,10 @@ defineExpose({
   applyScrollState(state: ScrollSyncState) {
     applyEditorScrollState(state)
   },
-  applySnapshot(snap: { anchor: number, head: number, scrollTop: number }) {
+  applySnapshot(
+    snap: { anchor: number, head: number, scrollTop: number },
+    options: { focus?: boolean } = {},
+  ) {
     if (!editor || !snap) return;
     
     const docLength = editor.state.doc.length;
@@ -478,6 +481,7 @@ defineExpose({
 
     requestAnimationFrame(() => {
       if (editor) {
+        if (options.focus) editor.focus();
         editor.scrollDOM.scrollTop = snap.scrollTop;
       }
     });

@@ -10,6 +10,7 @@ export const initializeAutoUpdateService = (prepareInstall: () => Promise<void>)
   service = createUpdateService(autoUpdater, {
     isPackaged: app.isPackaged,
     prepareInstall,
+    logError: (message, error) => console.error(message, error),
     broadcast: state => {
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) win.webContents.send('app:update:state', state)

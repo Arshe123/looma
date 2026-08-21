@@ -48,7 +48,8 @@ const runCheck = async () => {
     const result = await window.electronAPI.app.update.check()
     state.value = result.state
   } catch (error) {
-    state.value = { status: 'error', error: error instanceof Error ? error.message : String(error) }
+    console.error('[update:check] IPC request failed', error)
+    state.value = { status: 'error', error: '暂时无法检查更新，请稍后重试。' }
   } finally {
     actionPending.value = false
   }
@@ -63,10 +64,12 @@ const openManualDownload = async () => {
   try {
     const result = await window.electronAPI.app.openExternal(manualDownloadUrl.value)
     if (!result.success) {
-      state.value = { ...state.value, status: 'error', error: result.error || '无法打开下载页面' }
+      console.error('[update:open-download] Failed to open download page', result.error)
+      state.value = { ...state.value, status: 'error', error: '无法打开下载页面，请稍后重试。' }
     }
   } catch (error) {
-    state.value = { ...state.value, status: 'error', error: error instanceof Error ? error.message : String(error) }
+    console.error('[update:open-download] Failed to open download page', error)
+    state.value = { ...state.value, status: 'error', error: '无法打开下载页面，请稍后重试。' }
   } finally {
     actionPending.value = false
   }
@@ -88,7 +91,8 @@ const downloadUpdate = async () => {
     const result = await window.electronAPI.app.update.download()
     state.value = result.state
   } catch (error) {
-    state.value = { ...state.value, status: 'error', error: error instanceof Error ? error.message : String(error) }
+    console.error('[update:download] IPC request failed', error)
+    state.value = { ...state.value, status: 'error', error: '更新下载失败，请检查网络后重试。' }
   } finally {
     actionPending.value = false
   }
@@ -101,7 +105,8 @@ const installUpdate = async () => {
     state.value = result.state
     if (!result.success) actionPending.value = false
   } catch (error) {
-    state.value = { ...state.value, status: 'error', error: error instanceof Error ? error.message : String(error) }
+    console.error('[update:install] IPC request failed', error)
+    state.value = { ...state.value, status: 'error', error: '安装更新失败，请稍后重试。' }
     actionPending.value = false
   }
 }

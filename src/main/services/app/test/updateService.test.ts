@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import { createUpdateService } from '../updateService'
+import { createUpdateService, getUpdateErrorMessage } from '../updateService'
 
 class FakeUpdater extends EventEmitter {
   autoDownload = true
@@ -12,6 +12,40 @@ class FakeUpdater extends EventEmitter {
 }
 
 describe('update service', () => {
+  it('turns missing release metadata and network failures into concise messages', () => {
+    const longMissingMetadataError = new Error(
+      'Cannot find latest.yml in the latest release artifacts: HttpError: 404 Headers: { lots: of-technical-detail }',
+    )
+
+    expect(getUpdateErrorMessage(longMissingMetadataError, 'check'))
+      .toBe('更新服务暂时不可用，请稍后再试。')
+    expect(getUpdateErrorMessage(new Error('net::ERR_INTERNET_DISCONNECTED'), 'check'))
+      .toBe('无法连接更新服务器，请检查网络后重试。')
+    expect(getUpdateErrorMessage(new Error('HttpError: 500'), 'check'))
+      .toBe('暂时无法检查更新，请稍后重试。')
+  })
+
+  it('does not publish the raw updater error to the renderer', async () => {
+    const updater = new FakeUpdater()
+    updater.checkForUpdates.mockRejectedValueOnce(new Error(
+      'Cannot find latest.yml in the latest release artifacts: HttpError: 404 with a very long stack',
+    ))
+    const logError = vi.fn()
+    const service = createUpdateService(updater, {
+      isPackaged: true,
+      broadcast: vi.fn(),
+      prepareInstall: vi.fn(),
+      logError,
+    })
+
+    service.initialize()
+    const state = await service.check()
+
+    expect(state).toEqual({ status: 'error', error: '更新服务暂时不可用，请稍后再试。' })
+    expect(logError).toHaveBeenCalledOnce()
+    expect(logError.mock.calls[0][0]).toContain('Cannot find latest.yml')
+  })
+
   it('publishes an available update and downloads it only after user action', async () => {
     const updater = new FakeUpdater()
     const states: unknown[] = []

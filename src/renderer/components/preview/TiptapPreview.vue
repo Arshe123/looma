@@ -71,6 +71,10 @@ import { LineNumbers } from '@/shared/utils/tiptap-line-numbers'
 import { LinkIcons } from '@/shared/utils/tiptap-link-icons'
 import { getNoteRefClickIntent } from '@/shared/utils/note-ref-interaction'
 import { ResizableMarkdownImage } from '@/shared/utils/resizable-markdown-image'
+import {
+  changeRichTextIndent,
+  shouldDeferRichTextTab,
+} from '@/shared/utils/tiptap-indentation'
 
 const props = defineProps<{
   content: string
@@ -927,17 +931,9 @@ onMounted(() => {
           return true
         }
         if (event.key === 'Tab' && editor.value && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          if (shouldDeferRichTextTab(editor.value)) return false
           event.preventDefault()
-          if (editor.value.isActive('listItem')) {
-            if (event.shiftKey) {
-              editor.value.chain().focus().liftListItem('listItem').run()
-            } else {
-              editor.value.chain().focus().sinkListItem('listItem').run()
-            }
-          } else {
-            editor.value.chain().focus().insertContent('\t').run()
-          }
-          return true
+          return changeRichTextIndent(editor.value, event.shiftKey ? 'less' : 'more')
         }
         if (event.key !== 'Enter' || !editor.value) return false
         return handleMarkdownNoteRefEnter(editor.value, {

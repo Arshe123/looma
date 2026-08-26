@@ -12,8 +12,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:content', value: string): void
-  (e: 'save', value: string): void
+  (e: 'update:content', value: string, relativePath: string): void
+  (e: 'save', value: string, relativePath: string): void
 }>()
 
 const workspaceStore = useWorkspaceStore()
@@ -95,7 +95,7 @@ watch(
 watch(
   () => props.saveTrigger,
   () => {
-    emit('save', localContent.value)
+    emit('save', localContent.value, props.relativeFilePath)
   },
 )
 
@@ -132,8 +132,8 @@ defineExpose({
         :filePath="props.filePath"
         :fontSize="fontSize"
         :wordWrap="wordWrap"
-        @change="(v) => { localContent = v; emit('update:content', v) }"
-        @save="(v) => { localContent = v; emit('save', v) }"
+        @change="(v) => { localContent = v; emit('update:content', v, props.relativeFilePath) }"
+        @save="(v) => { localContent = v; emit('save', v, props.relativeFilePath) }"
       />
     </div>
 

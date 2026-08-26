@@ -47,6 +47,7 @@ export interface OpenTextFileState {
   useChunkedPreview?: boolean
   recoveryRevision?: string
   recoveryConflict?: boolean
+  hasPendingEditorChanges?: boolean
 }
 
 export type AiAssistantMessageRole = 'assistant' | 'user' | 'system'

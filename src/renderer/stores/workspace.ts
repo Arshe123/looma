@@ -42,6 +42,7 @@ let pendingTextInputResolve: ((value: string | null) => void) | null = null
 let pendingConfirmationResolve: ((confirmed: boolean) => void) | null = null
 const DRAFT_RECOVERY_DEBOUNCE_MS = 300
 const draftRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const pendingExternalTextRefreshes = new Set<string>()
 let draftRecoveryRevisionCounter = 0
 
 const draftRecoveryKey = (workspaceId: string, relativePath: string) => `${workspaceId}\u0000${relativePath}`
@@ -1092,7 +1093,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       const rel = normalizeDir(relativePath)
       const state = this.openedTextFileContents[rel]
       if (!state || state.isPartial) return false
-      return state.content !== state.loadedContent
+      return Boolean(state.hasPendingEditorChanges || state.content !== state.loadedContent)
     },
 
     isSystemTabDirty(_page: SystemPageId) {
@@ -2091,11 +2092,19 @@ export const useWorkspaceStore = defineStore('workspace', {
         loadedContent: existing?.loadedContent ?? '',
         isSaving: existing?.isSaving ?? false,
         saveError: existing?.saveError ?? '',
+        hasPendingEditorChanges: false,
       }
       if (rel === this.activeFileRelativePath) {
         this.activeFileContent = content
       }
       this.scheduleDraftRecovery(rel)
+    },
+
+    markTextFileEditPending(relativePath?: string) {
+      const rel = normalizeDir(relativePath ?? this.activeFileRelativePath)
+      const state = this.openedTextFileContents[rel]
+      if (!state || state.isPartial) return
+      state.hasPendingEditorChanges = true
     },
 
     async loadActiveFileContent() {
@@ -2284,8 +2293,20 @@ export const useWorkspaceStore = defineStore('workspace', {
         || this.activeWorkspaceId !== workspaceId
         || this.resolveAbsolutePath(rel) !== absPath
         || !current
-        || (!current.isPartial && current.content !== current.loadedContent)
       ) return { success: true as const }
+      if (
+        !current.isPartial
+        && (current.hasPendingEditorChanges || current.content !== current.loadedContent)
+      ) {
+        if (result.data !== current.loadedContent) {
+          const conflictMessage = '该笔记已在另一个窗口修改，当前未保存内容已保留，请先处理冲突。'
+          current.saveError = conflictMessage
+          current.recoveryConflict = true
+          this.mirrorActiveTextFileState(rel)
+          this.setError(conflictMessage)
+        }
+        return { success: true as const }
+      }
       if (!current.isPartial && result.data === current.loadedContent) return result
       const totalBytes = new Blob([result.data]).size
       this.openedTextFileContents[rel] = {
@@ -2300,6 +2321,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         totalBytes,
         loadRequestId: refreshRequestId,
         useChunkedPreview: absPath.toLowerCase().endsWith('.md') && totalBytes >= LARGE_NOTE_BYTES,
+        hasPendingEditorChanges: false,
       }
       this.mirrorActiveTextFileState(rel)
       return result
@@ -2345,17 +2367,20 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       this.mirrorActiveTextFileState(rel)
       const workspaceId = this.activeWorkspaceId
+      const externalRefreshKey = workspaceId ? draftRecoveryKey(workspaceId, rel) : ''
       const savingRevision = await this.persistDraftRecoveryNow(rel)
       const expectedContent = completeState?.loadedContent
       const r = await window.electronAPI.file.writeMarkdown(absPath, next, expectedContent)
       const latestState = this.openedTextFileContents[rel]
       if (!r.success) {
+        if (externalRefreshKey) pendingExternalTextRefreshes.delete(externalRefreshKey)
         this.openedTextFileContents[rel] = {
           ...latestState,
           content: latestState?.content ?? next,
           loadedContent: latestState?.loadedContent ?? '',
           isSaving: false,
           saveError: r.error || 'Failed to save file',
+          recoveryConflict: r.errorCode === 'FILE_CHANGED_ON_DISK' || latestState?.recoveryConflict,
         }
         this.mirrorActiveTextFileState(rel)
         return r
@@ -2376,6 +2401,13 @@ export const useWorkspaceStore = defineStore('workspace', {
         await window.electronAPI.draftRecovery?.remove(workspaceId, rel, savingRevision).catch(() => {})
       }
       if (stillDirty) this.scheduleDraftRecovery(rel)
+      if (
+        externalRefreshKey
+        && pendingExternalTextRefreshes.delete(externalRefreshKey)
+        && this.activeWorkspaceId === workspaceId
+      ) {
+        await this.refreshOpenTextFileContentFromDisk(rel)
+      }
       return r
     },
 
@@ -2608,15 +2640,13 @@ export const useWorkspaceStore = defineStore('workspace', {
         const key = affected
         if (this.dirEntries[key]) this.loadDir(payload.workspaceId, affected)
         const openState = this.openedTextFileContents[relativePath]
-        if (
-          payload.event === 'change'
-          && payload.origin !== 'editor'
-          && openState
-          && !openState.isSaving
-          && (openState.isPartial || openState.content === openState.loadedContent)
-        ) {
-          this.refreshOpenTextFileContentFromDisk(relativePath).catch(() => {})
+        if (payload.event !== 'change' || payload.origin === 'editor' || !openState) return
+        const refreshKey = draftRecoveryKey(payload.workspaceId, relativePath)
+        if (openState.isSaving) {
+          pendingExternalTextRefreshes.add(refreshKey)
+          return
         }
+        this.refreshOpenTextFileContentFromDisk(relativePath).catch(() => {})
       })
     },
 

@@ -58,6 +58,16 @@ describe('workspace draft recovery', () => {
     expect(writeMarkdown).not.toHaveBeenCalled()
   })
 
+  it('treats an editor update awaiting serialization as dirty', () => {
+    const store = useWorkspaceStore()
+    store.openedTextFileContents['note.md'] = {
+      ...createTextState('saved'),
+      hasPendingEditorChanges: true,
+    }
+
+    expect(store.isFileDirty('note.md')).toBe(true)
+  })
+
   it('restores a draft over disk content and leaves the file marked dirty', async () => {
     (window as any).electronAPI = {
       file: {

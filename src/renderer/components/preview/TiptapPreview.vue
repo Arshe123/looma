@@ -40,6 +40,7 @@ import {
 } from '@/shared/utils/editor-scroll-sync'
 import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
 import { createMarkdownSerializationGate } from '@/shared/utils/markdown-serialization-gate'
+import { createEditorSaveGate } from '@/shared/utils/editor-save-gate'
 import { isPrimaryModifierPressed } from '@/shared/utils/platform-shortcuts'
 import {
   prepareMarkdownForRichText,
@@ -89,6 +90,7 @@ const emit = defineEmits<{
   (e: 'update:content', value: string): void
   (e: 'save', value: string): void
   (e: 'scroll-sync', value: ScrollSyncState): void
+  (e: 'edit-pending'): void
 }>()
 
 let isUpdatingFromExternal = false
@@ -102,6 +104,7 @@ let pendingHeadingClearTimer: number | null = null
 let scrollSyncFrame: number | null = null
 let noteRefValidationTimer: number | null = null
 const markdownSerializationGate = createMarkdownSerializationGate()
+const editorSaveGate = createEditorSaveGate()
 
 const editor = shallowRef<Editor | null>(null)
 const noteRefSourceEditorRef = shallowRef<{
@@ -811,8 +814,8 @@ const flushAndEmitSave = () => {
   const currentEditor = editor.value
   if (!currentEditor || isUnmounting || currentEditor.isDestroyed || isUpdatingFromExternal) return
   const flushed = emitCurrentMarkdown()
-  const markdown = flushed !== undefined ? flushed : lastEmittedContent
-  if (markdown) emit('save', markdown)
+  const markdown = editorSaveGate.take(flushed, lastEmittedContent)
+  if (markdown !== undefined) emit('save', markdown)
 }
 
 const scheduleAutoSave = () => {
@@ -953,6 +956,8 @@ onMounted(() => {
     onUpdate: ({ editor }) => {
       if (isUnmounting || editor.isDestroyed) return
       if (isUpdatingFromExternal) return
+      editorSaveGate.markPending()
+      emit('edit-pending')
       maybeOpenNoteRefPicker(editor)
       scheduleMarkdownEmit()
       scheduleAutoSave()
@@ -999,14 +1004,12 @@ watch(
     if (!editor.value) return
     if (isUnmounting || editor.value.isDestroyed) return
     if (pendingMarkdownEmitTimer) {
-      if (editor.value.isFocused) emitCurrentMarkdown()
-      else {
-        clearPendingMarkdownEmit()
-        markdownSerializationGate.clear()
-      }
+      const pendingLocalContent = emitCurrentMarkdown()
+      if (pendingLocalContent !== undefined && pendingLocalContent !== newContent) return
     }
     if (newContent === lastEmittedContent) return
     clearPendingAutoSave()
+    editorSaveGate.clear()
 
     const scrollState = getPreviewScrollState()
     isUpdatingFromExternal = true

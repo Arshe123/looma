@@ -311,8 +311,9 @@ onUnmounted(() => {
             :useChunkedPreview="activeTextEditor.state?.useChunkedPreview || false"
             @load-more="workspaceStore.loadNextTextFileChunk(activeTextEditor!.relativePath)"
             @ensure-loaded="workspaceStore.ensureTextFileFullyLoaded(activeTextEditor!.relativePath)"
-            @update:content="(v) => workspaceStore.setActiveFileContent(v, activeTextEditor!.relativePath)"
-            @save="(v) => handleSave(v, activeTextEditor!.relativePath)"
+            @update:content="(v, relativePath) => workspaceStore.setActiveFileContent(v, relativePath)"
+            @edit-pending="(relativePath) => workspaceStore.markTextFileEditPending(relativePath)"
+            @save="(v, relativePath) => handleSave(v, relativePath)"
             @retry="onEditorRetry"
           />
         </KeepAlive>

@@ -28,9 +28,10 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:content', value: string): void
-  (e: 'save', value: string): void
+  (e: 'update:content', value: string, relativePath: string): void
+  (e: 'save', value: string, relativePath: string): void
   (e: 'load-more'): void
+  (e: 'edit-pending', relativePath: string): void
 }>()
 
 const workspaceStore = useWorkspaceStore()
@@ -298,7 +299,11 @@ watch(
       if (!result.success) return
     }
     const flushedContent = previewRef.value?.flushPendingMarkdownEmit?.()
-    emit('save', flushedContent ?? workspaceStore.openedTextFileContents[props.relativeFilePath]?.content ?? props.content)
+    emit(
+      'save',
+      flushedContent ?? workspaceStore.openedTextFileContents[props.relativeFilePath]?.content ?? props.content,
+      props.relativeFilePath,
+    )
   },
 )
 
@@ -346,8 +351,8 @@ defineExpose({
         :initialContent="props.content"
         :filePath="props.filePath"
         :relativeFilePath="props.relativeFilePath"
-        @change="(v) => emit('update:content', v)"
-        @save="(v) => emit('save', v)"
+        @change="(v) => emit('update:content', v, props.relativeFilePath)"
+        @save="(v) => emit('save', v, props.relativeFilePath)"
         @scroll-sync="syncSplitScrollFromEditor"
       />
     </div>
@@ -394,8 +399,9 @@ defineExpose({
         :filePath="props.filePath"
         :relativeFilePath="props.relativeFilePath"
         :show-line-numbers="settingsStore.showLineNumbers"
-        @update:content="(v) => emit('update:content', v)"
-        @save="(v) => emit('save', v)"
+        @update:content="(v) => emit('update:content', v, props.relativeFilePath)"
+        @save="(v) => emit('save', v, props.relativeFilePath)"
+        @edit-pending="emit('edit-pending', props.relativeFilePath)"
         @scroll-sync="syncSplitScrollFromPreview"
       />
     </div>

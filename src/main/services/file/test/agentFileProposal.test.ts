@@ -82,6 +82,16 @@ describe('applyAgentFileProposal', () => {
     expect(await fs.readFile(target, 'utf8')).toBe('new content\n')
   })
 
+  it('never allows an automatic editor save to truncate a non-empty note to zero bytes', async () => {
+    const target = path.join(workspace, 'notes/a.md')
+    await fs.writeFile(target, 'irreplaceable note\n')
+
+    const result = await fileService.writeMarkdown(target, '', 'irreplaceable note\n')
+
+    expect(result).toMatchObject({ success: false, errorCode: 'EMPTY_FILE_WRITE_BLOCKED' })
+    expect(await fs.readFile(target, 'utf8')).toBe('irreplaceable note\n')
+  })
+
   it.each(['../outside.md', '.looma/secret', 'notes/a.md:stream', 'notes/CON', 'C:/outside.md'])('rejects unsafe path %s', async (unsafePath) => {
     const result = await applyAgentFileProposal(workspace, proposal({ path: unsafePath }))
     expect(result.success).toBe(false)

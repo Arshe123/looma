@@ -189,6 +189,135 @@ describe('workspace large note loading', () => {
     })
   })
 
+  it('marks a visible conflict instead of silently ignoring an external change while dirty', async () => {
+    let fsListener: ((payload: { workspaceId: string; event: string; relativePath: string; origin?: 'editor' | 'external' }) => void) | undefined
+    const readMarkdown = vi.fn().mockResolvedValue({ success: true, data: 'other window content' })
+    ;(window as any).electronAPI = {
+      file: { readMarkdown },
+      fs: { onEvent: vi.fn((listener) => { fsListener = listener; return vi.fn() }) },
+    }
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.activeFileRelativePath = 'note.md'
+    store.activeFilePath = 'E:\\notes\\note.md'
+    store.openedTextFileContents['note.md'] = {
+      content: 'local draft',
+      loadedContent: 'saved content',
+      isSaving: false,
+      saveError: '',
+      isPartial: false,
+      isLoading: false,
+      isLoadingMore: false,
+      nextOffset: 13,
+      totalBytes: 13,
+      loadRequestId: 1,
+      useChunkedPreview: false,
+    }
+
+    store.attachFsEvents()
+    fsListener?.({ workspaceId: workspace.id, event: 'change', relativePath: 'note.md', origin: 'external' })
+
+    await vi.waitFor(() => {
+      expect(readMarkdown).toHaveBeenCalledOnce()
+      expect(store.openedTextFileContents['note.md']).toMatchObject({
+        content: 'local draft',
+        loadedContent: 'saved content',
+        recoveryConflict: true,
+      })
+    })
+    expect(store.openedTextFileContents['note.md'].saveError).toContain('另一个窗口')
+  })
+
+  it('protects a rich-text keystroke before its debounced Markdown serialization finishes', async () => {
+    let fsListener: ((payload: { workspaceId: string; event: string; relativePath: string; origin?: 'editor' | 'external' }) => void) | undefined
+    const readMarkdown = vi.fn().mockResolvedValue({ success: true, data: 'other window content' })
+    ;(window as any).electronAPI = {
+      file: { readMarkdown },
+      fs: { onEvent: vi.fn((listener) => { fsListener = listener; return vi.fn() }) },
+    }
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.activeFileRelativePath = 'note.md'
+    store.activeFilePath = 'E:\\notes\\note.md'
+    store.openedTextFileContents['note.md'] = {
+      content: 'saved content',
+      loadedContent: 'saved content',
+      isSaving: false,
+      saveError: '',
+      hasPendingEditorChanges: true,
+      isPartial: false,
+      isLoading: false,
+      isLoadingMore: false,
+      nextOffset: 13,
+      totalBytes: 13,
+      loadRequestId: 1,
+      useChunkedPreview: false,
+    }
+
+    store.attachFsEvents()
+    fsListener?.({ workspaceId: workspace.id, event: 'change', relativePath: 'note.md', origin: 'external' })
+
+    await vi.waitFor(() => {
+      expect(readMarkdown).toHaveBeenCalledOnce()
+      expect(store.openedTextFileContents['note.md']).toMatchObject({
+        content: 'saved content',
+        loadedContent: 'saved content',
+        hasPendingEditorChanges: true,
+        recoveryConflict: true,
+      })
+    })
+  })
+
+  it('replays an external refresh that arrives while the note is saving', async () => {
+    let fsListener: ((payload: { workspaceId: string; event: string; relativePath: string; origin?: 'editor' | 'external' }) => void) | undefined
+    let finishWrite!: (result: { success: true }) => void
+    const writePromise = new Promise<{ success: true }>((resolve) => { finishWrite = resolve })
+    const readMarkdown = vi.fn().mockResolvedValue({ success: true, data: 'newer disk content' })
+    ;(window as any).electronAPI = {
+      file: { writeMarkdown: vi.fn(() => writePromise), readMarkdown },
+      fs: { onEvent: vi.fn((listener) => { fsListener = listener; return vi.fn() }) },
+      draftRecovery: {
+        save: vi.fn().mockResolvedValue({ success: true }),
+        remove: vi.fn().mockResolvedValue({ success: true }),
+      },
+    }
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.activeFileRelativePath = 'note.md'
+    store.activeFilePath = 'E:\\notes\\note.md'
+    store.openedTextFileContents['note.md'] = {
+      content: 'local save',
+      loadedContent: 'saved content',
+      isSaving: false,
+      saveError: '',
+      isPartial: false,
+      isLoading: false,
+      isLoadingMore: false,
+      nextOffset: 13,
+      totalBytes: 13,
+      loadRequestId: 1,
+      useChunkedPreview: false,
+    }
+    store.attachFsEvents()
+
+    const saving = store.saveActiveFileContent('local save', 'note.md')
+    await vi.waitFor(() => expect(store.openedTextFileContents['note.md'].isSaving).toBe(true))
+    fsListener?.({ workspaceId: workspace.id, event: 'change', relativePath: 'note.md', origin: 'external' })
+    expect(readMarkdown).not.toHaveBeenCalled()
+    finishWrite({ success: true })
+    await saving
+
+    expect(readMarkdown).toHaveBeenCalledOnce()
+    expect(store.openedTextFileContents['note.md']).toMatchObject({
+      content: 'newer disk content',
+      loadedContent: 'newer disk content',
+      isSaving: false,
+    })
+  })
+
   it('discards an initial chunk after the workspace changes', async () => {
     let resolveChunk!: (value: any) => void
     const pendingChunk = new Promise(resolve => { resolveChunk = resolve })

@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import type { Result } from '../../../shared/types/Result';
 import { withFileWriteLock } from './fileWriteLock';
 
@@ -13,6 +14,24 @@ export interface TextFileChunk {
 
 const MAX_TEXT_CHUNK_BYTES = 1024 * 1024;
 const SUPPORTED_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
+const writeFileAtomically = async (filePath: string, content: string) => {
+  const directory = path.dirname(filePath);
+  const temporaryPath = path.join(directory, `.${path.basename(filePath)}.${randomUUID()}.looma-tmp`);
+  const handle = await fs.open(temporaryPath, 'wx', 0o600);
+  try {
+    await handle.writeFile(content, 'utf8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    const currentMode = (await fs.stat(filePath)).mode;
+    await fs.chmod(temporaryPath, currentMode);
+    await fs.rename(temporaryPath, filePath);
+  } finally {
+    await fs.rm(temporaryPath, { force: true });
+  }
+};
 
 const getCompleteUtf8Length = (buffer: Buffer, requestedLength: number, reachedEnd: boolean) => {
   if (reachedEnd || requestedLength <= 0) return requestedLength;
@@ -164,8 +183,8 @@ export const fileService = {
   async writeMarkdown(filePath: string, content: string, expectedContent?: string): Promise<Result<void>> {
     return withFileWriteLock(filePath, async () => {
       try {
+        const current = await fs.readFile(filePath, 'utf-8');
         if (expectedContent !== undefined) {
-          const current = await fs.readFile(filePath, 'utf-8');
           if (current !== expectedContent) {
             return {
               success: false,
@@ -174,7 +193,15 @@ export const fileService = {
             };
           }
         }
-        await fs.writeFile(filePath, content, 'utf-8');
+        if (current.length > 0 && content.length === 0) {
+          return {
+            success: false,
+            error: '已阻止将非空笔记自动保存为空文件。请先备份内容，再执行明确的清空操作。',
+            errorCode: 'EMPTY_FILE_WRITE_BLOCKED',
+          };
+        }
+        if (current === content) return { success: true };
+        await writeFileAtomically(filePath, content);
         return { success: true };
       } catch (error: any) {
         return { success: false, error: `Failed to write file: ${error.message}` };

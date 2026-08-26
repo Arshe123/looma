@@ -2491,19 +2491,27 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async deleteEntries(relativePaths: string[]) {
       const ws = this.activeWorkspaceId
-      if (!ws || relativePaths.length === 0) return
+      if (!ws || relativePaths.length === 0 || this.isBusy) return
       this.setBusy(true, '删除中...')
       
       const items: { trashRelativePath: string; restoreTo: string }[] = []
+      const missingPaths: string[] = []
       for (const p of relativePaths) {
         const r = await window.electronAPI.fs.delete(ws, normalizeDir(p))
         if (r.success && r.data) {
           items.push({ trashRelativePath: r.data.trashRelativePath, restoreTo: normalizeDir(p) })
+        } else if (isMissingDirectoryResult(r)) {
+          missingPaths.push(normalizeDir(p))
         } else {
           this.setError(r.error || '删除失败')
         }
       }
       this.setBusy(false)
+
+      if (missingPaths.length > 0) {
+        await this.applyHistoryEffects({ removedPaths: missingPaths })
+        await this.refreshDirs(ws, missingPaths.map(pathDir))
+      }
       
       if (items.length > 0) {
         this.undoStack.unshift({
@@ -2576,27 +2584,35 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async renameEntry(relativePath: string, nextBaseValue?: string) {
       const ws = this.activeWorkspaceId
-      if (!ws) return
+      if (!ws || this.isBusy) return
       const from = normalizeDir(relativePath)
       const base = pathBase(from)
       const nextBase = ((nextBaseValue ?? (await this.requestTextInput('重命名', base))) ?? base).trim()
       if (!nextBase || nextBase === base) return
       const dir = pathDir(from)
       const to = dir ? dir + '/' + nextBase : nextBase
-      const r = await window.electronAPI.fs.rename(ws, from, nextBase)
-      if (!r.success) {
-        this.setError(r.error || '重命名失败')
-        return
-      }
-      
-      if (this.syncOpenedFilesAfterMove([{ from, to }])) {
-        if (this.activeFileRelativePath === from) this.activateFileTab(to)
-        this.saveWorkspaceMeta().catch(() => {})
-      }
-      await this.migrateDraftRecoveryAfterMove([{ from, to }])
+      this.setBusy(true, '重命名中...')
+      try {
+        const r = await window.electronAPI.fs.rename(ws, from, nextBase)
+        if (!r.success) {
+          this.setError(r.error || '重命名失败')
+          return
+        }
 
-      this.undoStack.unshift({ type: 'move', items: [{ from, to }] })
-      this.redoStack = []
+        const renamedTo = normalizeDir(r.data || to)
+        const movedItems = [{ from, to: renamedTo }]
+        await this.applyHistoryEffects({ movedItems })
+
+        const movedExpandedDirs = this.expandedDirs.filter((expandedDir) => (
+          isSameOrChildPath(renamedTo, normalizeDir(expandedDir))
+        ))
+        await this.refreshDirs(ws, [dir, ...movedExpandedDirs])
+
+        this.undoStack.unshift({ type: 'move', items: movedItems })
+        this.redoStack = []
+      } finally {
+        this.setBusy(false)
+      }
     },
 
     async undo() {

@@ -740,7 +740,11 @@ export const fileSystemService = {
       await safeRename(targetResolved.target, trashAbs)
       return { success: true, data: { trashRelativePath: toPosix(path.relative(trashDir, trashAbs)) } }
     } catch (error: any) {
-      return { success: false, error: `删除失败: ${error?.message ?? String(error)}` }
+      return {
+        success: false,
+        error: `删除失败: ${error?.message ?? String(error)}`,
+        errorCode: typeof error?.code === 'string' ? error.code : undefined,
+      }
     }
   },
 

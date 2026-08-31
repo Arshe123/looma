@@ -1,5 +1,5 @@
 import { BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron';
-import { fileService } from '../services/file/fileService';
+import { fileService, type WriteMarkdownOptions } from '../services/file/fileService';
 import { fileWatchService } from '../services/file/fileSystemService';
 
 // IPC Handlers for File Service
@@ -37,9 +37,15 @@ ipcMain.handle('file:selectAndCopyImage', async (event, noteFilePath: string) =>
   return await fileService.copyImageToNoteAssets(noteFilePath, selected.filePaths[0]);
 });
 
-ipcMain.handle('file:writeMarkdown', async (event, filePath: string, content: string, expectedContent?: string) => {
+ipcMain.handle('file:writeMarkdown', async (
+  event,
+  filePath: string,
+  content: string,
+  expectedContent?: string,
+  options?: WriteMarkdownOptions,
+) => {
   const writeToken = fileWatchService.registerEditorWrite(event.sender, filePath, content);
-  const result = await fileService.writeMarkdown(filePath, content, expectedContent);
+  const result = await fileService.writeMarkdown(filePath, content, expectedContent, options);
   if (!result.success) fileWatchService.cancelEditorWrite(event.sender, filePath, writeToken);
   return result;
 });

@@ -2358,6 +2358,20 @@ export const useWorkspaceStore = defineStore('workspace', {
         }
         completeState.recoveryConflict = false
       }
+      const isClearingNonEmptyFile = next.length === 0 && Boolean(completeState?.loadedContent.length)
+      if (isClearingNonEmptyFile) {
+        const confirmation = await window.electronAPI.app.showMessageBox({
+          type: 'warning',
+          title: '确认清空笔记',
+          message: `${pathBase(rel)} 的内容将被清空，保存后文件会变为空白。是否继续？`,
+          buttons: ['确认清空并保存', '取消'],
+          defaultId: 1,
+          cancelId: 1,
+        })
+        if (confirmation.response !== 0) {
+          return { success: false as const, error: '已取消清空笔记' }
+        }
+      }
       this.openedTextFileContents[rel] = {
         ...(completeState || currentState),
         content: next,
@@ -2370,7 +2384,14 @@ export const useWorkspaceStore = defineStore('workspace', {
       const externalRefreshKey = workspaceId ? draftRecoveryKey(workspaceId, rel) : ''
       const savingRevision = await this.persistDraftRecoveryNow(rel)
       const expectedContent = completeState?.loadedContent
-      const r = await window.electronAPI.file.writeMarkdown(absPath, next, expectedContent)
+      const r = isClearingNonEmptyFile
+        ? await window.electronAPI.file.writeMarkdown(
+            absPath,
+            next,
+            expectedContent,
+            { allowEmptyContent: true },
+          )
+        : await window.electronAPI.file.writeMarkdown(absPath, next, expectedContent)
       const latestState = this.openedTextFileContents[rel]
       if (!r.success) {
         if (externalRefreshKey) pendingExternalTextRefreshes.delete(externalRefreshKey)

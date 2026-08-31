@@ -12,6 +12,10 @@ export interface TextFileChunk {
   done: boolean;
 }
 
+export interface WriteMarkdownOptions {
+  allowEmptyContent?: boolean;
+}
+
 const MAX_TEXT_CHUNK_BYTES = 1024 * 1024;
 const SUPPORTED_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 const writeFileAtomically = async (filePath: string, content: string) => {
@@ -180,7 +184,12 @@ export const fileService = {
     }
   },
 
-  async writeMarkdown(filePath: string, content: string, expectedContent?: string): Promise<Result<void>> {
+  async writeMarkdown(
+    filePath: string,
+    content: string,
+    expectedContent?: string,
+    options?: WriteMarkdownOptions,
+  ): Promise<Result<void>> {
     return withFileWriteLock(filePath, async () => {
       try {
         const current = await fs.readFile(filePath, 'utf-8');
@@ -193,7 +202,7 @@ export const fileService = {
             };
           }
         }
-        if (current.length > 0 && content.length === 0) {
+        if (current.length > 0 && content.length === 0 && !options?.allowEmptyContent) {
           return {
             success: false,
             error: '已阻止将非空笔记自动保存为空文件。请先备份内容，再执行明确的清空操作。',

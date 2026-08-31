@@ -190,6 +190,69 @@ describe('workspace draft recovery', () => {
     expect(store.isFileDirty('note.md')).toBe(true)
   })
 
+  it('does not save when clearing a non-empty note is not confirmed', async () => {
+    const writeMarkdown = vi.fn()
+    const showMessageBox = vi.fn().mockResolvedValue({ response: 1 })
+    ;(window as any).electronAPI = {
+      app: { showMessageBox },
+      file: { writeMarkdown },
+    }
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.activeFileRelativePath = 'note.md'
+    store.activeFilePath = '/notes/note.md'
+    store.openedTextFileContents['note.md'] = {
+      ...createTextState('draft content'),
+      content: '',
+    }
+
+    const result = await store.saveActiveFileContent('', 'note.md')
+
+    expect(result).toEqual({ success: false, error: '已取消清空笔记' })
+    expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      title: '确认清空笔记',
+      defaultId: 1,
+      cancelId: 1,
+    }))
+    expect(writeMarkdown).not.toHaveBeenCalled()
+    expect(store.isFileDirty('note.md')).toBe(true)
+  })
+
+  it('saves an empty note after explicit confirmation', async () => {
+    const writeMarkdown = vi.fn().mockResolvedValue({ success: true })
+    const showMessageBox = vi.fn().mockResolvedValue({ response: 0 })
+    ;(window as any).electronAPI = {
+      app: { showMessageBox },
+      file: { writeMarkdown },
+      draftRecovery: {
+        save: vi.fn().mockResolvedValue({ success: true }),
+        remove: vi.fn().mockResolvedValue({ success: true }),
+      },
+    }
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.activeFileRelativePath = 'note.md'
+    store.activeFilePath = '/notes/note.md'
+    store.openedTextFileContents['note.md'] = {
+      ...createTextState('draft content'),
+      content: '',
+    }
+
+    const result = await store.saveActiveFileContent('', 'note.md')
+
+    expect(result.success).toBe(true)
+    expect(writeMarkdown).toHaveBeenCalledWith(
+      '/notes/note.md',
+      '',
+      'draft content',
+      { allowEmptyContent: true },
+    )
+    expect(store.openedTextFileContents['note.md'].loadedContent).toBe('')
+    expect(store.isFileDirty('note.md')).toBe(false)
+  })
+
   it('migrates a dirty recovery draft when its open file is renamed', async () => {
     const saveDraft = vi.fn().mockResolvedValue({ success: true })
     const movePaths = vi.fn().mockResolvedValue({ success: true, data: 1 })

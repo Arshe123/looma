@@ -291,7 +291,12 @@ interface ElectronAPI {
     readFileBase64: (filePath: string) => Promise<Result<string>>;
     getFileStats: (filePath: string) => Promise<Result<{ size: number }>>;
     selectAndCopyImage: (noteFilePath: string) => Promise<Result<{ relativePath: string; fileName: string } | null>>;
-    writeMarkdown: (filePath: string, content: string, expectedContent?: string) => Promise<Result<void>>;
+    writeMarkdown: (
+      filePath: string,
+      content: string,
+      expectedContent?: string,
+      options?: { allowEmptyContent?: boolean },
+    ) => Promise<Result<void>>;
   };
   app: {
     onCommand: (listener: (payload: { id: string }) => void) => () => void;

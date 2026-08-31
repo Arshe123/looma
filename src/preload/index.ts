@@ -45,8 +45,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readFileBase64: (filePath: string) => ipcRenderer.invoke('file:readFileBase64', filePath),
     getFileStats: (filePath: string) => ipcRenderer.invoke('file:getFileStats', filePath),
     selectAndCopyImage: (noteFilePath: string) => ipcRenderer.invoke('file:selectAndCopyImage', noteFilePath),
-    writeMarkdown: (filePath: string, content: string, expectedContent?: string) =>
-      ipcRenderer.invoke('file:writeMarkdown', filePath, content, expectedContent),
+    writeMarkdown: (
+      filePath: string,
+      content: string,
+      expectedContent?: string,
+      options?: { allowEmptyContent?: boolean },
+    ) => ipcRenderer.invoke('file:writeMarkdown', filePath, content, expectedContent, options),
   },
   app: {
     onCommand: (listener: (payload: { id: string }) => void) => {

@@ -92,6 +92,21 @@ describe('applyAgentFileProposal', () => {
     expect(await fs.readFile(target, 'utf8')).toBe('irreplaceable note\n')
   })
 
+  it('allows an explicitly confirmed empty save', async () => {
+    const target = path.join(workspace, 'notes/a.md')
+    await fs.writeFile(target, 'draft content\n')
+
+    const result = await fileService.writeMarkdown(
+      target,
+      '',
+      'draft content\n',
+      { allowEmptyContent: true },
+    )
+
+    expect(result.success).toBe(true)
+    expect(await fs.readFile(target, 'utf8')).toBe('')
+  })
+
   it.each(['../outside.md', '.looma/secret', 'notes/a.md:stream', 'notes/CON', 'C:/outside.md'])('rejects unsafe path %s', async (unsafePath) => {
     const result = await applyAgentFileProposal(workspace, proposal({ path: unsafePath }))
     expect(result.success).toBe(false)

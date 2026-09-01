@@ -2,7 +2,7 @@ import type { Result } from '../shared/types/Result'
 import type { AgentEvent, AgentPendingFileReview, AgentSource } from '../shared/types/agent-events'
 import type { AgentRun, AgentTask } from '../shared/types/agent-state'
 import type { AppSettings as AppSettingsPayload } from '../shared/utils/app-settings'
-import type { UpdateActionResult, UpdateState } from '../shared/types/app-update'
+import type { UpdateActionResult, UpdateStartupResult, UpdateState } from '../shared/types/app-update'
 
 interface TextFileChunkPayload {
   content: string;
@@ -306,6 +306,7 @@ interface ElectronAPI {
     update: {
       getState: () => Promise<UpdateState>;
       check: () => Promise<UpdateActionResult>;
+      startupCheck: () => Promise<UpdateStartupResult>;
       download: () => Promise<UpdateActionResult>;
       install: () => Promise<UpdateActionResult>;
       onState: (listener: (payload: UpdateState) => void) => () => void;

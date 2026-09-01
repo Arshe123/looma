@@ -79,6 +79,26 @@ describe('update service', () => {
     expect(states).toContainEqual(expect.objectContaining({ status: 'downloading' }))
   })
 
+  it('deduplicates concurrent update checks', async () => {
+    const updater = new FakeUpdater()
+    let finishCheck: (() => void) | null = null
+    updater.checkForUpdates.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishCheck = resolve
+    }))
+    const service = createUpdateService(updater, {
+      isPackaged: true,
+      broadcast: vi.fn(),
+      prepareInstall: vi.fn(),
+    })
+
+    service.initialize()
+    const first = service.check()
+    const second = service.check()
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce()
+    finishCheck?.()
+    await Promise.all([first, second])
+  })
+
   it('reports download progress and prepares the app before installing', async () => {
     const updater = new FakeUpdater()
     const prepareInstall = vi.fn(async () => {})

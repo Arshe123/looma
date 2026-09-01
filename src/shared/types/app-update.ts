@@ -13,6 +13,7 @@ export type UpdateState = {
   releaseName?: string | null
   releaseNotes?: string | null
   releaseDate?: string | null
+  downloadUrl?: string | null
   percent?: number
   transferred?: number
   total?: number
@@ -23,4 +24,8 @@ export type UpdateState = {
 export type UpdateActionResult = {
   success: boolean
   state: UpdateState
+}
+
+export type UpdateStartupResult = UpdateActionResult & {
+  notify: boolean
 }

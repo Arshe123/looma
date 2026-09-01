@@ -84,6 +84,14 @@ onMounted(() => {
   window.electronAPI.app.getVersion().then((v) => {
     if (v) appVersion.value = v
   }).catch(() => { /* 降级为 0.0.0 */ })
+
+  // 界面和更新状态监听器都已就绪后再做一次启动检查。
+  // 仅发现新版本时打开弹窗；最新版和检查失败都保持静默。
+  window.electronAPI.app.update.startupCheck().then((result) => {
+    if (result.notify && result.state.status === 'available') openUpdateModal()
+  }).catch((error) => {
+    console.error('[update:startup-check] Failed', error)
+  })
 })
 
 onUnmounted(() => {

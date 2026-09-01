@@ -2,6 +2,23 @@ import { ipcMain, dialog, app, shell } from 'electron';
 import { mainWindow } from '../index';
 import { getWindowFromEvent } from './windowIpc';
 import { getAutoUpdateService } from '../services/app/autoUpdate';
+import { manualUpdateService } from '../services/app/manualUpdate';
+import { shouldAutoCheckUpdates, shouldUseManualUpdate } from '../../shared/utils/update-policy';
+import { createStartupUpdateCheck } from '../services/app/startupUpdateCheck';
+
+const getUpdateState = () => shouldUseManualUpdate(process.platform)
+  ? manualUpdateService.getState()
+  : getAutoUpdateService().getState();
+
+const checkForAppUpdate = () => shouldUseManualUpdate(process.platform)
+  ? manualUpdateService.check()
+  : getAutoUpdateService().check();
+
+const runStartupUpdateCheck = createStartupUpdateCheck({
+  enabled: () => shouldAutoCheckUpdates(process.platform, app.isPackaged),
+  getState: getUpdateState,
+  check: checkForAppUpdate,
+});
 
 ipcMain.handle('app:showMessageBox', async (event, options: any) => {
   const win = getWindowFromEvent(event) ?? mainWindow;
@@ -12,12 +29,14 @@ ipcMain.handle('app:showMessageBox', async (event, options: any) => {
 // 返回当前应用版本（读取 package.json 的 version）
 ipcMain.handle('app:getVersion', () => app.getVersion());
 
-ipcMain.handle('app:update:getState', () => getAutoUpdateService().getState());
+ipcMain.handle('app:update:getState', getUpdateState);
 
 ipcMain.handle('app:update:check', async () => {
-  const state = await getAutoUpdateService().check();
+  const state = await checkForAppUpdate();
   return { success: state.status !== 'error', state };
 });
+
+ipcMain.handle('app:update:startupCheck', runStartupUpdateCheck);
 
 ipcMain.handle('app:update:download', async () => {
   const state = await getAutoUpdateService().download();

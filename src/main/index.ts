@@ -10,7 +10,6 @@ import { prepareWindowsForQuit } from './services/app/quitCoordinator';
 import { initializeAutoUpdateService } from './services/app/autoUpdate';
 import { getWindowChromeOptions } from '../shared/utils/window-chrome';
 import { createViewMenuTemplate } from '../shared/utils/app-menu';
-import { shouldAutoCheckUpdates } from '../shared/utils/update-policy';
 import './ipc/appSettingsIpc';
 import './ipc/ragIpc';
 import './ipc/appIpc';
@@ -200,10 +199,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
-    const updateService = initializeAutoUpdateService(prepareAppForUpdate);
-    if (shouldAutoCheckUpdates(process.platform, app.isPackaged)) {
-      setTimeout(() => void updateService.check(), 5_000);
-    }
+    initializeAutoUpdateService(prepareAppForUpdate);
 
     // The Python sidecar can take several seconds to cold-start. It is not
     // required to render the workspace shell, so never put it on the window's

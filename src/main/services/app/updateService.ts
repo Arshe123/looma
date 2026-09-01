@@ -62,6 +62,7 @@ const releaseDateText = (releaseDate: UpdateInfo['releaseDate']) => releaseDate?
 export const createUpdateService = (updater: UpdaterLike, options: UpdateServiceOptions) => {
   let initialized = false
   let state: UpdateState = { status: 'idle' }
+  let pendingCheck: Promise<UpdateState> | null = null
 
   const publish = (nextState: UpdateState) => {
     state = nextState
@@ -111,17 +112,24 @@ export const createUpdateService = (updater: UpdaterLike, options: UpdateService
     updater.on('error', (error: unknown) => fail(error, state.status === 'downloading' ? 'download' : 'check'))
   }
 
-  const check = async () => {
+  const check = () => {
+    if (pendingCheck) return pendingCheck
     if (!options.isPackaged) {
-      return publish({ status: 'error', error: '自动更新仅支持已安装的正式版本' })
+      return Promise.resolve(publish({ status: 'error', error: '自动更新仅支持已安装的正式版本' }))
     }
-    publish({ status: 'checking' })
-    try {
-      await updater.checkForUpdates()
-    } catch (error) {
-      fail(error, 'check')
-    }
-    return state
+
+    pendingCheck = (async () => {
+      publish({ status: 'checking' })
+      try {
+        await updater.checkForUpdates()
+      } catch (error) {
+        fail(error, 'check')
+      } finally {
+        pendingCheck = null
+      }
+      return state
+    })()
+    return pendingCheck
   }
 
   const download = async () => {

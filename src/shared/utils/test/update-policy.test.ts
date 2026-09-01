@@ -4,7 +4,8 @@ import { shouldAutoCheckUpdates, shouldUseManualUpdate } from '../update-policy'
 describe('application update policy', () => {
   it('uses the manual GitHub download flow on macOS', () => {
     expect(shouldUseManualUpdate('darwin')).toBe(true)
-    expect(shouldAutoCheckUpdates('darwin', true)).toBe(false)
+    expect(shouldAutoCheckUpdates('darwin', true)).toBe(true)
+    expect(shouldAutoCheckUpdates('darwin', false)).toBe(false)
   })
 
   it('keeps automatic updates for packaged Windows builds', () => {

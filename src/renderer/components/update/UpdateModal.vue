@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, Download, Loader, RefreshCw, Sparkles, X } from 'lucide-vue-next'
 import type { UpdateState } from '@/shared/types/app-update'
-import { checkForUpdate } from '@/renderer/services/versionApi'
 import { renderReleaseNotes } from '@/renderer/utils/release-notes-renderer'
 import { shouldUseManualUpdate } from '@/shared/utils/update-policy'
 
@@ -17,7 +16,6 @@ const emit = defineEmits<{
 
 const state = ref<UpdateState>({ status: 'idle' })
 const actionPending = ref(false)
-const manualDownloadUrl = ref<string | null>(null)
 const manualUpdate = shouldUseManualUpdate(window.electronAPI.platform)
 const status = computed(() => state.value.status)
 const dismissible = computed(() => !actionPending.value)
@@ -33,20 +31,6 @@ const formatBytes = (bytes?: number) => {
 const runCheck = async () => {
   actionPending.value = true
   try {
-    if (manualUpdate) {
-      const result = await checkForUpdate(props.currentVersion)
-      manualDownloadUrl.value = result?.latest.downloadUrl ?? null
-      state.value = result?.hasUpdate
-        ? {
-            status: 'available',
-            version: result.latest.version,
-            releaseName: null,
-            releaseNotes: result.latest.notes,
-            releaseDate: result.latest.releaseDate,
-          }
-        : { status: 'not-available' }
-      return
-    }
     const result = await window.electronAPI.app.update.check()
     state.value = result.state
   } catch (error) {
@@ -58,13 +42,13 @@ const runCheck = async () => {
 }
 
 const openManualDownload = async () => {
-  if (!manualDownloadUrl.value) {
+  if (!state.value.downloadUrl) {
     state.value = { ...state.value, status: 'error', error: '最新版本没有可用的下载地址' }
     return
   }
   actionPending.value = true
   try {
-    const result = await window.electronAPI.app.openExternal(manualDownloadUrl.value)
+    const result = await window.electronAPI.app.openExternal(state.value.downloadUrl)
     if (!result.success) {
       console.error('[update:open-download] Failed to open download page', result.error)
       state.value = { ...state.value, status: 'error', error: '无法打开下载页面，请稍后重试。' }
@@ -133,10 +117,6 @@ watch(
   () => props.open,
   async (open) => {
     if (!open) return
-    if (manualUpdate) {
-      await runCheck()
-      return
-    }
     const current = await window.electronAPI.app.update.getState()
     state.value = current
     if (current.status === 'idle' || current.status === 'not-available' || current.status === 'error') {

@@ -10,7 +10,17 @@ except Exception:  # pragma: no cover - lightweight CI env may not install llama
     MarkdownNodeParser = None
     SentenceSplitter = None
 
-from rag.index_service import configure_llama_index
+from rag.index_service import configure_llama_index, split_sentences
+
+
+class BuiltinSentenceSplitterTest(unittest.TestCase):
+    def test_preserves_chinese_english_and_newline_boundaries(self):
+        text = "第一句。第二句！\nThird sentence. Fourth line"
+
+        sentences = split_sentences(text)
+
+        self.assertEqual("".join(sentences), text)
+        self.assertEqual(sentences, ["第一句。", "第二句！", "\n", "Third sentence. ", "Fourth line"])
 
 
 @unittest.skipIf(Settings is None, "llama-index is not installed in this Python environment")
@@ -37,6 +47,7 @@ class LlamaIndexChunkingStrategyTest(unittest.TestCase):
         self.assertIsInstance(Settings.transformations[0], SentenceSplitter)
         self.assertEqual(Settings.transformations[0].chunk_size, 256)
         self.assertEqual(Settings.transformations[0].chunk_overlap, 32)
+        self.assertIs(Settings.transformations[0]._chunking_tokenizer_fn, split_sentences)
 
 
 if __name__ == "__main__":

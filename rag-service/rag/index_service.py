@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import threading
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
@@ -17,6 +18,28 @@ REQUIRED_INDEX_FILES = {
     "docstore.json",
     "default__vector_store.json",
 }
+SENTENCE_BOUNDARY_PATTERN = re.compile(
+    r'[。！？!?]+[”’"\'）】》]*[ \t]*|'
+    r'\.[”’"\'）】》]*(?:[ \t]+|(?=\r?\n|$))|'
+    r'\r?\n+'
+)
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split Chinese and English sentences without LlamaIndex's optional NLTK dependency."""
+    if not text:
+        return []
+
+    sentences: list[str] = []
+    start = 0
+    for match in SENTENCE_BOUNDARY_PATTERN.finditer(text):
+        end = match.end()
+        if end > start:
+            sentences.append(text[start:end])
+        start = end
+    if start < len(text):
+        sentences.append(text[start:])
+    return sentences
 
 
 def run_coroutine_blocking(coro):
@@ -185,6 +208,10 @@ def make_node_transformations(knowledge: KnowledgeConfig):
     sentence_splitter = SentenceSplitter(
         chunk_size=knowledge.chunk_size,
         chunk_overlap=knowledge.chunk_overlap,
+        # SentenceSplitter defaults to NLTK. NLTK is intentionally excluded
+        # from the frozen service because its PyInstaller hook scans external
+        # data directories; use Looma's deterministic built-in splitter instead.
+        chunking_tokenizer_fn=split_sentences,
     )
     if knowledge.chunking_strategy == "markdown":
         return [

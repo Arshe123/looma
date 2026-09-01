@@ -14,6 +14,8 @@ interface BuildWorkspaceMetaInput {
   outlineExpandedHeadingIds: Record<string, string[]>
   activeSidebarPanel?: SidebarPanelId | null
   fileSortMode?: 'name' | 'created-asc' | 'created-desc'
+  fileCreationTimes?: Record<string, number>
+  trashedFileCreationTimes?: Record<string, { restoreTo: string; entries: Record<string, number> }>
 }
 
 const cloneNoteOrder = (noteOrder: Record<string, string[]>) => {
@@ -66,6 +68,8 @@ export const buildWorkspaceMetaPayload = (input: BuildWorkspaceMetaInput) => {
     outlineExpansionStateVersion: 1,
     activeSidebarPanel: input.activeSidebarPanel,
     fileSortMode: input.fileSortMode,
+    fileCreationTimes: { ...input.fileCreationTimes },
+    trashedFileCreationTimes: JSON.parse(JSON.stringify(input.trashedFileCreationTimes || {})),
   }
   return { cleanedSessions, meta }
 }

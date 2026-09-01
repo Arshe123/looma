@@ -6,6 +6,7 @@ import {
   fileSystemService,
   parseFileNameWFilePaths,
   parseMacPlistFilePaths,
+  parseTrashFileName,
   parseUriListFilePaths,
 } from '../fileSystemService'
 
@@ -136,5 +137,38 @@ not-a-uri
     expect(parseMacPlistFilePaths('<plist></plist>')).toEqual([])
     expect(parseUriListFilePaths('plain text')).toEqual([])
     expect(parseFileNameWFilePaths(Buffer.from('', 'utf16le'))).toEqual([])
+  })
+})
+
+describe('trash entries', () => {
+  it('parses both legacy and UUID-backed trash names', () => {
+    expect(parseTrashFileName('1700000000000_notes%2Fa.md')).toEqual({
+      stamp: 1700000000000,
+      originalName: 'a.md',
+      restoreTo: 'notes/a.md',
+    })
+    expect(parseTrashFileName('1700000000000_v2_123e4567-e89b-12d3-a456-426614174000_notes%2Fa.md')).toEqual({
+      stamp: 1700000000000,
+      originalName: 'a.md',
+      restoreTo: 'notes/a.md',
+    })
+    expect(parseTrashFileName('1700000000000_123e4567-e89b-12d3-a456-426614174000_note.md')).toEqual({
+      stamp: 1700000000000,
+      originalName: '123e4567-e89b-12d3-a456-426614174000_note.md',
+      restoreTo: '123e4567-e89b-12d3-a456-426614174000_note.md',
+    })
+  })
+
+  it('refuses to restore over an existing workspace item', async () => {
+    const directory = await createTempDirectory()
+    const workspace = path.join(directory, 'workspace')
+    await fs.mkdir(workspace, { recursive: true })
+    await fs.writeFile(path.join(workspace, 'note.md'), 'new file', 'utf8')
+
+    const result = await fileSystemService.restoreFromTrash('workspace-test', workspace, 'missing-trash-item', 'note.md')
+
+    expect(result.success).toBe(false)
+    expect(result.errorCode).toBe('RESTORE_TARGET_EXISTS')
+    await expect(fs.readFile(path.join(workspace, 'note.md'), 'utf8')).resolves.toBe('new file')
   })
 })

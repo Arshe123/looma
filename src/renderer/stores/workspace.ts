@@ -19,6 +19,16 @@ import {
 } from './workspace-utils'
 import { executeRedoAction, executeUndoAction, type HistoryEffects } from './workspace-history-service'
 import {
+  applyPersistentCreationTimes,
+  normalizeFileCreationTimes,
+  normalizeTrashedFileCreationTimes,
+  reconcileTrashedFileCreationTimes,
+  remapFileCreationTimes,
+  removeFileCreationTimes,
+  restoreFileCreationTimes,
+  stashFileCreationTimes,
+} from './file-creation-times'
+import {
   buildWorkspaceMetaPayload,
 } from './workspace-meta-utils'
 import {
@@ -384,6 +394,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     undoStack: [] as UndoAction[],
     redoStack: [] as UndoAction[],
     fileSortMode: 'name' as 'name' | 'created-asc' | 'created-desc',
+    fileCreationTimes: {} as Record<string, number>,
+    trashedFileCreationTimes: {} as Record<string, { restoreTo: string; entries: Record<string, number> }>,
     theme: getStoredTheme() as ThemeName,
     resolvedTheme: resolveThemeName(getStoredTheme()) as ResolvedThemeName,
     hasElectronWindowAPI: false as boolean,
@@ -1392,8 +1404,33 @@ export const useWorkspaceStore = defineStore('workspace', {
     async applyHistoryEffects(effects: HistoryEffects, options: { reopenRestored?: boolean } = {}) {
       let shouldSaveMeta = false
 
+      if (effects.trashedItems?.length) {
+        const result = stashFileCreationTimes(
+          this.fileCreationTimes,
+          this.trashedFileCreationTimes,
+          effects.trashedItems,
+        )
+        this.fileCreationTimes = result.creationTimes
+        this.trashedFileCreationTimes = result.trashedCreationTimes
+        if (result.changed) shouldSaveMeta = true
+      }
+
+      if (effects.restoredItems?.length) {
+        const result = restoreFileCreationTimes(
+          this.fileCreationTimes,
+          this.trashedFileCreationTimes,
+          effects.restoredItems,
+        )
+        this.fileCreationTimes = result.creationTimes
+        this.trashedFileCreationTimes = result.trashedCreationTimes
+        if (result.changed) shouldSaveMeta = true
+      }
+
       if (effects.removedPaths?.length) {
         const removedPaths = effects.removedPaths
+        const creationTimeResult = removeFileCreationTimes(this.fileCreationTimes, removedPaths)
+        this.fileCreationTimes = creationTimeResult.creationTimes
+        if (creationTimeResult.changed) shouldSaveMeta = true
         const isActiveFileRemoved = removedPaths.some((path) => isSameOrChildPath(path, this.activeFileRelativePath))
         if (isActiveFileRemoved) {
           this.resetActiveFileState()
@@ -1409,6 +1446,9 @@ export const useWorkspaceStore = defineStore('workspace', {
 
       if (effects.movedItems?.length) {
         const movedItems = effects.movedItems
+        const creationTimeResult = remapFileCreationTimes(this.fileCreationTimes, movedItems)
+        this.fileCreationTimes = creationTimeResult.creationTimes
+        if (creationTimeResult.changed) shouldSaveMeta = true
         const activeBeforeMove = this.activeFileRelativePath
         const activeAfterMove = activeBeforeMove ? remapByMoves(activeBeforeMove, movedItems) : activeBeforeMove
 
@@ -1639,6 +1679,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.expandedDirs = []
       this.noteOrder = {}
       this.outlineExpandedHeadingIds = {}
+      this.fileCreationTimes = {}
+      this.trashedFileCreationTimes = {}
       this.dirEntries = {}
       this.dirLoadStates = {}
       this.dirLoadErrors = {}
@@ -1700,6 +1742,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         return
       }
       await this.loadWorkspaceMeta(id)
+      await this.reconcileTrashedCreationTimes(id)
 
       this.attachFsEvents()
       window.electronAPI.fs.watchStart(id).then(() => {
@@ -1727,6 +1770,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.openedTextFileContents = {}
         this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
         this.fileSortMode = 'name'
+        this.fileCreationTimes = {}
+        this.trashedFileCreationTimes = {}
         this.resetAiAssistantState()
         this.fileSessions = {}
         this.outlineExpandedHeadingIds = {}
@@ -1761,6 +1806,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.fileSortMode = metaResult.data.fileSortMode === 'created-asc' || metaResult.data.fileSortMode === 'created-desc'
         ? metaResult.data.fileSortMode
         : 'name'
+      this.fileCreationTimes = normalizeFileCreationTimes(metaResult.data.fileCreationTimes)
+      this.trashedFileCreationTimes = normalizeTrashedFileCreationTimes(metaResult.data.trashedFileCreationTimes)
       
       // Restore active tab
       if (this.activeTabId) {
@@ -1804,6 +1851,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         fileSessions: this.fileSessions,
         outlineExpandedHeadingIds: this.outlineExpandedHeadingIds,
         fileSortMode: this.fileSortMode,
+        fileCreationTimes: this.fileCreationTimes,
+        trashedFileCreationTimes: this.trashedFileCreationTimes,
       })
       this.fileSessions = cleanedSessions
       await window.electronAPI.workspaceMeta.set(id, meta)
@@ -1812,6 +1861,18 @@ export const useWorkspaceStore = defineStore('workspace', {
     setFileSortMode(mode: 'name' | 'created-asc' | 'created-desc') {
       this.fileSortMode = mode
       this.saveWorkspaceMeta().catch(() => {})
+    },
+
+    async reconcileTrashedCreationTimes(workspaceId: string) {
+      const result = await window.electronAPI.fs.listTrash(workspaceId)
+      if (this.activeWorkspaceId !== workspaceId || !result.success || !result.data) return
+      const reconciled = reconcileTrashedFileCreationTimes(
+        this.trashedFileCreationTimes,
+        result.data.map((item) => item.trashRelativePath),
+      )
+      if (!reconciled.changed) return
+      this.trashedFileCreationTimes = reconciled.trashedCreationTimes
+      await this.saveWorkspaceMeta()
     },
 
     saveFileSession(relPath: string, session: Partial<EditorSession>, skipSaveMeta = false) {
@@ -1890,9 +1951,12 @@ export const useWorkspaceStore = defineStore('workspace', {
         }
         return
       }
-      this.dirEntries[dir] = r.data
+      const creationTimeResult = applyPersistentCreationTimes(r.data, this.fileCreationTimes)
+      this.fileCreationTimes = creationTimeResult.creationTimes
+      this.dirEntries[dir] = creationTimeResult.entries
       this.dirLoadStates[dir] = 'loaded'
       this.dirLoadErrors[dir] = ''
+      if (creationTimeResult.changed) this.saveWorkspaceMeta().catch(() => {})
       window.electronAPI.fs.watchAdd?.(workspaceId, [dir || '.']).catch(() => {})
     },
 
@@ -2535,6 +2599,13 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       
       if (items.length > 0) {
+        const creationTimeResult = stashFileCreationTimes(
+          this.fileCreationTimes,
+          this.trashedFileCreationTimes,
+          items,
+        )
+        this.fileCreationTimes = creationTimeResult.creationTimes
+        this.trashedFileCreationTimes = creationTimeResult.trashedCreationTimes
         this.undoStack.unshift({
           type: 'delete',
           items
@@ -2556,7 +2627,30 @@ export const useWorkspaceStore = defineStore('workspace', {
         await this.removeDraftRecoveryForPaths(deletedPaths)
 
         await this.syncSelectionAfterRemoval(deletedPaths)
+        if (creationTimeResult.changed) await this.saveWorkspaceMeta()
       }
+    },
+
+    async restoreTrashEntry(trashRelativePath: string, restoreTo: string) {
+      const workspaceId = this.activeWorkspaceId
+      if (!workspaceId) return { success: false, error: '未选择工作空间' }
+      const normalizedRestoreTo = normalizeDir(restoreTo)
+      const result = await window.electronAPI.fs.restore(workspaceId, trashRelativePath, normalizedRestoreTo)
+      if (!result.success) return result
+
+      const restored = restoreFileCreationTimes(
+        this.fileCreationTimes,
+        this.trashedFileCreationTimes,
+        [{ trashRelativePath, restoreTo: normalizedRestoreTo }],
+      )
+      this.fileCreationTimes = restored.creationTimes
+      this.trashedFileCreationTimes = restored.trashedCreationTimes
+      if (restored.changed) await this.saveWorkspaceMeta()
+
+      const parentDir = normalizeDir(pathDir(normalizedRestoreTo))
+      await this.loadDir(workspaceId, parentDir)
+      if (parentDir) await this.ensureFileParentDirsExpanded(parentDir)
+      return result
     },
 
     async moveEntries(fromRelativePaths: string[], targetDirRelativePath: string) {
@@ -2582,6 +2676,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.setBusy(false)
       
       if (items.length > 0) {
+        const creationTimeResult = remapFileCreationTimes(this.fileCreationTimes, items)
+        this.fileCreationTimes = creationTimeResult.creationTimes
         this.undoStack.unshift({ type: 'move', items })
         this.redoStack = []
         
@@ -2600,6 +2696,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           this.saveWorkspaceMeta().catch(() => {})
         }
         await this.migrateDraftRecoveryAfterMove(items)
+        if (creationTimeResult.changed) await this.saveWorkspaceMeta()
       }
     },
 

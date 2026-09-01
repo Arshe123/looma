@@ -15,6 +15,7 @@ export interface FsEntry {
   size: number
   mtimeMs: number
   birthtimeMs: number
+  createdAtMs?: number
 }
 
 export interface EditorSession {
@@ -192,6 +193,8 @@ export interface WorkspaceMeta {
   activeSidebarPanel?: SidebarPanelId | null
   sidebarPanels?: SidebarPanelState[]
   fileSortMode?: 'name' | 'created-asc' | 'created-desc'
+  fileCreationTimes?: Record<string, number>
+  trashedFileCreationTimes?: Record<string, { restoreTo: string; entries: Record<string, number> }>
 }
 
 export type ResolvedThemeName = 'light' | 'dark'

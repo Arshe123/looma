@@ -143,6 +143,8 @@ interface WorkspaceMetaPayload {
   activeSidebarPanel?: SidebarPanelId | null;
   sidebarPanels?: SidebarPanelState[];
   fileSortMode?: 'name' | 'created-asc' | 'created-desc';
+  fileCreationTimes?: Record<string, number>;
+  trashedFileCreationTimes?: Record<string, { restoreTo: string; entries: Record<string, number> }>;
 }
 
 interface RagChatMessagePayload {

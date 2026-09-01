@@ -259,12 +259,14 @@ const getTrashDir = (workspaceId: string) => {
   return path.join(app.getPath('appData'), 'workspace-meta', 'looma', 'trash', workspaceId)
 }
 
-const parseTrashFileName = (fileName: string): { stamp: number; originalName: string; restoreTo: string } | null => {
+export const parseTrashFileName = (fileName: string): { stamp: number; originalName: string; restoreTo: string } | null => {
   const sepIdx = fileName.indexOf('_')
   if (sepIdx <= 0) return null
   const stamp = Number(fileName.slice(0, sepIdx))
   if (!Number.isFinite(stamp) || stamp <= 0) return null
-  const encoded = fileName.slice(sepIdx + 1)
+  const remainder = fileName.slice(sepIdx + 1)
+  const uuidMatch = remainder.match(/^v2_[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}_/i)
+  const encoded = uuidMatch ? remainder.slice(uuidMatch[0].length) : remainder
   let decoded = encoded
   try {
     decoded = decodeURIComponent(encoded)
@@ -736,7 +738,7 @@ export const fileSystemService = {
       await ensureDir(trashDir)
       const stamp = Date.now()
       const relPath = toPosix(path.relative(targetResolved.root, targetResolved.target))
-      const trashAbs = path.join(trashDir, `${stamp}_${encodeURIComponent(relPath)}`)
+      const trashAbs = path.join(trashDir, `${stamp}_v2_${randomUUID()}_${encodeURIComponent(relPath)}`)
       await safeRename(targetResolved.target, trashAbs)
       return { success: true, data: { trashRelativePath: toPosix(path.relative(trashDir, trashAbs)) } }
     } catch (error: any) {
@@ -828,12 +830,19 @@ export const fileSystemService = {
     restoreToRelativePath: string,
   ): Promise<Result<void>> {
     try {
+      const restoreResolved = resolveInWorkspace(workspacePath, restoreToRelativePath)
+      if (!restoreResolved.ok) return { success: false, error: restoreResolved.error }
+      if (await pathExists(restoreResolved.target)) {
+        return {
+          success: false,
+          error: '原位置已有同名文件或文件夹，请先重命名或移动现有项目',
+          errorCode: 'RESTORE_TARGET_EXISTS',
+        }
+      }
+
       const trashDir = getTrashDir(workspaceId)
       const trashAbs = path.resolve(trashDir, trashRelativePath)
       if (!trashAbs.startsWith(path.resolve(trashDir) + path.sep)) return { success: false, error: '无效的回收站路径' }
-
-      const restoreResolved = resolveInWorkspace(workspacePath, restoreToRelativePath)
-      if (!restoreResolved.ok) return { success: false, error: restoreResolved.error }
 
       await ensureDir(path.dirname(restoreResolved.target))
       await safeRename(trashAbs, restoreResolved.target)

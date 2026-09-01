@@ -63,12 +63,12 @@ const getChildren = (dirRelativePath: string) => {
   const cached = sortCache.get(cacheKey)
   if (cached && cached.source === entries) return cached.sorted
 
-  const byBirthtime = (a: FsEntry, b: FsEntry) => (a.birthtimeMs ?? 0) - (b.birthtimeMs ?? 0)
+  const byCreationTime = (a: FsEntry, b: FsEntry) => (a.createdAtMs ?? a.birthtimeMs ?? 0) - (b.createdAtMs ?? b.birthtimeMs ?? 0)
   const dirs = entries.filter((e) => e.isDirectory).slice()
   const files = entries.filter((e) => !e.isDirectory).slice()
   const sorted = workspaceStore.fileSortMode === 'created-asc'
-    ? [...dirs.sort(byBirthtime), ...files.sort(byBirthtime)]
-    : [...dirs.sort((a, b) => byBirthtime(b, a)), ...files.sort((a, b) => byBirthtime(b, a))]
+    ? [...dirs.sort(byCreationTime), ...files.sort(byCreationTime)]
+    : [...dirs.sort((a, b) => byCreationTime(b, a)), ...files.sort((a, b) => byCreationTime(b, a))]
   sortCache.set(cacheKey, { source: entries, sorted })
   return sorted
 }
@@ -165,18 +165,14 @@ const onTrashDialogKeyDown = (e: KeyboardEvent) => {
 }
 
 const restoreTrashItem = async (item: TrashEntryInfo) => {
-  const workspaceId = workspaceStore.activeWorkspaceId
-  if (!workspaceId) return
+  if (!workspaceStore.activeWorkspaceId) return
   trashError.value = ''
-  const r = await window.electronAPI.fs.restore(workspaceId, item.trashRelativePath, item.restoreTo)
+  const r = await workspaceStore.restoreTrashEntry(item.trashRelativePath, item.restoreTo)
   if (!r.success) {
     trashError.value = r.error || '恢复失败'
     return
   }
   trashItems.value = trashItems.value.filter((i) => i.trashRelativePath !== item.trashRelativePath)
-  const parentDir = item.restoreTo.includes('/') ? item.restoreTo.split('/').slice(0, -1).join('/') : ''
-  await workspaceStore.loadDir(workspaceId, parentDir)
-  if (parentDir) await workspaceStore.ensureFileParentDirsExpanded(parentDir)
 }
 
 const inlineEditValue = computed({

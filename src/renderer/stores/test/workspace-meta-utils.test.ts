@@ -30,6 +30,12 @@ describe('buildWorkspaceMetaPayload tab persistence', () => {
       outlineExpandedHeadingIds: {
         'file:docs/a.md': ['heading-0'],
       },
+      fileCreationTimes: {
+        'docs/a.md': 123,
+      },
+      trashedFileCreationTimes: {
+        'trash-1': { restoreTo: 'old.md', entries: { '': 99 } },
+      },
     })
 
     expect(meta.tabs).toEqual(tabs)
@@ -51,6 +57,10 @@ describe('buildWorkspaceMetaPayload tab persistence', () => {
       'file:docs/a.md': ['heading-0'],
     })
     expect(meta.outlineExpansionStateVersion).toBe(1)
+    expect(meta.fileCreationTimes).toEqual({ 'docs/a.md': 123 })
+    expect(meta.trashedFileCreationTimes).toEqual({
+      'trash-1': { restoreTo: 'old.md', entries: { '': 99 } },
+    })
   })
 
   it('does not persist the ephemeral Agent diff tab or its active id', () => {

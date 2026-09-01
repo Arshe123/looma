@@ -10,6 +10,8 @@ interface HistoryRuntime {
 export interface HistoryEffects {
   removedPaths?: string[]
   restoredPaths?: string[]
+  trashedItems?: { trashRelativePath: string; restoreTo: string }[]
+  restoredItems?: { trashRelativePath: string; restoreTo: string }[]
   movedItems?: { from: string; to: string }[]
   affectedDirs?: string[]
 }
@@ -53,6 +55,7 @@ export const executeUndoAction = async (action: UndoAction, runtime: HistoryRunt
         { type: 'restore', trashRelativePath: r.data.trashRelativePath, restoreTo: action.relativePath },
         {
           removedPaths: [action.relativePath],
+          trashedItems: [{ trashRelativePath: r.data.trashRelativePath, restoreTo: action.relativePath }],
           affectedDirs: affectedDirsForPaths([action.relativePath]),
         },
       )
@@ -88,6 +91,7 @@ export const executeUndoAction = async (action: UndoAction, runtime: HistoryRunt
         { type: 'delete', items: newItems },
         {
           removedPaths,
+          trashedItems: newItems,
           affectedDirs: affectedDirsForPaths(removedPaths),
         },
       )
@@ -110,6 +114,7 @@ export const executeUndoAction = async (action: UndoAction, runtime: HistoryRunt
       { ...action, items: restoredItems },
       {
         restoredPaths,
+        restoredItems,
         affectedDirs: affectedDirsForPaths(restoredPaths),
       },
     )
@@ -132,6 +137,7 @@ export const executeRedoAction = async (action: UndoAction, runtime: HistoryRunt
         { type: 'delete', items: newItems },
         {
           removedPaths,
+          trashedItems: newItems,
           affectedDirs: affectedDirsForPaths(removedPaths),
         },
       )
@@ -162,6 +168,7 @@ export const executeRedoAction = async (action: UndoAction, runtime: HistoryRunt
       { type: 'create', relativePath: action.restoreTo },
       {
         restoredPaths: [action.restoreTo],
+        restoredItems: [{ trashRelativePath: action.trashRelativePath, restoreTo: action.restoreTo }],
         affectedDirs: affectedDirsForPaths([action.restoreTo]),
       },
     )

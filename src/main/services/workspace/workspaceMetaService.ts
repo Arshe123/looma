@@ -23,6 +23,9 @@ export interface WorkspaceMeta {
   outlineExpansionStateVersion?: 1
   activeSidebarPanel?: 'files' | 'outline' | 'ai' | null
   sidebarPanels?: { id: 'files' | 'outline' | 'ai'; size: number }[]
+  fileSortMode?: 'name' | 'created-asc' | 'created-desc'
+  fileCreationTimes?: Record<string, number>
+  trashedFileCreationTimes?: Record<string, { restoreTo: string; entries: Record<string, number> }>
 }
 
 // Helper to get workspace root path by ID
@@ -98,7 +101,7 @@ export const workspaceMetaService = {
       const parsed = JSON.parse(raw) as Partial<WorkspaceMeta>
       if (unlock) await unlock()
       
-      const migratedMeta = {
+      const migratedMeta: WorkspaceMeta = {
         expandedDirs: Array.isArray(parsed.expandedDirs) ? parsed.expandedDirs : [],
         selectedPaths: Array.isArray(parsed.selectedPaths) ? parsed.selectedPaths : (typeof (parsed as any).selectedDir === 'string' && (parsed as any).selectedDir ? [(parsed as any).selectedDir] : []),
         noteOrder: typeof parsed.noteOrder === 'object' && parsed.noteOrder ? (parsed.noteOrder as any) : {},
@@ -121,6 +124,20 @@ export const workspaceMetaService = {
             ? parsed.activeSidebarPanel
             : undefined,
         sidebarPanels: Array.isArray(parsed.sidebarPanels) ? parsed.sidebarPanels : undefined,
+        fileSortMode: parsed.fileSortMode === 'created-asc' || parsed.fileSortMode === 'created-desc'
+          ? parsed.fileSortMode
+          : 'name',
+        fileCreationTimes:
+          typeof parsed.fileCreationTimes === 'object' && parsed.fileCreationTimes
+            ? Object.fromEntries(
+                Object.entries(parsed.fileCreationTimes)
+                  .filter(([key, value]) => key.length > 0 && typeof value === 'number' && Number.isFinite(value) && value > 0),
+              )
+            : {},
+        trashedFileCreationTimes:
+          typeof parsed.trashedFileCreationTimes === 'object' && parsed.trashedFileCreationTimes
+            ? parsed.trashedFileCreationTimes
+            : {},
       }
 
       return {

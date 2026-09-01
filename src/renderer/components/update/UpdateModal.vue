@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, Download, Loader, RefreshCw, Sparkles, X } from 'lucide-vue-next'
 import type { UpdateState } from '@/shared/types/app-update'
 import { checkForUpdate } from '@/renderer/services/versionApi'
+import { renderReleaseNotes } from '@/renderer/utils/release-notes-renderer'
 import { shouldUseManualUpdate } from '@/shared/utils/update-policy'
 
 const props = defineProps<{
@@ -21,6 +22,7 @@ const manualUpdate = shouldUseManualUpdate(window.electronAPI.platform)
 const status = computed(() => state.value.status)
 const dismissible = computed(() => !actionPending.value)
 const progress = computed(() => Math.max(0, Math.min(100, state.value.percent ?? 0)))
+const releaseNotesHtml = computed(() => renderReleaseNotes(state.value.releaseNotes || ''))
 
 const formatBytes = (bytes?: number) => {
   if (!bytes || bytes < 1) return ''
@@ -73,6 +75,17 @@ const openManualDownload = async () => {
   } finally {
     actionPending.value = false
   }
+}
+
+const handleReleaseNotesClick = (event: MouseEvent) => {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  const anchor = target.closest<HTMLAnchorElement>('a[href]')
+  if (!anchor) return
+  event.preventDefault()
+  const href = anchor?.getAttribute('href') || ''
+  if (!/^https?:\/\//i.test(href)) return
+  void window.electronAPI.app.openExternal(href)
 }
 
 const close = () => {
@@ -241,7 +254,11 @@ watch(
 
         <div v-if="state.releaseNotes" class="mt-4 rounded-lg border border-border-soft bg-panel-soft px-4 py-3 max-h-[200px] overflow-y-auto">
           <div class="text-xs font-bold uppercase tracking-wide text-text-subtle">更新内容</div>
-          <p class="mt-2 text-sm text-text-muted leading-relaxed whitespace-pre-line">{{ state.releaseNotes }}</p>
+          <div
+            class="release-notes-content mt-2 text-sm text-text-muted leading-relaxed"
+            @click="handleReleaseNotesClick"
+            v-html="releaseNotesHtml"
+          />
         </div>
 
         <div v-if="status === 'downloading'" class="mt-5">
@@ -289,3 +306,59 @@ watch(
     </div>
   </div>
 </template>
+
+<style scoped>
+.release-notes-content :deep(> :first-child) { margin-top: 0; }
+.release-notes-content :deep(> :last-child) { margin-bottom: 0; }
+.release-notes-content :deep(p) { margin: 0.45rem 0; }
+.release-notes-content :deep(h1),
+.release-notes-content :deep(h2),
+.release-notes-content :deep(h3),
+.release-notes-content :deep(h4),
+.release-notes-content :deep(h5),
+.release-notes-content :deep(h6) {
+  margin: 0.75rem 0 0.35rem;
+  color: var(--text-main);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.release-notes-content :deep(ul),
+.release-notes-content :deep(ol) { margin: 0.45rem 0; padding-left: 1.35rem; }
+.release-notes-content :deep(ul) { list-style: disc; }
+.release-notes-content :deep(ol) { list-style: decimal; }
+.release-notes-content :deep(li) { margin: 0.2rem 0; }
+.release-notes-content :deep(strong),
+.release-notes-content :deep(b) { color: var(--text-main); font-weight: 700; }
+.release-notes-content :deep(a) {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.release-notes-content :deep(code) {
+  border-radius: 4px;
+  background: var(--surface);
+  padding: 0.1em 0.3em;
+  color: var(--text-main);
+  font-size: 0.9em;
+}
+.release-notes-content :deep(pre) {
+  margin: 0.55rem 0;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 0.65rem;
+  color: var(--text-main);
+  white-space: pre-wrap;
+}
+.release-notes-content :deep(pre code) { padding: 0; background: transparent; }
+.release-notes-content :deep(blockquote) {
+  margin: 0.55rem 0;
+  border-left: 3px solid var(--border-soft);
+  padding-left: 0.75rem;
+}
+.release-notes-content :deep(table) { width: 100%; border-collapse: collapse; }
+.release-notes-content :deep(th),
+.release-notes-content :deep(td) { border: 1px solid var(--border-soft); padding: 0.35rem 0.5rem; }
+.release-notes-content :deep(.looma-link-icon) { display: none; }
+</style>

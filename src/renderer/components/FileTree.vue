@@ -20,6 +20,7 @@ import { formatAppShortcut } from '@/shared/utils/app-shortcuts'
 import { appendTreeGuides, type TreeGuidedRow } from '@/shared/utils/tree-row-guides'
 import { captureFileTreeDrop } from '@/shared/utils/external-file-drop'
 import { isMacPlatform } from '../../shared/utils/window-chrome'
+import NoteTemplateDialog from './templates/NoteTemplateDialog.vue'
 
 const isMac = isMacPlatform((window as any).electronAPI?.platform ?? '')
 const platform = window.electronAPI.platform
@@ -113,6 +114,35 @@ const trashDialogOpen = ref(false)
 const trashItems = ref<TrashEntryInfo[]>([])
 const trashLoading = ref(false)
 const trashError = ref('')
+const noteTemplateDialogOpen = ref(false)
+const noteTemplateWorkspaceId = ref('')
+const noteTemplateParentDir = ref('')
+let noteTemplateTrigger: HTMLElement | null = null
+
+const openNoteTemplateDialog = () => {
+  if (noteTemplateDialogOpen.value) return
+  if (!workspaceStore.activeWorkspaceId) return
+  closeMenu()
+  noteTemplateTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  noteTemplateWorkspaceId.value = workspaceStore.activeWorkspaceId || ''
+  noteTemplateParentDir.value = workspaceStore.getCurrentDir()
+  noteTemplateDialogOpen.value = true
+}
+
+const closeNoteTemplateDialog = () => {
+  noteTemplateDialogOpen.value = false
+  void nextTick(() => noteTemplateTrigger?.focus())
+}
+
+const createBlankFromTemplateDialog = async () => {
+  if (workspaceStore.activeWorkspaceId !== noteTemplateWorkspaceId.value) return
+  await startCreateFileInDir(noteTemplateParentDir.value)
+}
+
+const completeTemplateCreation = async (relativePath: string) => {
+  if (workspaceStore.activeWorkspaceId !== noteTemplateWorkspaceId.value) return
+  await workspaceStore.completeMarkdownCreation(relativePath, noteTemplateParentDir.value)
+}
 
 const formatTrashSize = (item: TrashEntryInfo) => {
   if (item.isDirectory) return '—'
@@ -258,11 +288,6 @@ const startCreateFileInDir = async (parentDir: string) => {
 const startCreateFile = async (entry: FsEntry | null) => {
   closeMenu()
   await startCreateFileInDir(getCreateTargetDir(entry))
-}
-
-const startCreateFileFromCurrentDir = async () => {
-  closeMenu()
-  await startCreateFileInDir(workspaceStore.getCurrentDir())
 }
 
 const startCreateFolderFromCurrentDir = async () => {
@@ -641,6 +666,7 @@ const handleRevealInExplorer = async () => {
 
 const onGlobalPointerDown = () => closeMenu()
 const onGlobalKeyDown = (e: KeyboardEvent) => {
+  if (noteTemplateDialogOpen.value) return
   handleFileTreeGlobalKeyDown({
     event: e,
     platform,
@@ -657,9 +683,7 @@ const onGlobalKeyDown = (e: KeyboardEvent) => {
   })
 }
 
-const onCreateFileRequest = () => {
-  startCreateFileFromCurrentDir().catch(console.error)
-}
+const onCreateFileRequest = () => openNoteTemplateDialog()
 
 const onRevealActiveFileRequest = () => {
   revealActiveFileRow(activeFileRel.value).catch(console.error)
@@ -711,7 +735,7 @@ onUnmounted(() => {
         <button
           title="新建文件"
           class="w-6 h-6 inline-flex items-center justify-center rounded text-text-muted hover:bg-accent-soft hover:text-text-main"
-          @click="startCreateFileFromCurrentDir"
+          @click="openNoteTemplateDialog"
         >
           <FilePlus2 :size="14" />
         </button>
@@ -1010,4 +1034,13 @@ onUnmounted(() => {
       </div>
     </div>
   </div>
+
+  <NoteTemplateDialog
+    :open="noteTemplateDialogOpen"
+    :workspace-id="noteTemplateWorkspaceId"
+    :parent-dir-relative-path="noteTemplateParentDir"
+    @close="closeNoteTemplateDialog"
+    @blank="createBlankFromTemplateDialog"
+    @created="completeTemplateCreation"
+  />
 </template>

@@ -2,6 +2,7 @@ import type { Result } from '../shared/types/Result'
 import type { AgentEvent, AgentPendingFileReview, AgentSource } from '../shared/types/agent-events'
 import type { AgentRun, AgentTask } from '../shared/types/agent-state'
 import type { AppSettings as AppSettingsPayload } from '../shared/utils/app-settings'
+import type { NoteTemplateInput, NoteTemplateStore } from '../shared/utils/note-template'
 import type { UpdateActionResult, UpdateStartupResult, UpdateState } from '../shared/types/app-update'
 
 interface TextFileChunkPayload {
@@ -355,6 +356,17 @@ interface ElectronAPI {
   appSettings: {
     get: () => Promise<Result<AppSettingsPayload>>;
     set: (settings: AppSettingsPayload) => Promise<Result<void>>;
+  };
+  noteTemplates: {
+    list: () => Promise<Result<NoteTemplateStore>>;
+    create: (input: NoteTemplateInput, expectedRevision: number) => Promise<Result<NoteTemplateStore>>;
+    update: (id: string, input: NoteTemplateInput, expectedRevision: number) => Promise<Result<NoteTemplateStore>>;
+    remove: (id: string, expectedRevision: number) => Promise<Result<NoteTemplateStore>>;
+    instantiate: (input: {
+      workspaceId: string;
+      parentDirRelativePath: string;
+      templateId: string;
+    }) => Promise<Result<{ relativePath: string; renderedFileName: string }>>;
   };
   ollama: {
     listModels: (baseUrl: string) => Promise<Result<{ models: string[] }>>;

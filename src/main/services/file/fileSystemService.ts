@@ -60,6 +60,14 @@ export interface TrashEntryInfo {
   isDirectory: boolean
 }
 
+export type CreatedFileTransaction = {
+  relativePath: string
+  absolutePath: string
+  dev: number | bigint
+  ino: number | bigint
+  birthtimeMs: number | bigint
+}
+
 const toPosix = (p: string) => p.split(path.sep).join('/')
 
 const resolveInWorkspace = (workspacePath: string, relativePath: string) => {
@@ -364,20 +372,114 @@ export const fileSystemService = {
     }
   },
 
-  async createFile(workspacePath: string, parentDirRelativePath: string, name: string): Promise<Result<string>> {
+  async createFileForTransaction(
+    workspacePath: string,
+    parentDirRelativePath: string,
+    name: string,
+    content = '',
+  ): Promise<Result<CreatedFileTransaction>> {
     try {
       const resolvedParent = resolveInWorkspace(workspacePath, parentDirRelativePath || '.')
       if (!resolvedParent.ok) return { success: false, error: resolvedParent.error }
 
       const fileName = name.trim()
       if (!fileName || fileName === '.md') return { success: false, error: '文件名不能为空' }
-      const destAbs = path.join(resolvedParent.target, fileName)
-      const destRel = toPosix(path.relative(resolvedParent.root, destAbs))
-      await fs.writeFile(destAbs, '', { encoding: 'utf-8', flag: 'wx' })
-      return { success: true, data: destRel }
+      if (fileName === '.' || fileName === '..' || fileName.includes('/') || fileName.includes('\\')) {
+        return { success: false, errorCode: 'PATH_TRAVERSAL', error: '文件名不能包含路径分隔符' }
+      }
+      let checkedParentPath = resolvedParent.root
+      const parentParts = path.relative(resolvedParent.root, resolvedParent.target).split(path.sep).filter(Boolean)
+      for (const part of parentParts) {
+        checkedParentPath = path.join(checkedParentPath, part)
+        if ((await fs.lstat(checkedParentPath)).isSymbolicLink()) {
+          return { success: false, errorCode: 'PATH_TRAVERSAL', error: '目标目录不能经过符号链接' }
+        }
+      }
+      const realWorkspacePath = await fs.realpath(resolvedParent.root)
+      const realParentPath = await fs.realpath(resolvedParent.target)
+      if (!isWithin(realWorkspacePath, realParentPath)) {
+        return { success: false, errorCode: 'PATH_TRAVERSAL', error: '目标目录不在工作空间内' }
+      }
+      const destAbs = path.join(realParentPath, fileName)
+      const destRel = toPosix(path.relative(resolvedParent.root, path.join(resolvedParent.target, fileName)))
+      const handle = await fs.open(destAbs, 'wx')
+      let openedStat: Awaited<ReturnType<typeof handle.stat>> | null = null
+      let creationError: unknown
+      try {
+        openedStat = await handle.stat()
+        const verifyDestination = async () => {
+          const [latestParentPath, destinationPath, destinationStat] = await Promise.all([
+            fs.realpath(resolvedParent.target),
+            fs.realpath(destAbs),
+            fs.lstat(destAbs),
+          ])
+          if (latestParentPath !== realParentPath
+            || !isWithin(realWorkspacePath, destinationPath)
+            || destinationStat.isSymbolicLink()
+            || !destinationStat.isFile()
+            || destinationStat.dev !== openedStat.dev
+            || destinationStat.ino !== openedStat.ino) {
+            const error = new Error('目标目录或文件在创建期间发生变化') as NodeJS.ErrnoException
+            error.code = 'PATH_TRAVERSAL'
+            throw error
+          }
+        }
+
+        await verifyDestination()
+        await handle.writeFile(content, { encoding: 'utf-8' })
+        await handle.sync()
+        await verifyDestination()
+      } catch (error) {
+        creationError = error
+      } finally {
+        await handle.close()
+      }
+      if (creationError) {
+        try {
+          const [destinationPath, destinationStat] = await Promise.all([
+            fs.realpath(destAbs),
+            fs.lstat(destAbs),
+          ])
+          if (openedStat
+            && isWithin(realWorkspacePath, destinationPath)
+            && !destinationStat.isSymbolicLink()
+            && destinationStat.dev === openedStat.dev
+            && destinationStat.ino === openedStat.ino) {
+            await fs.unlink(destAbs)
+          }
+        } catch {
+          // Never delete through an unverified path during rollback.
+        }
+        throw creationError
+      }
+      if (!openedStat) throw new Error('无法确认新建文件状态')
+      return {
+        success: true,
+        data: {
+          relativePath: destRel,
+          absolutePath: destAbs,
+          dev: openedStat.dev,
+          ino: openedStat.ino,
+          birthtimeMs: openedStat.birthtimeMs,
+        },
+      }
     } catch (error: any) {
-      return { success: false, error: `Failed to create file: ${error?.message ?? String(error)}` }
+      return {
+        success: false,
+        errorCode: error?.code === 'EEXIST'
+          ? 'TARGET_EXISTS'
+          : error?.code === 'PATH_TRAVERSAL' ? 'PATH_TRAVERSAL' : undefined,
+        error: `创建文件失败: ${error?.message ?? String(error)}`,
+      }
     }
+  },
+
+  async createFile(workspacePath: string, parentDirRelativePath: string, name: string, content = ''): Promise<Result<string>> {
+    const result = await this.createFileForTransaction(workspacePath, parentDirRelativePath, name, content)
+    if (!result.success || !result.data) {
+      return { success: false, errorCode: result.errorCode, error: result.error }
+    }
+    return { success: true, data: result.data.relativePath }
   },
 
   async move(workspacePath: string, fromRelativePath: string, toRelativePath: string): Promise<Result<void>> {

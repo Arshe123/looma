@@ -16,6 +16,7 @@ import './ipc/appIpc';
 import './ipc/fileIpc';
 import './ipc/fsIpc';
 import './ipc/ollamaIpc';
+import './ipc/noteTemplateIpc';
 
 let mainWindow: BrowserWindow | null = null;
 let quitInProgress = false;

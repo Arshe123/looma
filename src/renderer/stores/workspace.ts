@@ -2506,6 +2506,17 @@ export const useWorkspaceStore = defineStore('workspace', {
       return ok
     },
 
+    async completeMarkdownCreation(relativePath: string, targetDirRelativePath?: string) {
+      const ws = this.activeWorkspaceId
+      if (!ws) return
+      const relative = normalizeDir(relativePath)
+      const targetDir = normalizeDir(targetDirRelativePath ?? pathDir(relative))
+      this.undoStack.unshift({ type: 'create', relativePath: relative })
+      this.redoStack = []
+      await this.refreshDirs(ws, [targetDir, this.getCurrentDir()])
+      this.setActiveFileRelative(relative)
+    },
+
     async createMarkdown(title?: string, dirRelativePath?: string) {
       const ws = this.activeWorkspaceId
       if (!ws) return
@@ -2523,11 +2534,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.setError(r.error || 'Failed to create file')
         return
       }
-      this.undoStack.unshift({ type: 'create', relativePath: r.data })
-      this.redoStack = []
-      await this.loadDir(ws, normalizeDir(pathDir(r.data)))
-      await this.loadDir(ws, currentDir)
-      this.setActiveFileRelative(r.data)
+      await this.completeMarkdownCreation(r.data, targetDir)
     },
 
     async createFolder(name?: string, dirRelativePath?: string) {

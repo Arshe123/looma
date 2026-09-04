@@ -113,6 +113,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     get: () => ipcRenderer.invoke('appSettings:get'),
     set: (settings: unknown) => ipcRenderer.invoke('appSettings:set', settings),
   },
+  noteTemplates: {
+    list: () => ipcRenderer.invoke('noteTemplates:list'),
+    create: (input: unknown, expectedRevision: number) =>
+      ipcRenderer.invoke('noteTemplates:create', input, expectedRevision),
+    update: (id: string, input: unknown, expectedRevision: number) =>
+      ipcRenderer.invoke('noteTemplates:update', id, input, expectedRevision),
+    remove: (id: string, expectedRevision: number) =>
+      ipcRenderer.invoke('noteTemplates:remove', id, expectedRevision),
+    instantiate: (input: { workspaceId: string; parentDirRelativePath: string; templateId: string }) =>
+      ipcRenderer.invoke('noteTemplates:instantiate', input),
+  },
   ollama: {
     listModels: (baseUrl: string) => ipcRenderer.invoke('ollama:listModels', baseUrl),
     checkInstalled: (baseUrl: string) => ipcRenderer.invoke('ollama:checkInstalled', baseUrl),

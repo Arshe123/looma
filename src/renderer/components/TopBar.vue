@@ -46,7 +46,7 @@ const toggleMaximizeWindow = () => {
 
 const closeWindow = async () => {
   if (workspaceStore.isWorkspaceTransitioning) return
-  workspaceStore.setWorkspaceTransition(true, '姝ｅ湪淇濆瓨...')
+  workspaceStore.setWorkspaceTransition(true, 'Looma 关闭中...')
   const ok = await workspaceStore.ensureSavedBeforeWorkspaceChange()
   if (!ok) {
     workspaceStore.setWorkspaceTransition(false, '')

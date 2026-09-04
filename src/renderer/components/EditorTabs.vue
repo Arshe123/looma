@@ -73,7 +73,7 @@ const onContextMenu = (event: MouseEvent, tab: WorkspaceTab) => {
   contextMenuTabId.value = tab.id
   const pad = 8
   const width = 180
-  const height = 260
+  const height = 320
   const x = Math.min(event.clientX, window.innerWidth - width - pad)
   const y = Math.min(event.clientY, window.innerHeight - height - pad)
   menuX.value = Math.max(pad, x)
@@ -87,9 +87,21 @@ const handleCloseTab = async () => {
   closeMenu()
 }
 
+const handleCloseLeftTabs = async () => {
+  if (!contextMenuTabId.value) return
+  await workspaceStore.closeTabsToLeft(contextMenuTabId.value)
+  closeMenu()
+}
+
 const handleCloseRightTabs = async () => {
   if (!contextMenuTabId.value) return
   await workspaceStore.closeTabsToRight(contextMenuTabId.value)
+  closeMenu()
+}
+
+const handleCloseOtherTabs = async () => {
+  if (!contextMenuTabId.value) return
+  await workspaceStore.closeOtherTabs(contextMenuTabId.value)
   closeMenu()
 }
 
@@ -193,8 +205,14 @@ onUnmounted(() => {
       <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCloseTab">
         关闭
       </button>
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCloseLeftTabs">
+        关闭左侧标签页
+      </button>
       <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCloseRightTabs">
         关闭右侧标签页
+      </button>
+      <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCloseOtherTabs">
+        关闭其他标签页
       </button>
       <button class="w-full px-3 py-1.5 text-left hover:bg-accent-soft cursor-pointer" @click="handleCloseSavedTabs">
         关闭已保存标签页

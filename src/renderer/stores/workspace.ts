@@ -1223,6 +1223,26 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
     },
 
+    async closeTabsToLeft(tabId: string) {
+      const idx = this.tabs.findIndex((tab) => tab.id === tabId)
+      if (idx === -1) return
+      const toClose = this.tabs.slice(0, idx)
+      for (const tab of toClose) {
+        const ok = await this.closeTab(tab.id)
+        if (!ok) break
+      }
+    },
+
+    async closeOtherTabs(tabId: string) {
+      const idx = this.tabs.findIndex((tab) => tab.id === tabId)
+      if (idx === -1) return
+      const toClose = this.tabs.filter((tab) => tab.id !== tabId)
+      for (const tab of toClose) {
+        const ok = await this.closeTab(tab.id)
+        if (!ok) break
+      }
+    },
+
     async closeSavedTabs() {
       const toClose = this.tabs.filter((tab) => !this.isTabDirty(tab.id))
       for (const tab of toClose) {

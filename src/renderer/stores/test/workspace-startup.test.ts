@@ -22,6 +22,37 @@ describe('workspace startup hydration', () => {
     ;(globalThis as any).window = globalThis.window || globalThis
   })
 
+  it('syncs the file tree selection when switching to another file tab', () => {
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.tabs = [
+      { id: 'file:a.md', kind: 'file', relativePath: 'a.md' },
+      { id: 'file:b.md', kind: 'file', relativePath: 'b.md' },
+    ]
+    store.activeTabId = 'file:a.md'
+    store.selectedPaths = ['a.md']
+
+    store.activateTab('file:b.md')
+
+    expect(store.activeFileRelativePath).toBe('b.md')
+    expect(store.selectedPaths).toEqual(['b.md'])
+  })
+
+  it('selects files restored by undo', async () => {
+    (window as any).electronAPI = {
+      workspaceMeta: { set: vi.fn().mockResolvedValue({ success: true }) },
+    }
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    store.selectedPaths = []
+
+    await store.applyHistoryEffects({ restoredPaths: ['restored.md'] })
+
+    expect(store.selectedPaths).toEqual(['restored.md'])
+  })
+
   it('restores the sidebar and active note without waiting for AI history', async () => {
     const pendingAi = deferred<any>()
     ;(window as any).electronAPI = {

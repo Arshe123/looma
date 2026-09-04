@@ -1426,6 +1426,17 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (result.changed) shouldSaveMeta = true
       }
 
+      if (effects.restoredPaths?.length) {
+        const restoredPaths = effects.restoredPaths.map(normalizeDir).filter(Boolean)
+        if (restoredPaths.length > 0 && (
+          restoredPaths.length !== this.selectedPaths.length
+          || restoredPaths.some((path, index) => path !== this.selectedPaths[index])
+        )) {
+          this.selectedPaths = restoredPaths
+          shouldSaveMeta = true
+        }
+      }
+
       if (effects.removedPaths?.length) {
         const removedPaths = effects.removedPaths
         const creationTimeResult = removeFileCreationTimes(this.fileCreationTimes, removedPaths)
@@ -2018,6 +2029,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       const ws = this.activeWorkspace
       if (!ws) return
       this.activeSystemPage = null
+      this.selectedPaths = [rel]
       this.activeFileRelativePath = rel
       this.activeFilePath = this.resolveAbsolutePath(rel)
 

@@ -20,6 +20,7 @@ import { formatAppShortcut } from '@/shared/utils/app-shortcuts'
 import { appendTreeGuides, type TreeGuidedRow } from '@/shared/utils/tree-row-guides'
 import { captureFileTreeDrop } from '@/shared/utils/external-file-drop'
 import { isMacPlatform } from '../../shared/utils/window-chrome'
+import { getFileTreeRowVisualState } from '@/shared/utils/file-tree-display'
 import NoteTemplateDialog from './templates/NoteTemplateDialog.vue'
 
 const isMac = isMacPlatform((window as any).electronAPI?.platform ?? '')
@@ -34,6 +35,8 @@ const rootLoadState = computed(() => workspaceStore.dirLoadStates[rootDirKey.val
 const rootLoadError = computed(() => workspaceStore.dirLoadErrors[rootDirKey.value] || '')
 const hasRootSnapshot = computed(() => Object.prototype.hasOwnProperty.call(workspaceStore.dirEntries, rootDirKey.value))
 const isInitialRootLoading = computed(() => !hasRootSnapshot.value && (rootLoadState.value === 'idle' || rootLoadState.value === 'loading'))
+const fileTreeRoot = ref<HTMLElement | null>(null)
+const fileTreeFocused = ref(false)
 
 type InlineEditMode = 'create-file' | 'create-folder' | 'rename'
 type InlineEditState = {
@@ -513,11 +516,19 @@ const handleRowDragStart = (event: DragEvent, row: FlatRow) => {
 const getRowClass = (row: FlatRow) => {
   if (row.kind === 'inline-create') return 'border-accent bg-accent-soft text-text-main'
 
-  return [
-    workspaceStore.selectedPaths.includes(row.entry.relativePath) ? 'border-accent bg-accent-soft text-text-main' : '',
-    (!workspaceStore.selectedPaths.includes(row.entry.relativePath) && !row.entry.isDirectory && activeFileRel.value === row.entry.relativePath) ? 'border-accent bg-accent-soft text-text-main' : '',
-    externalDropRowKey.value === row.key ? 'border-accent bg-accent-soft text-text-main' : '',
-  ]
+  const state = getFileTreeRowVisualState({
+    relativePath: row.entry.relativePath,
+    selectedPaths: workspaceStore.selectedPaths,
+    activeFileRelativePath: activeFileRel.value,
+    fileTreeFocused: fileTreeFocused.value,
+    isDirectory: row.entry.isDirectory,
+    isDropTarget: externalDropRowKey.value === row.key,
+  })
+
+  if (state === 'selected' || state === 'drop') return 'border-accent bg-accent-soft text-text-main'
+  if (state === 'selected-inactive') return 'border-accent/40 bg-accent-soft/40 text-text-main'
+  if (state === 'active-inactive') return 'border-accent/30 bg-accent-soft/25 text-text-main'
+  return ''
 }
 
 const flattened = computed((): FlatRow[] => {
@@ -664,7 +675,17 @@ const handleRevealInExplorer = async () => {
   closeMenu()
 }
 
-const onGlobalPointerDown = () => closeMenu()
+const updateFileTreeFocus = (event: Event) => {
+  const target = event.target
+  fileTreeFocused.value = target instanceof Node && Boolean(fileTreeRoot.value?.contains(target))
+}
+
+const onGlobalPointerDown = (event: PointerEvent) => {
+  updateFileTreeFocus(event)
+  closeMenu()
+}
+const onGlobalFocusIn = (event: FocusEvent) => updateFileTreeFocus(event)
+const onWindowBlur = () => { fileTreeFocused.value = false }
 const onGlobalKeyDown = (e: KeyboardEvent) => {
   if (noteTemplateDialogOpen.value) return
   handleFileTreeGlobalKeyDown({
@@ -672,6 +693,7 @@ const onGlobalKeyDown = (e: KeyboardEvent) => {
     platform,
     shortcuts: settingsStore.appShortcuts,
     selectedPaths: workspaceStore.selectedPaths,
+    fileTreeFocused: fileTreeFocused.value,
     hasInlineEdit: Boolean(inlineEdit.value),
     activeElement: document.activeElement,
     closeMenu,
@@ -697,6 +719,8 @@ const retryRootLoad = () => {
 
 onMounted(() => {
   window.addEventListener('pointerdown', onGlobalPointerDown)
+  window.addEventListener('focusin', onGlobalFocusIn)
+  window.addEventListener('blur', onWindowBlur)
   window.addEventListener('keydown', onGlobalKeyDown)
   document.addEventListener('drop', clearExternalDropState, { capture: true })
   document.addEventListener('dragend', clearExternalDropState, { capture: true })
@@ -716,6 +740,8 @@ watch(() => workspaceStore.activeWorkspaceId, () => {
 
 onUnmounted(() => {
   window.removeEventListener('pointerdown', onGlobalPointerDown)
+  window.removeEventListener('focusin', onGlobalFocusIn)
+  window.removeEventListener('blur', onWindowBlur)
   window.removeEventListener('keydown', onGlobalKeyDown)
   document.removeEventListener('drop', clearExternalDropState, { capture: true })
   document.removeEventListener('dragend', clearExternalDropState, { capture: true })
@@ -728,7 +754,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-full min-h-0 flex flex-col">
+  <div ref="fileTreeRoot" class="h-full min-h-0 flex flex-col">
     <div class="shrink-0 px-4 py-3 text-sm font-semibold text-text-main flex items-center justify-between gap-2">
       <span>文件</span>
       <div class="flex items-center gap-0.5">

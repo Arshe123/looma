@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { handleFileTreeGlobalKeyDown } from '../file-tree-shortcuts'
 import { createDefaultAppShortcutSettings } from '../app-shortcuts'
 
-const createHandlers = (platform: string, key: string) => {
+const createHandlers = (platform: string, key: string, fileTreeFocused = true) => {
   const preventDefault = vi.fn()
   const deleteEntries = vi.fn()
   return {
@@ -21,6 +21,7 @@ const createHandlers = (platform: string, key: string) => {
       platform,
       shortcuts: createDefaultAppShortcutSettings(),
       selectedPaths: ['notes/example.md'],
+      fileTreeFocused,
       hasInlineEdit: false,
       activeElement: null,
       closeMenu: vi.fn(),
@@ -58,6 +59,14 @@ describe('file tree delete shortcut', () => {
     expect(result.deleteEntries).not.toHaveBeenCalled()
   })
 
+  it('does not delete an inactive file tree selection', () => {
+    const result = createHandlers('darwin', 'Backspace', false)
+
+    expect(result.handled).toBe(false)
+    expect(result.preventDefault).not.toHaveBeenCalled()
+    expect(result.deleteEntries).not.toHaveBeenCalled()
+  })
+
   it('uses customized file operation shortcuts', () => {
     const preventDefault = vi.fn()
     const deleteEntries = vi.fn()
@@ -74,6 +83,7 @@ describe('file tree delete shortcut', () => {
       platform: 'win32',
       shortcuts,
       selectedPaths: ['notes/example.md'],
+      fileTreeFocused: true,
       hasInlineEdit: false,
       activeElement: null,
       closeMenu: vi.fn(),

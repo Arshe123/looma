@@ -8,6 +8,7 @@ type FileTreeShortcutHandlers = {
   platform: string
   shortcuts: AppShortcutSettings
   selectedPaths: string[]
+  fileTreeFocused: boolean
   hasInlineEdit: boolean
   activeElement: EventTarget | null
   closeMenu: () => void
@@ -24,6 +25,7 @@ export const handleFileTreeGlobalKeyDown = ({
   platform,
   shortcuts,
   selectedPaths,
+  fileTreeFocused,
   hasInlineEdit,
   activeElement,
   closeMenu,
@@ -34,6 +36,7 @@ export const handleFileTreeGlobalKeyDown = ({
   pasteEntries,
   onError = console.error,
 }: FileTreeShortcutHandlers) => {
+  if (!fileTreeFocused) return false
   if (isTextEditingTarget(event.target) || isTextEditingTarget(activeElement)) return false
 
   if (event.key === 'Escape') {

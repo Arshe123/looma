@@ -10,6 +10,7 @@ interface BuildWorkspaceMetaInput {
   activeFileRelativePath: string
   tabs?: WorkspaceTab[]
   activeTabId?: string
+  previewTabId?: string
   fileSessions: Record<string, EditorSession>
   outlineExpandedHeadingIds: Record<string, string[]>
   activeSidebarPanel?: SidebarPanelId | null
@@ -46,12 +47,15 @@ const cleanupSessionsForOpenedFiles = (openedFiles: string[], fileSessions: Reco
 
 export const buildWorkspaceMetaPayload = (input: BuildWorkspaceMetaInput) => {
   const noteOrderPlain = cloneNoteOrder(input.noteOrder)
-  const normalizedTabs = normalizeWorkspaceTabs(input.tabs)
-    .filter((tab) => !(tab.kind === 'system' && tab.page === 'agent-diff'))
-  const openedFiles = normalizedTabs.length > 0
+  const allTabs = normalizeWorkspaceTabs(input.tabs)
+  const normalizedTabs = allTabs
+    .filter((tab) => tab.id !== input.previewTabId && !(tab.kind === 'system' && tab.page === 'agent-diff'))
+  const openedFiles = Array.isArray(input.tabs)
     ? getFilePathsFromTabs(normalizedTabs)
     : input.openedFiles.map(normalizeDir)
-  const cleanedSessions = cleanupSessionsForOpenedFiles(openedFiles, input.fileSessions)
+  // Temporary previews retain their reading state until closed, but not across restarts.
+  const runtimeFiles = Array.isArray(input.tabs) ? getFilePathsFromTabs(allTabs) : openedFiles
+  const cleanedSessions = cleanupSessionsForOpenedFiles(runtimeFiles, input.fileSessions)
   const activeTabId = input.activeTabId && normalizedTabs.some((tab) => tab.id === input.activeTabId)
     ? input.activeTabId
     : undefined
@@ -60,10 +64,10 @@ export const buildWorkspaceMetaPayload = (input: BuildWorkspaceMetaInput) => {
     selectedPaths: input.selectedPaths.map(normalizeDir),
     noteOrder: noteOrderPlain,
     openedFiles,
-    activeFile: input.activeFileRelativePath || undefined,
+    activeFile: openedFiles.includes(input.activeFileRelativePath) ? input.activeFileRelativePath : undefined,
     tabs: normalizedTabs.length > 0 ? normalizedTabs : undefined,
     activeTabId,
-    fileSessions: JSON.parse(JSON.stringify(cleanedSessions)),
+    fileSessions: JSON.parse(JSON.stringify(cleanupSessionsForOpenedFiles(openedFiles, cleanedSessions))),
     outlineExpandedHeadingIds: cloneStringArrayRecord(input.outlineExpandedHeadingIds),
     outlineExpansionStateVersion: 1,
     activeSidebarPanel: input.activeSidebarPanel,

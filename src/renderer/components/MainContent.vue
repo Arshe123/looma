@@ -92,6 +92,7 @@ const activeTextEditor = computed(() => {
     relativePath,
     filePath,
     component,
+    binding: workspaceStore.createTextFileEditorBinding(relativePath),
     content: state?.content || '',
     state,
   }
@@ -114,11 +115,6 @@ const editorRefSetters = createKeyedTemplateRefSetters<any>(setEditorRef)
 watch(fileTabPaths, (paths) => {
   editorRefSetters.retain(paths)
 }, { immediate: true })
-
-const handleSave = async (newContent: string, relativePath = workspaceStore.activeFileRelativePath) => {
-  workspaceStore.setActiveFileContent(newContent, relativePath)
-  await workspaceStore.saveActiveFileContent(newContent, relativePath)
-}
 
 const onEditorRetry = () => {
   editorReloadNonce.value += 1
@@ -298,7 +294,7 @@ onUnmounted(() => {
             v-if="activeTextEditor && !isActiveMedia"
             class="absolute inset-0 h-full w-full"
             :is="activeTextEditor.component"
-            :key="`${activeTextEditor.relativePath}:${editorReloadNonce}`"
+            :key="`${activeTextEditor.binding.key}:${editorReloadNonce}`"
             :ref="editorRefSetters.get(activeTextEditor.relativePath)"
             :filePath="activeTextEditor.filePath"
             :relativeFilePath="activeTextEditor.relativePath"
@@ -309,11 +305,7 @@ onUnmounted(() => {
             :isLoadingMore="activeTextEditor.state?.isLoadingMore || false"
             :totalBytes="activeTextEditor.state?.totalBytes || 0"
             :useChunkedPreview="activeTextEditor.state?.useChunkedPreview || false"
-            @load-more="workspaceStore.loadNextTextFileChunk(activeTextEditor!.relativePath)"
-            @ensure-loaded="workspaceStore.ensureTextFileFullyLoaded(activeTextEditor!.relativePath)"
-            @update:content="(v, relativePath) => workspaceStore.setActiveFileContent(v, relativePath)"
-            @edit-pending="(relativePath) => workspaceStore.markTextFileEditPending(relativePath)"
-            @save="(v, relativePath) => handleSave(v, relativePath)"
+            v-on="activeTextEditor.binding.events"
             @retry="onEditorRetry"
           />
         </KeepAlive>

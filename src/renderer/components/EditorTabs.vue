@@ -176,10 +176,11 @@ onUnmounted(() => {
         @dragover="(e) => onDragOver(e, index)"
         @dragend="onDragEnd"
         @click="selectTab(tab)"
+        @dblclick="workspaceStore.retainTab(tab.id)"
         @contextmenu="(e) => onContextMenu(e, tab)"
-        :title="tab.kind === 'file' ? tab.relativePath : getTabTitle(tab)"
+        :title="(tab.kind === 'file' ? tab.relativePath : getTabTitle(tab)) + (workspaceStore.previewTabId === tab.id ? '（预览，双击保留）' : '')"
       >
-        <span class="text-xs truncate flex-1">{{ getTabTitle(tab) }}</span>
+        <span class="text-xs truncate flex-1" :class="{ italic: workspaceStore.previewTabId === tab.id }">{{ getTabTitle(tab) }}</span>
         
         <div v-if="workspaceStore.isTabDirty(tab.id)" class="w-2 h-2 rounded-full bg-text-subtle group-hover:hidden"></div>
 
@@ -187,6 +188,7 @@ onUnmounted(() => {
           class="w-5 h-5 flex items-center justify-center rounded hover:bg-accent-soft opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
           :class="{ 'opacity-100': workspaceStore.activeTabId === tab.id && !workspaceStore.isTabDirty(tab.id) }"
           @click="(e) => closeTab(e, tab.id)"
+          @dblclick.stop
         >
           <X :size="12" />
         </button>
@@ -238,6 +240,10 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.italic {
+  font-synthesis: style;
+}
+
 .custom-scrollbar::-webkit-scrollbar {
   height: 4px;
 }

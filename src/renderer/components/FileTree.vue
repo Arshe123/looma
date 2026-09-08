@@ -257,7 +257,7 @@ const handleRowClick = (_event: MouseEvent, row: FsEntry, isMulti: boolean) => {
     workspaceStore.selectDir(row.relativePath)
     workspaceStore.toggleDirExpanded(row.relativePath)
   } else {
-    workspaceStore.setActiveFileRelative(row.relativePath)
+    workspaceStore.openPreviewFileTab(row.relativePath)
   }
 }
 
@@ -870,6 +870,7 @@ onUnmounted(() => {
         :draggable="isRowDraggable(row)"
         @dragstart="(e) => handleRowDragStart(e, row)"
         @click.exact="row.kind === 'entry' && handleRowClick($event, row.entry, false)"
+        @dblclick.exact="row.kind === 'entry' && !row.entry.isDirectory && workspaceStore.openFileTab(row.entry.relativePath)"
         @click.ctrl.exact="row.kind === 'entry' && handleRowClick($event, row.entry, true)"
         @click.meta.exact="row.kind === 'entry' && handleRowClick($event, row.entry, true)"
         @contextmenu="(e) => row.kind === 'entry' && handleRightClick(e, row.entry)"
@@ -891,6 +892,7 @@ onUnmounted(() => {
             v-model="inlineEditValue"
             class="flex-1 min-w-0 rounded border border-accent bg-panel px-1.5 py-0.5 text-sm text-text-main outline-none"
             @click.stop
+            @dblclick.stop
             @pointerdown.stop
             @keydown.enter.prevent.stop="submitInlineEdit"
             @keydown.esc.prevent.stop="cancelInlineEdit"
@@ -916,6 +918,7 @@ onUnmounted(() => {
             v-model="inlineEditValue"
             class="flex-1 min-w-0 rounded border border-accent bg-panel px-1.5 py-0.5 text-sm text-text-main outline-none"
             @click.stop
+            @dblclick.stop
             @pointerdown.stop
             @keydown.enter.prevent.stop="submitInlineEdit"
             @keydown.esc.prevent.stop="cancelInlineEdit"

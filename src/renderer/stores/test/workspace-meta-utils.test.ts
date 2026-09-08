@@ -3,6 +3,33 @@ import { buildWorkspaceMetaPayload } from '../workspace-meta-utils'
 import { createFileTab, createSystemTab } from '../workspace-tab-utils'
 
 describe('buildWorkspaceMetaPayload tab persistence', () => {
+  it('keeps preview reading state in memory without persisting it', () => {
+    const session = { updatedAt: 1, markdown: { viewMode: 'split' as const, previewScroll: { ratio: 0.4 } } }
+    const { cleanedSessions, meta } = buildWorkspaceMetaPayload({
+      expandedDirs: [], selectedPaths: [], noteOrder: {},
+      tabs: [createFileTab('preview.md')], openedFiles: ['preview.md'],
+      activeFileRelativePath: 'preview.md', previewTabId: 'file:preview.md',
+      fileSessions: { 'preview.md': session, 'closed.md': { updatedAt: 2 } },
+      outlineExpandedHeadingIds: {},
+    })
+    expect(cleanedSessions).toEqual({ 'preview.md': session })
+    expect(meta.fileSessions).toEqual({})
+  })
+
+  it.each([false, true])('omits preview from every reopening field (permanent=%s)', (permanent) => {
+    const { meta } = buildWorkspaceMetaPayload({
+      expandedDirs: [], selectedPaths: [], noteOrder: {},
+      tabs: [...(permanent ? [createFileTab('kept.md')] : []), createFileTab('preview.md')],
+      openedFiles: ['preview.md'], activeFileRelativePath: 'preview.md',
+      activeTabId: 'file:preview.md', previewTabId: 'file:preview.md',
+      fileSessions: {}, outlineExpandedHeadingIds: {},
+    })
+    expect(meta.openedFiles).toEqual(permanent ? ['kept.md'] : [])
+    expect(meta.tabs || []).toEqual(permanent ? [createFileTab('kept.md')] : [])
+    expect(meta.activeFile).toBeUndefined()
+    expect(meta.activeTabId).toBeUndefined()
+  })
+
   it('persists unified tabs and writes legacy openedFiles for compatibility', () => {
     const tabs = [createFileTab('docs/a.md'), createSystemTab('settings')]
 

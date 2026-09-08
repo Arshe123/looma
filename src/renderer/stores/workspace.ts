@@ -370,6 +370,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     openedFiles: [] as string[],
     openedSystemPages: [] as SystemPageId[],
     tabs: [] as WorkspaceTab[],
+    previewTabId: '',
     activeTabId: '' as string,
     activeSystemPage: null as SystemPageId | null,
     activeSettingsSection: 'editor' as SettingsSectionId,
@@ -1007,6 +1008,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     syncLegacyTabState() {
+      if (!this.tabs.some((tab) => tab.id === this.previewTabId)) this.previewTabId = ''
       this.openedFiles = getFilePathsFromTabs(this.tabs)
       this.openedSystemPages = this.tabs
         .filter((tab): tab is SystemWorkspaceTab => tab.kind === 'system')
@@ -1023,6 +1025,32 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.syncLegacyTabState()
     },
 
+    retainTab(tabId: string) {
+      if (this.previewTabId !== tabId) return
+      this.previewTabId = ''
+      this.saveWorkspaceMeta().catch(() => {})
+    },
+
+    openPreviewFileTab(relativePath: string) {
+      const rel = normalizeDir(relativePath)
+      if (!rel) return
+      const id = getFileTabId(rel)
+      if (this.tabs.some((tab) => tab.id === id)) {
+        this.activateTab(id)
+        return
+      }
+      if (this.previewTabId && this.isTabDirty(this.previewTabId)) this.retainTab(this.previewTabId)
+      const index = this.tabs.findIndex((tab) => tab.id === this.previewTabId)
+      if (index >= 0) {
+        const [removed] = this.tabs.splice(index, 1, createFileTab(rel))
+        this.cleanupTabState(removed)
+      } else {
+        this.tabs.push(createFileTab(rel))
+      }
+      this.previewTabId = id
+      this.activateTab(id)
+    },
+
     openFileTab(relativePath: string) {
       const rel = normalizeDir(relativePath)
       if (!rel) {
@@ -1036,6 +1064,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!this.tabs.some((tab) => tab.id === id)) {
         this.tabs.push(createFileTab(rel))
       }
+      this.retainTab(id)
       this.activateTab(id)
     },
 
@@ -1410,6 +1439,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (remapByMoves(rel, items) !== rel) this.cancelDraftRecoveryTimer(rel)
       }
       const result = remapFileTabsByMoves(this.tabs, items)
+      const preview = this.tabs.find((tab) => tab.id === this.previewTabId)
+      if (preview?.kind === 'file') this.previewTabId = getFileTabId(remapByMoves(preview.relativePath, items))
       this.tabs = result.tabs
       const activeTab = this.activeTabId ? this.tabs.find((tab) => tab.id === this.activeTabId) : null
       if (!activeTab && this.activeFileRelativePath) {
@@ -1696,6 +1727,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         await window.electronAPI.fs.watchStop(prev)
       }
       this.activeWorkspaceId = null
+      this.previewTabId = ''
       this.resetActiveFileState()
       this.openedSystemPages = []
       this.tabs = []
@@ -1788,6 +1820,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     async loadWorkspaceMeta(id: string) {
+      this.previewTabId = ''
       const metaResult = await window.electronAPI.workspaceMeta.get(id)
       if (!metaResult.success || !metaResult.data) {
         this.expandedDirs = []
@@ -1876,6 +1909,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         noteOrder: this.noteOrder,
         openedFiles: this.openedFiles,
         tabs: this.tabs,
+        previewTabId: this.previewTabId,
         activeTabId: this.activeTabId,
         activeSidebarPanel: this.activeSidebarPanel,
         activeFileRelativePath: this.activeFileRelativePath,
@@ -2151,11 +2185,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       const rel = normalizeDir(relativePath)
       const recoveryApi = window.electronAPI.draftRecovery
       if (!workspaceId || !rel || !recoveryApi) return
+      const loadRequestId = this.openedTextFileContents[rel]?.loadRequestId
       const result = await recoveryApi.get(workspaceId, rel, diskContent)
       if (!result.success || !result.data || result.data.status === 'none') return
       if (this.activeWorkspaceId !== workspaceId) return
       const current = this.openedTextFileContents[rel]
-      if (!current || current.isPartial || current.content !== diskContent || current.loadedContent !== diskContent) return
+      if (!current || current.loadRequestId !== loadRequestId || current.hasPendingEditorChanges || current.isPartial || current.content !== diskContent || current.loadedContent !== diskContent) return
       const conflict = result.data.status === 'conflict'
       this.openedTextFileContents[rel] = {
         ...current,
@@ -2166,7 +2201,41 @@ export const useWorkspaceStore = defineStore('workspace', {
         saveError: conflict ? '文件在 Looma 关闭期间被外部修改，已恢复未保存草稿；保存前请确认内容。' : '',
       }
       this.mirrorActiveTextFileState(rel)
+      if (this.isFileDirty(rel)) this.retainTab(getFileTabId(rel))
       if (conflict) this.setError(this.openedTextFileContents[rel].saveError)
+    },
+
+    createTextFileEditorBinding(relativePath: string) {
+      const rel = normalizeDir(relativePath)
+      const workspaceId = this.activeWorkspaceId
+      const requestId = this.openedTextFileContents[rel]?.loadRequestId
+      // KeepAlive can emit blur/save after removal, even after this path is reopened.
+      const isCurrent = (): boolean => this.activeWorkspaceId === workspaceId
+        && Boolean(this.openedTextFileContents[rel])
+        && this.openedTextFileContents[rel].loadRequestId === requestId
+        && this.tabs.some((tab) => tab.id === getFileTabId(rel))
+      return {
+        key: JSON.stringify([workspaceId, rel, requestId]),
+        events: {
+          'update:content': (content: string): void => {
+            if (isCurrent()) this.setActiveFileContent(content, rel)
+          },
+          'edit-pending': (): void => {
+            if (isCurrent()) this.markTextFileEditPending(rel)
+          },
+          save: async (content: string): Promise<void> => {
+            if (!isCurrent()) return
+            this.setActiveFileContent(content, rel)
+            await this.saveActiveFileContent(content, rel)
+          },
+          'load-more': (): void => {
+            if (isCurrent()) void this.loadNextTextFileChunk(rel)
+          },
+          'ensure-loaded': (): void => {
+            if (isCurrent()) void this.ensureTextFileFullyLoaded(rel)
+          },
+        },
+      }
     },
 
     setActiveFileContent(content: string, relativePath?: string) {
@@ -2174,6 +2243,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!rel) return
       const existing = this.openedTextFileContents[rel]
       if (existing?.isPartial) return
+      if (existing?.content !== content) this.retainTab(getFileTabId(rel))
       this.openedTextFileContents[rel] = {
         ...(existing || {
           isPartial: false,
@@ -2201,6 +2271,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       const state = this.openedTextFileContents[rel]
       if (!state || state.isPartial) return
       state.hasPendingEditorChanges = true
+      this.retainTab(getFileTabId(rel))
     },
 
     async loadActiveFileContent() {
@@ -2233,31 +2304,6 @@ export const useWorkspaceStore = defineStore('workspace', {
         return { success: true as const }
       }
 
-      if (!absPath.toLowerCase().endsWith('.md')) {
-        const r = await window.electronAPI.file.readMarkdown(absPath)
-        if (!workspaceId || this.activeWorkspaceId !== workspaceId || this.resolveAbsolutePath(rel) !== absPath) return { success: true as const }
-        if (!r.success || r.data === undefined) {
-          this.setError(r.error || 'Failed to load file')
-          return r
-        }
-        this.openedTextFileContents[rel] = {
-          content: r.data,
-          loadedContent: r.data,
-          isSaving: false,
-          saveError: '',
-          isPartial: false,
-          isLoading: false,
-          isLoadingMore: false,
-          nextOffset: new Blob([r.data]).size,
-          totalBytes: new Blob([r.data]).size,
-          loadRequestId: 0,
-          useChunkedPreview: false,
-        }
-        this.mirrorActiveTextFileState(rel)
-        await this.restoreDraftRecovery(rel, r.data)
-        return r
-      }
-
       const loadRequestId = ++this.nextTextFileLoadRequestId
       this.openedTextFileContents[rel] = {
         content: '',
@@ -2273,6 +2319,34 @@ export const useWorkspaceStore = defineStore('workspace', {
         useChunkedPreview: false,
       }
       this.mirrorActiveTextFileState(rel)
+
+      if (!absPath.toLowerCase().endsWith('.md')) {
+        const r = await window.electronAPI.file.readMarkdown(absPath)
+        if (!workspaceId || this.activeWorkspaceId !== workspaceId || this.resolveAbsolutePath(rel) !== absPath) return { success: true as const }
+        if (this.openedTextFileContents[rel]?.loadRequestId !== loadRequestId) return { success: true as const }
+        if (!r.success || r.data === undefined) {
+          Object.assign(this.openedTextFileContents[rel], { isLoading: false, isPartial: false, saveError: r.error || 'Failed to load file' })
+          this.setError(r.error || 'Failed to load file')
+          return r
+        }
+        this.openedTextFileContents[rel] = {
+          content: r.data,
+          loadedContent: r.data,
+          isSaving: false,
+          saveError: '',
+          isPartial: false,
+          isLoading: false,
+          isLoadingMore: false,
+          nextOffset: new Blob([r.data]).size,
+          totalBytes: new Blob([r.data]).size,
+          loadRequestId,
+          useChunkedPreview: false,
+        }
+        this.mirrorActiveTextFileState(rel)
+        await this.restoreDraftRecovery(rel, r.data)
+        return r
+      }
+
       const r = await window.electronAPI.file.readTextChunk(absPath, 0, NOTE_INITIAL_CHUNK_BYTES)
       if (!workspaceId || this.activeWorkspaceId !== workspaceId || this.resolveAbsolutePath(rel) !== absPath) return
       if (this.openedTextFileContents[rel]?.loadRequestId !== loadRequestId) return { success: true as const }

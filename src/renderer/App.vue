@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue';
-import { useWorkspaceStore, type SidebarPanelId } from '@/renderer/stores/workspace';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { AUXILIARY_WIDTH_STORAGE_KEY, clampAuxiliaryWidth, parseAuxiliaryWidth } from '@/renderer/utils/auxiliary-layout';
+import { useWorkspaceStore } from '@/renderer/stores/workspace';
+import AiAssistant from '@/renderer/components/ai/AiAssistant.vue';
+import OutlinePanel from '@/renderer/components/OutlinePanel.vue';
+import ThemeSwitcher from '@/renderer/components/ThemeSwitcher.vue';
 import { useSettingsStore } from '@/renderer/stores/settings';
 import { useOllamaStore } from '@/renderer/stores/ollama';
 import { useDownloadsStore } from '@/renderer/stores/downloads';
@@ -33,15 +37,59 @@ const readStoredSidebarWidth = () => {
   return parseStoredSidebarWidth(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY))
 }
 
+const viewportWidth = ref(window.innerWidth)
+const preferredAuxiliaryWidth = ref(parseAuxiliaryWidth(localStorage.getItem(AUXILIARY_WIDTH_STORAGE_KEY)))
+const sidebarWidth = ref(readStoredSidebarWidth())
+const auxiliaryWidth = computed(() => clampAuxiliaryWidth(
+  preferredAuxiliaryWidth.value, viewportWidth.value,
+  workspaceStore.fileSidebarOpen ? sidebarWidth.value : 56,
+))
+
 const clampSidebarWidth = (width: number) => {
   const viewportWidth = typeof window === 'undefined'
     ? MIN_EXPANDED_SIDEBAR_WIDTH + 720
     : window.innerWidth
-  return clampExpandedSidebarWidth(width, viewportWidth)
+  const reservedWidth = viewportWidth > 1100 && workspaceStore.activeAuxiliaryPanel
+    ? clampAuxiliaryWidth(preferredAuxiliaryWidth.value, viewportWidth, MIN_EXPANDED_SIDEBAR_WIDTH) + 8 : 0
+  return clampExpandedSidebarWidth(width, viewportWidth - reservedWidth - 20)
 }
 
-const sidebarWidth = ref(clampSidebarWidth(readStoredSidebarWidth()))
-const lastOpenSidebarPanel = ref<SidebarPanelId>('files')
+sidebarWidth.value = clampSidebarWidth(sidebarWidth.value)
+
+const auxiliaryPanelRef = ref<HTMLElement | null>(null)
+let auxiliaryDrag: { x: number; width: number; cursor: string; userSelect: string } | null = null
+const stopAuxiliaryResize = () => {
+  if (!auxiliaryDrag) return
+  document.body.style.cursor = auxiliaryDrag.cursor
+  document.body.style.userSelect = auxiliaryDrag.userSelect
+  auxiliaryDrag = null
+  window.removeEventListener('pointermove', moveAuxiliaryResize)
+  window.removeEventListener('pointerup', stopAuxiliaryResize)
+  window.removeEventListener('pointercancel', stopAuxiliaryResize)
+  window.removeEventListener('blur', stopAuxiliaryResize)
+  localStorage.setItem(AUXILIARY_WIDTH_STORAGE_KEY, String(Math.round(preferredAuxiliaryWidth.value)))
+}
+const moveAuxiliaryResize = (event: PointerEvent) => {
+  if (!auxiliaryDrag) return
+  preferredAuxiliaryWidth.value = clampAuxiliaryWidth(
+    auxiliaryDrag.width + auxiliaryDrag.x - event.clientX, viewportWidth.value,
+    workspaceStore.fileSidebarOpen ? sidebarWidth.value : 56,
+  )
+}
+const startAuxiliaryResize = (event: PointerEvent) => {
+  if (event.button !== 0 || !auxiliaryPanelRef.value) return
+  event.preventDefault()
+  stopSidebarResize()
+  auxiliaryDrag = { x: event.clientX, width: auxiliaryPanelRef.value.getBoundingClientRect().width,
+    cursor: document.body.style.cursor, userSelect: document.body.style.userSelect }
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('pointermove', moveAuxiliaryResize)
+  window.addEventListener('pointerup', stopAuxiliaryResize)
+  window.addEventListener('pointercancel', stopAuxiliaryResize)
+  window.addEventListener('blur', stopAuxiliaryResize)
+}
+
 let keyHandler: ((e: KeyboardEvent) => void) | null = null
 let cleanupAppCommand: null | (() => void) = null
 let isResizingSidebar = false
@@ -66,36 +114,36 @@ const stopSidebarResize = () => {
 
 const onSidebarResizeMove = (e: PointerEvent) => {
   if (!isResizingSidebar) return
-  const isOpen = workspaceStore.activeSidebarPanel !== null
+  const isOpen = workspaceStore.fileSidebarOpen
   if (shouldOpenSidebarOnResize(e.clientX, isOpen)) {
     sidebarWidth.value = clampSidebarWidth(e.clientX)
-    workspaceStore.setActiveSidebarPanel(lastOpenSidebarPanel.value)
+    workspaceStore.setFileSidebarOpen(true)
     return
   }
   if (shouldCloseSidebarOnResize(e.clientX, isOpen)) {
     sidebarWidth.value = MIN_EXPANDED_SIDEBAR_WIDTH
-    workspaceStore.setActiveSidebarPanel(null)
+    workspaceStore.setFileSidebarOpen(false)
     stopSidebarResize()
     return
   }
   sidebarWidth.value = clampSidebarWidth(e.clientX)
 }
 
-watch(
-  () => workspaceStore.activeSidebarPanel,
-  (panel) => {
-    if (panel) lastOpenSidebarPanel.value = panel
-  },
-  { immediate: true },
-)
+
 
 const onWindowResize = () => {
+  viewportWidth.value = window.innerWidth
   const nextWidth = clampSidebarWidth(sidebarWidth.value)
   if (nextWidth !== sidebarWidth.value) {
     sidebarWidth.value = nextWidth
     persistSidebarWidth()
   }
 }
+
+watch(() => workspaceStore.activeAuxiliaryPanel, () => {
+  stopAuxiliaryResize()
+  onWindowResize()
+})
 
 const startSidebarResize = (e: PointerEvent) => {
   if (e.button !== 0) return
@@ -146,6 +194,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  stopAuxiliaryResize()
   stopSidebarResize()
   window.removeEventListener('resize', onWindowResize)
   if (keyHandler) window.removeEventListener('keydown', keyHandler)
@@ -161,15 +210,30 @@ onUnmounted(() => {
   <div spellcheck="false" autocorrect="off" autocapitalize="off">
     <div class="h-screen w-screen flex flex-col overflow-hidden bg-bg text-text-main antialiased font-sans select-none">
       <TopBar />
-      <div class="flex flex-1 overflow-hidden">
+      <div class="workspace-layout flex flex-1 min-h-0 overflow-hidden pr-3">
         <Sidebar :width="sidebarWidth" />
         <div
-          class="relative z-10 h-full w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent-soft active:bg-accent"
+          class="relative z-10 h-full w-2 shrink-0 cursor-col-resize bg-transparent hover:bg-accent-soft active:bg-accent"
           style="-webkit-app-region: no-drag"
           @pointerdown="startSidebarResize"
         />
         <MainContent />
+        <aside v-if="workspaceStore.activeAuxiliaryPanel" ref="auxiliaryPanelRef" :style="{ width: `${auxiliaryWidth}px` }" class="auxiliary-panel relative shrink-0 min-h-0 ml-2" aria-label="辅助面板">
+          <div
+            class="absolute -left-2 top-0 bottom-0 w-2 cursor-col-resize hover:bg-accent-soft active:bg-accent"
+            style="-webkit-app-region: no-drag; touch-action: none"
+            title="拖动调整辅助面板宽度"
+            @pointerdown="startAuxiliaryResize"
+          />
+          <div class="h-full overflow-hidden rounded-[15px] bg-panel">
+            <AiAssistant v-if="workspaceStore.activeAuxiliaryPanel === 'ai'" />
+            <OutlinePanel v-else />
+          </div>
+        </aside>
       </div>
+      <footer class="h-9 shrink-0 flex items-center justify-end px-3">
+        <ThemeSwitcher />
+      </footer>
     </div>
     <InputDialog />
     <ConfirmationDialog />

@@ -2,7 +2,6 @@ import { defineStore } from 'pinia'
 import {
   DEFAULT_ACTIVE_SIDEBAR_PANEL,
   resolveActiveSidebarPanel,
-  toggleActiveSidebarPanel,
 } from './sidebar-panels'
 import {
   isEditableTextPath,
@@ -376,6 +375,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeSettingsSection: 'editor' as SettingsSectionId,
     activeAgentDiff: null as AgentDiffViewState | null,
     activeSidebarPanel: DEFAULT_ACTIVE_SIDEBAR_PANEL as SidebarPanelId | null,
+    fileSidebarOpen: true,
+    activeAuxiliaryPanel: null as 'outline' | 'ai' | null,
     aiAssistant: createDefaultAiAssistantState() as AiAssistantState,
     fileSessions: {} as Record<string, EditorSession>,
     outlineExpandedHeadingIds: {} as Record<string, string[]>,
@@ -561,7 +562,10 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     toggleTheme() {
-      this.theme = this.theme === 'light' ? 'dark' : this.theme === 'dark' ? 'system' : 'light'
+      this.setTheme(this.theme === 'light' ? 'dark' : this.theme === 'dark' ? 'system' : 'light')
+    },
+    setTheme(theme: ThemeName) {
+      this.theme = theme
       if (typeof localStorage !== 'undefined') localStorage.setItem('theme', this.theme)
       this.applyTheme()
     },
@@ -974,12 +978,29 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     setActiveSidebarPanel(id: SidebarPanelId | null) {
       this.activeSidebarPanel = id
+      if (id === 'files') this.fileSidebarOpen = true
+      else if (id === null) {
+        this.fileSidebarOpen = false
+        this.activeAuxiliaryPanel = null
+      } else this.activeAuxiliaryPanel = id
+      this.saveWorkspaceMeta().catch(() => {})
+    },
+
+    setFileSidebarOpen(open: boolean) {
+      this.fileSidebarOpen = open
+      this.activeSidebarPanel = this.activeAuxiliaryPanel || (open ? 'files' : null)
+      this.saveWorkspaceMeta().catch(() => {})
+    },
+
+    setActiveAuxiliaryPanel(id: 'outline' | 'ai' | null) {
+      this.activeAuxiliaryPanel = id
+      this.activeSidebarPanel = id || (this.fileSidebarOpen ? 'files' : null)
       this.saveWorkspaceMeta().catch(() => {})
     },
 
     toggleSidebarPanel(id: SidebarPanelId) {
-      this.activeSidebarPanel = toggleActiveSidebarPanel(this.activeSidebarPanel, id)
-      this.saveWorkspaceMeta().catch(() => {})
+      if (id === 'files') this.setFileSidebarOpen(!this.fileSidebarOpen)
+      else this.setActiveAuxiliaryPanel(this.activeAuxiliaryPanel === id ? null : id)
     },
 
     setOutlineExpandedHeadingIds(sourceKey: string, ids: string[]) {
@@ -1738,6 +1759,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.openedTextFileContents = {}
       this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
       this.resetAiAssistantState()
+      this.fileSidebarOpen = true
+      this.activeAuxiliaryPanel = null
       this.selectedPaths = []
       this.expandedDirs = []
       this.noteOrder = {}
@@ -1833,6 +1856,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.activeSystemPage = null
         this.openedTextFileContents = {}
         this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
+        this.fileSidebarOpen = true
+        this.activeAuxiliaryPanel = null
         this.fileSortMode = 'name'
         this.fileCreationTimes = {}
         this.trashedFileCreationTimes = {}
@@ -1867,6 +1892,12 @@ export const useWorkspaceStore = defineStore('workspace', {
         metaResult.data.activeSidebarPanel,
         metaResult.data.sidebarPanels,
       )
+      this.fileSidebarOpen = typeof metaResult.data.fileSidebarOpen === 'boolean'
+        ? metaResult.data.fileSidebarOpen : this.activeSidebarPanel !== null
+      const auxiliary = metaResult.data.activeAuxiliaryPanel
+      this.activeAuxiliaryPanel = auxiliary === null || auxiliary === 'ai' || auxiliary === 'outline'
+        ? auxiliary : this.activeSidebarPanel === 'ai' || this.activeSidebarPanel === 'outline'
+          ? this.activeSidebarPanel : null
       this.fileSortMode = metaResult.data.fileSortMode === 'created-asc' || metaResult.data.fileSortMode === 'created-desc'
         ? metaResult.data.fileSortMode
         : 'name'
@@ -1912,6 +1943,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         previewTabId: this.previewTabId,
         activeTabId: this.activeTabId,
         activeSidebarPanel: this.activeSidebarPanel,
+        fileSidebarOpen: this.fileSidebarOpen,
+        activeAuxiliaryPanel: this.activeAuxiliaryPanel,
         activeFileRelativePath: this.activeFileRelativePath,
         fileSessions: this.fileSessions,
         outlineExpandedHeadingIds: this.outlineExpandedHeadingIds,

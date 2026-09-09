@@ -22,6 +22,8 @@ export interface WorkspaceMeta {
   outlineExpandedHeadingIds?: Record<string, string[]>
   outlineExpansionStateVersion?: 1
   activeSidebarPanel?: 'files' | 'outline' | 'ai' | null
+  fileSidebarOpen?: boolean
+  activeAuxiliaryPanel?: 'outline' | 'ai' | null
   sidebarPanels?: { id: 'files' | 'outline' | 'ai'; size: number }[]
   fileSortMode?: 'name' | 'created-asc' | 'created-desc'
   fileCreationTimes?: Record<string, number>
@@ -124,6 +126,9 @@ export const workspaceMetaService = {
             ? parsed.activeSidebarPanel
             : undefined,
         sidebarPanels: Array.isArray(parsed.sidebarPanels) ? parsed.sidebarPanels : undefined,
+        fileSidebarOpen: typeof parsed.fileSidebarOpen === 'boolean' ? parsed.fileSidebarOpen : undefined,
+        activeAuxiliaryPanel: parsed.activeAuxiliaryPanel === null || parsed.activeAuxiliaryPanel === 'ai' || parsed.activeAuxiliaryPanel === 'outline'
+          ? parsed.activeAuxiliaryPanel : undefined,
         fileSortMode: parsed.fileSortMode === 'created-asc' || parsed.fileSortMode === 'created-desc'
           ? parsed.fileSortMode
           : 'name',

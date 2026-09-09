@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Bot, Folders, Monitor, Moon, Sun, TableOfContents, Settings, UserRound } from 'lucide-vue-next'
+import { Bot, Folders, TableOfContents, Settings, UserRound } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import type { SidebarPanelId } from '@/renderer/stores/workspace'
 import { SIDEBAR_TOOLBAR_WIDTH } from '@/renderer/utils/sidebar-layout'
 
-import AiAssistant from './ai/AiAssistant.vue'
+
 import UpdateModal from './update/UpdateModal.vue'
 import UserMenu from './user/UserMenu.vue'
 import FileTree from './FileTree.vue'
-import OutlinePanel from './OutlinePanel.vue'
+
 
 const props = defineProps<{
   width: number
@@ -21,13 +21,13 @@ const updateModalOpen = ref(false)
 const appVersion = ref('0.0.0')
 const toolbarWidth = SIDEBAR_TOOLBAR_WIDTH
 const panelWidth = computed(() => Math.max(0, props.width - toolbarWidth))
-const isOpen = computed(() => workspaceStore.activeSidebarPanel !== null)
+const isOpen = computed(() => workspaceStore.fileSidebarOpen)
 const isOutlineAvailable = computed(() => {
   const tab = workspaceStore.activeTab
   return (tab?.kind === 'file' && tab.relativePath.toLowerCase().endsWith('.md'))
     || (tab?.kind === 'system' && tab.page === 'help')
 })
-const isPanelOpen = (id: SidebarPanelId) => workspaceStore.activeSidebarPanel === id
+const isPanelOpen = (id: SidebarPanelId) => id === 'files' ? workspaceStore.fileSidebarOpen : workspaceStore.activeAuxiliaryPanel === id
 
 const togglePanel = (id: SidebarPanelId) => {
   if (id === 'outline' && !isOutlineAvailable.value && !isPanelOpen(id)) return
@@ -169,15 +169,7 @@ onUnmounted(() => {
           />
         </div>
 
-        <button
-          @click="workspaceStore.toggleTheme"
-          class="p-2 rounded-md text-text-muted hover:bg-accent-soft hover:text-text-main cursor-pointer"
-          :title="workspaceStore.theme === 'light' ? '切换到日间模式' : workspaceStore.theme === 'dark' ? '跟随系统主题' : '切换到夜间模式'"
-        >
-          <Sun v-if="workspaceStore.theme === 'light'" :size="20" />
-          <Moon v-else-if="workspaceStore.theme === 'dark'" :size="20" />
-          <Monitor v-else :size="20" />
-        </button>
+
 
         <button
           @click="workspaceStore.openSettingsPage()"
@@ -190,13 +182,11 @@ onUnmounted(() => {
     </div>
 
     <div
-      class="h-full overflow-hidden bg-panel rounded-lg"
+      class="h-full overflow-hidden bg-panel rounded-[15px]"
       :style="{ width: isOpen ? `${panelWidth}px` : '0px' }"
     >
       <div v-if="isOpen" class="h-full min-h-0 overflow-hidden">
-        <FileTree v-if="workspaceStore.activeSidebarPanel === 'files'" />
-        <OutlinePanel v-else-if="workspaceStore.activeSidebarPanel === 'outline'" />
-        <AiAssistant v-else-if="workspaceStore.activeSidebarPanel === 'ai'" />
+        <FileTree />
       </div>
     </div>
 

@@ -252,7 +252,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col flex-1 overflow-hidden rounded-lg bg-panel">
+  <div class="workspace-document h-full min-w-0 flex flex-col flex-1 overflow-hidden rounded-[15px] bg-surface">
     <EditorTabs v-if="hasOpenTabs" />
 
     <SettingsPage

@@ -416,8 +416,8 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
 
 <template>
   <div class="relative h-full min-h-0 overflow-hidden flex flex-col bg-panel text-text-main">
-    <header class="shrink-0 border-b border-border-soft bg-panel px-4 py-3">
-      <div class="flex items-center gap-3">
+    <header class="shrink-0 bg-panel px-3 py-3">
+      <div class="flex items-center gap-2">
         <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent shadow-sm">
           <Sparkles :size="18" />
         </div>
@@ -471,7 +471,7 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
 
     <div
       ref="messagesRef"
-      class="min-h-0 flex-1 overflow-y-auto bg-panel-soft px-4 py-4"
+      class="min-h-0 flex-1 overflow-y-auto bg-panel px-3 py-4"
       @contextmenu="openMessagesContextMenu"
       @scroll="closeAiContextMenu"
     >

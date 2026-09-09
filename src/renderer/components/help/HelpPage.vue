@@ -30,7 +30,7 @@ const handleContentClick = (event: MouseEvent) => {
 </script>
 
 <template>
-  <main class="flex-1 min-h-0 overflow-y-auto bg-panel">
+  <main class="flex-1 min-h-0 overflow-y-auto bg-surface">
     <article
       ref="articleRef"
       class="help-markdown markdown-body w-full max-w-3xl mx-auto px-10 py-9"

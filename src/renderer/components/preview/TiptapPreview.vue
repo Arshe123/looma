@@ -1064,7 +1064,7 @@ defineExpose({
 <template>
   <div
     ref="previewContainerRef"
-    class="h-full w-full bg-panel overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar"
+    class="h-full w-full bg-surface overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar"
     :class="{ 'line-numbers-hidden': !props.showLineNumbers }"
     @dragover="handleExternalImageDragOver"
   >

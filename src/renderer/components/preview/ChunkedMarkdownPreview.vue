@@ -223,7 +223,7 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="containerRef" class="h-full w-full overflow-y-auto bg-panel focus-scrollbar">
+  <div ref="containerRef" class="h-full w-full overflow-y-auto bg-surface focus-scrollbar">
     <div class="markdown-body chunked-markdown mx-auto max-w-none p-8">
       <section
         v-for="(html, index) in renderedChunks"

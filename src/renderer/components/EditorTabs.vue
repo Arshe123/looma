@@ -157,7 +157,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <header class="h-10 flex bg-panel-soft border-border-soft z-10 w-full overflow-hidden select-none">
+  <header class="h-12 shrink-0 flex bg-panel z-10 w-full overflow-hidden select-none p-1.5">
     <div 
       class="flex-1 flex overflow-x-auto overflow-y-hidden custom-scrollbar focus-scrollbar"
       @wheel="onWheel"
@@ -165,11 +165,11 @@ onUnmounted(() => {
       <div
         v-for="(tab, index) in workspaceStore.tabs"
         :key="tab.id"
-        class="group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full border-r border-border-soft cursor-pointer relative shrink-0 transition-colors rounded-t-lg"
+        class="group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full cursor-pointer relative shrink-0 transition-colors rounded-lg mr-1"
         :class="[
           workspaceStore.activeTabId === tab.id
             ? 'bg-surface text-accent'
-            : 'border-b bg-panel-soft text-text-muted hover:bg-accent-soft'
+            : 'text-text-muted hover:bg-accent-soft'
         ]"
         draggable="true"
         @dragstart="(e) => onDragStart(e, index)"

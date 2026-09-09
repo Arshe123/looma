@@ -191,6 +191,8 @@ export interface WorkspaceMeta {
   outlineExpandedHeadingIds?: Record<string, string[]>
   outlineExpansionStateVersion?: 1
   activeSidebarPanel?: SidebarPanelId | null
+  fileSidebarOpen?: boolean
+  activeAuxiliaryPanel?: 'outline' | 'ai' | null
   sidebarPanels?: SidebarPanelState[]
   fileSortMode?: 'name' | 'created-asc' | 'created-desc'
   fileCreationTimes?: Record<string, number>

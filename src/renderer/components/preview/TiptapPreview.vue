@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { shallowRef, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { shallowRef, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick } from 'vue'
+import { dispatchEditorFocus, getRenderedEditorFocus } from '@/shared/utils/editor-focus'
 import { findChildren } from '@tiptap/core'
+import { NodeSelection } from '@tiptap/pm/state'
 import { Editor, EditorContent, VueNodeViewRenderer } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import { CodeBlock } from '@tiptap/extension-code-block'
@@ -666,6 +668,33 @@ const scrollToSourceLine = (line: number) => {
   return scrollToBlockText(targetText)
 }
 
+let editorFocusActive = true
+onActivated(() => { editorFocusActive = true })
+onDeactivated(() => { editorFocusActive = false })
+
+const handleEditorFocusClick = (event: MouseEvent) => {
+  const currentEditor = editor.value
+  if (!editorFocusActive || !currentEditor || currentEditor.isDestroyed || !currentEditor.view.dom.isConnected) return
+  const root = currentEditor.view.dom
+  const target = event.target instanceof Node ? event.target : null
+  if (!target || !root.contains(target)) return
+  const focus = getRenderedEditorFocus(target, root)
+  if (focus) dispatchEditorFocus({ relativePath: props.relativeFilePath, ...focus })
+  else if (target === root) publishSelectionFocus()
+}
+
+const publishSelectionFocus = () => {
+  const currentEditor = editor.value
+  if (!editorFocusActive || !currentEditor || currentEditor.isDestroyed || !currentEditor.view.dom.isConnected) return
+  if (!currentEditor.isFocused || isUpdatingFromExternal) return
+  const { selection } = currentEditor.state
+  const target = selection instanceof NodeSelection
+    ? currentEditor.view.nodeDOM(selection.from)
+    : currentEditor.view.domAtPos(selection.head).node
+  const focus = getRenderedEditorFocus(target, currentEditor.view.dom)
+  if (focus) dispatchEditorFocus({ relativePath: props.relativeFilePath, ...focus })
+}
+
 const handleNoteRefClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement | null
   const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null
@@ -953,9 +982,11 @@ onMounted(() => {
         return true
       },
     },
+    onSelectionUpdate: () => publishSelectionFocus(),
     onUpdate: ({ editor }) => {
       if (isUnmounting || editor.isDestroyed) return
       if (isUpdatingFromExternal) return
+      publishSelectionFocus()
       editorSaveGate.markPending()
       emit('edit-pending')
       maybeOpenNoteRefPicker(editor)
@@ -975,15 +1006,18 @@ onMounted(() => {
   })
 
   previewContainerRef.value?.addEventListener(PREVIEW_IMAGE_SETTLED_EVENT, reanchorPendingHeading)
+  previewContainerRef.value?.addEventListener('click', handleEditorFocusClick, true)
   previewContainerRef.value?.addEventListener('click', handleNoteRefClick, true)
   previewContainerRef.value?.addEventListener('pointerdown', handleNoteRefPointerDown, true)
   previewContainerRef.value?.addEventListener('scroll', handlePreviewScroll, { passive: true })
 })
 
 onBeforeUnmount(() => {
+  editorFocusActive = false
   flushAndEmitSave()
   isUnmounting = true
   previewContainerRef.value?.removeEventListener(PREVIEW_IMAGE_SETTLED_EVENT, reanchorPendingHeading)
+  previewContainerRef.value?.removeEventListener('click', handleEditorFocusClick, true)
   previewContainerRef.value?.removeEventListener('click', handleNoteRefClick, true)
   previewContainerRef.value?.removeEventListener('pointerdown', handleNoteRefPointerDown, true)
   previewContainerRef.value?.removeEventListener('scroll', handlePreviewScroll)

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onActivated, onDeactivated, ref, watch } from 'vue'
+import { dispatchEditorFocus, getRenderedEditorFocus } from '@/shared/utils/editor-focus'
 import 'github-markdown-css/github-markdown-light.css'
 import { renderMarkdownWithLineData } from '@/shared/utils/markdown-renderer'
 import { splitMarkdownIntoRenderChunksWithLines } from '@/shared/utils/markdown-chunks'
@@ -103,6 +104,20 @@ const requestMoreNearBoundary = () => {
   if (container.scrollHeight - container.scrollTop - container.clientHeight < 1200) emit('load-more')
 }
 
+let editorFocusActive = true
+onActivated(() => { editorFocusActive = true })
+onDeactivated(() => { editorFocusActive = false })
+
+const handleEditorFocusClick = (event: MouseEvent) => {
+  const root = containerRef.value
+  if (!editorFocusActive || !root?.isConnected) return
+  const focus = getRenderedEditorFocus(event.target instanceof Node ? event.target : null, root)
+  if (focus) dispatchEditorFocus({ relativePath: props.relativeFilePath || '', ...focus })
+  else if (event.target === root || (event.target instanceof Element && event.target.matches('.chunked-markdown, .markdown-render-chunk'))) {
+    dispatchEditorFocus({ relativePath: props.relativeFilePath || '', label: '正文' })
+  }
+}
+
 const handleNoteRefClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement | null
   const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null
@@ -201,6 +216,7 @@ watch(() => props.content, () => {
 }, { flush: 'post' })
 
 onMounted(() => {
+  containerRef.value?.addEventListener('click', handleEditorFocusClick, true)
   containerRef.value?.addEventListener('scroll', handleScroll, { passive: true })
   containerRef.value?.addEventListener('click', handleNoteRefClick)
   resolveLocalImages().catch(() => {})
@@ -208,6 +224,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  editorFocusActive = false
+  containerRef.value?.removeEventListener('click', handleEditorFocusClick, true)
   imageResolveGeneration += 1
   containerRef.value?.removeEventListener('scroll', handleScroll)
   containerRef.value?.removeEventListener('click', handleNoteRefClick)

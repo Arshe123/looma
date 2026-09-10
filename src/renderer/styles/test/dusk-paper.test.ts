@@ -18,7 +18,9 @@ describe('暮纸主题与布局接线', () => {
     const app = component('App.vue')
     const sidebar = component('components/Sidebar.vue')
     expect(app.indexOf('<MainContent />')).toBeLessThan(app.indexOf('<AiAssistant v-if='))
-    expect(app).toMatch(/<footer[^>]*>\s*<ThemeSwitcher \/>/)
+    const footer = app.match(/<footer\b[^>]*>([\s\S]*?)<\/footer>/)?.[1] || ''
+    expect(footer).toContain('<ThemeSwitcher />')
+    expect(footer.indexOf('<BreadcrumbNavigation />')).toBeLessThan(footer.indexOf('<ThemeSwitcher />'))
     expect(sidebar).not.toContain('workspaceStore.toggleTheme')
     expect(sidebar).not.toContain('<AiAssistant')
     expect(sidebar).not.toContain('<OutlinePanel')

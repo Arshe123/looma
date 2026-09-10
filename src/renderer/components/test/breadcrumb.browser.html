@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>面包屑真实组件回归（内存文件）</title><div id="app"></div>
+<script type="module">
+import { createApp, h, nextTick } from 'vue'
+import { createPinia } from 'pinia'
+import MainContent from '../MainContent.vue'
+import BreadcrumbNavigation from '../BreadcrumbNavigation.vue'
+import ThemeSwitcher from '../ThemeSwitcher.vue'
+import { useWorkspaceStore } from '/src/renderer/stores/workspace.ts'
+import '/src/renderer/styles/style.css'
+
+const entry = (relativePath, isDirectory = false) => ({ name: relativePath.split('/').pop(), relativePath, isDirectory, size: 0, mtimeMs: 0, birthtimeMs: 1 })
+const directories = {
+  '.': [entry('产品设计', true), entry('研究资料', true), entry('空目录', true), entry('拒绝访问', true), entry('延迟目录', true), entry('.隐藏', true)],
+  '产品设计': [entry('产品设计/交互探索', true)],
+  '产品设计/交互探索': [entry('产品设计/交互探索/面包屑.md'), entry('产品设计/交互探索/快捷键.md')],
+  '研究资料': [entry('研究资料/阅读摘录', true)],
+  '研究资料/阅读摘录': [entry('研究资料/阅读摘录/设计中的设计.md')],
+  '空目录': [],
+}
+const documents = {
+  '产品设计/交互探索/面包屑.md': '# 面包屑导航\n\n## 设计目标\n\n写作时，注意力应该留在内容里。底部路径展示当前笔记和正在编辑的段落。\n\n## 目录导航\n\n点击底部文件夹，在上方浏览子目录。选择文件才打开。\n\n## 焦点恢复\n\n在选择目录时点击这段正文，路径应恢复到当前笔记。',
+  '产品设计/交互探索/快捷键.md': '# 快捷键设计\n\n键盘导航也需要清楚、可预测。',
+  '研究资料/阅读摘录/设计中的设计.md': '# 设计中的设计\n\n留白也是信息。\n\n## 观察与记录\n\n从日常工具中记录自然的交互细节。',
+}
+window.requests = []
+window.writes = []
+window.focusEvents = []
+window.errors = []
+window.addEventListener('error', event => window.errors.push(event.message))
+window.addEventListener('unhandledrejection', event => window.errors.push(String(event.reason)))
+window.addEventListener('looma:editor-focus', event => window.focusEvents.push(event.detail))
+window.electronAPI = {
+  platform: 'darwin',
+  fs: {
+    listDir: async (workspace, path) => {
+      window.requests.push({ workspace, path })
+      if (path === '延迟目录') await new Promise(resolve => { window.finishDelayed = resolve })
+      if (path === '拒绝访问') return { success: false, error: 'EACCES' }
+      return { success: true, data: directories[path] || [entry('延迟目录/文件.md')] }
+    },
+  },
+  file: {
+    writeMarkdown: async (...args) => { window.writes.push(args); return { success: true } },
+    readFileBase64: async () => ({ success: false }),
+  },
+  app: { openExternal: async () => {} },
+}
+const pinia = createPinia()
+const store = useWorkspaceStore(pinia)
+store.saveWorkspaceMeta = async () => {}
+store.workspaces = [{ id: 'test', name: '我的笔记', path: '/内存工作空间', createdAt: 0, lastOpenedAt: 0 }]
+store.activeWorkspaceId = 'test'
+for (const [path, content] of Object.entries(documents)) store.openedTextFileContents[path] = {
+  content, loadedContent: content, isSaving: false, saveError: '', loadRequestId: 1,
+}
+store.openFileTab('产品设计/交互探索/面包屑.md')
+window.store = store
+window.tick = nextTick
+createApp({ setup: () => () => h('div', { class: 'h-screen flex flex-col bg-bg text-text-main p-3 pb-0', style: 'min-width:0' }, [
+  h('div', { class: 'text-xs text-text-muted pb-3' }, '交互回归 · 真实 MainContent / 编辑器 / 面包屑组件 · 仅使用内存测试数据'),
+  h('div', { class: 'flex flex-1 min-h-0' }, [h(MainContent)]),
+  h('footer', { class: 'h-9 shrink-0 flex items-center gap-3' }, [h(BreadcrumbNavigation), h('div', { class: 'shrink-0' }, [h(ThemeSwitcher)])]),
+]) }).use(pinia).mount('#app')
+window.checkBreadcrumbKeyboard = async () => {
+  const settle = async () => { await nextTick(); await new Promise(resolve => setTimeout(resolve, 50)) }
+  const root = () => document.querySelector('[data-breadcrumb-path=""]')
+  root().focus(); root().click(); await settle()
+  const before = window.requests.length
+  root().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+  await settle()
+  if (window.requests.length !== before) throw new Error('方向键重复读取了目录')
+  if (document.activeElement?.dataset.entryPath !== '延迟目录') throw new Error('上方向键未选中末项')
+  document.querySelector('[data-entry-path="研究资料"]').click(); await settle()
+  document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+  await settle()
+  if (document.querySelector('.breadcrumb-menu')) throw new Error('Esc 未关闭菜单')
+  if (document.activeElement !== root()) throw new Error('Esc 未恢复至可见路径按钮')
+  return '目录方向键与 Esc 焦点恢复通过'
+}
+window.ready = true
+</script></html>

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh"><meta charset="utf-8"><title>正文焦点回归</title><div id="app"></div>
+<script type="module">
+import { createApp, h, ref, KeepAlive, nextTick } from 'vue'
+import { createPinia } from 'pinia'
+import SourceEditor from '../../editor/Editor.vue'
+import TiptapPreview from '../TiptapPreview.vue'
+import ChunkedMarkdownPreview from '../ChunkedMarkdownPreview.vue'
+import { getRenderedEditorFocus } from '/src/shared/utils/editor-focus.ts'
+window.electronAPI = { platform: 'darwin', file: { readFileBase64: async () => ({ success: false }) }, app: { openExternal: async () => {} } }
+const text = '# 当前标题\n\n当前段落 **重点**\n\n```js\nconst x = 1\n```\n\n![照片](data:image/png;base64,)\n\n| 列一 | 列二 |\n| --- | --- |\n| 甲 | 乙 |'
+const path = ref('源码.md'), active = ref('source'), visible = ref(true)
+const types = { source: SourceEditor, tiptap: TiptapPreview, chunked: ChunkedMarkdownPreview }
+window.focusEvents = []
+window.changes = []
+window.saves = []
+window.addEventListener('looma:editor-focus', e => window.focusEvents.push(e.detail))
+window.switchEditor = async (name, show = true) => { active.value = name; path.value = `${name}.md`; visible.value = show; await nextTick(); await new Promise(r => setTimeout(r, 100)) }
+createApp({ setup: () => () => h(KeepAlive, null, { default: () => visible.value ? h(types[active.value], {
+  key: active.value, initialContent: text, content: text, filePath: `/测试/${path.value}`, relativeFilePath: path.value,
+  showLineNumbers: true, isPartial: false, isLoadingMore: false, totalBytes: 0,
+  onChange: content => window.changes.push(content), 'onUpdate:content': content => window.changes.push(content), onSave: content => window.saves.push(content),
+}) : h('div', '非活动') }) }).use(createPinia()).mount('#app')
+window.runDomChecks = () => {
+  const root = document.createElement('div')
+  root.innerHTML = '<h2 data-line="3"><span class="looma-line-number">3</span>当前<strong>标题</strong></h2><pre><code><span data-line="6">代码</span></code></pre><p data-line="9"><img alt="照片"></p><table><tbody><tr><td><p>单元格</p></td></tr></tbody></table><button>工具栏</button>'
+  const results = []
+  const check = (selector, expected) => {
+    const actual = getRenderedEditorFocus(root.querySelector(selector), root)
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`${selector}: ${JSON.stringify(actual)}`)
+    results.push(selector)
+  }
+  check('strong', { label: '当前标题', sourceLine: 3 })
+  check('code span', { label: '代码块', sourceLine: 6 })
+  check('img', { label: '图片：照片', sourceLine: 9 })
+  check('td p', { label: '表格' })
+  check('button', null)
+  // 单个大表格也不能在光标热路径搜索全部隐藏行号。
+  const table = root.querySelector('table')
+  table.querySelector = () => { throw new Error('表格焦点不应扫描表格内部') }
+  check('td p', { label: '表格' })
+  root.innerHTML = '<p>' + '🙂'.repeat(100000) + '</p>'
+  check('p', { label: '🙂'.repeat(48) + '…' })
+  return results
+}
+window.runComponentChecks = async () => {
+  const passed = []
+  const click = element => {
+    const box = element.getBoundingClientRect()
+    element.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: box.left + 20, clientY: box.top + box.height / 2 }))
+  }
+  const assert = (condition, message) => { if (!condition) throw new Error(message); passed.push(message) }
+  for (const name of ['source', 'tiptap', 'chunked']) {
+    await window.switchEditor(name)
+    const selector = name === 'source' ? '.cm-line' : name === 'tiptap' ? '.ProseMirror h1' : '.chunked-markdown h1'
+    const heading = document.querySelector(selector)
+    window.focusEvents = []
+    click(heading); click(heading)
+    assert(window.focusEvents.length === 2 && window.focusEvents.every(e => e.label === '当前标题' && e.relativePath === `${name}.md`), `${name} 重复点击`)
+    if (name === 'tiptap') {
+      const editor = document.querySelector('.ProseMirror').editor
+      window.retainedEditor = editor
+    }
+    if (name === 'chunked') {
+      window.focusEvents = []
+      click(document.querySelector('.chunked-markdown'))
+      assert(window.focusEvents.at(-1)?.label === '正文', 'chunked 空白正文点击')
+    }
+    await window.switchEditor(name, false)
+    window.focusEvents = []
+    click(heading)
+    if (name === 'tiptap') window.retainedEditor.commands.setTextSelection(2)
+    assert(window.focusEvents.length === 0, `${name} KeepAlive 停用`)
+  }
+  return passed
+}
+// 先用真实鼠标点击富文本正文，再调用，避免合成 click 不改变 DOM 焦点。
+window.runSelectionCheck = () => {
+  const editor = document.querySelector('.ProseMirror').editor
+  if (!editor.isFocused) throw new Error('请先真实点击富文本正文')
+  window.focusEvents = []
+  editor.commands.setTextSelection(2)
+  editor.commands.setTextSelection(8)
+  if (window.focusEvents.at(-1)?.label !== '当前段落 重点') throw new Error('富文本选区焦点未更新')
+  return '富文本选区焦点通过'
+}
+window.ready = true
+</script>
+<style>body{margin:0}.h-full{height:100%}#app{height:650px}.ProseMirror{min-height:500px}button{font:inherit}</style>
+</html>

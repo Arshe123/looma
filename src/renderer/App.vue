@@ -5,6 +5,7 @@ import { useWorkspaceStore } from '@/renderer/stores/workspace';
 import AiAssistant from '@/renderer/components/ai/AiAssistant.vue';
 import OutlinePanel from '@/renderer/components/OutlinePanel.vue';
 import ThemeSwitcher from '@/renderer/components/ThemeSwitcher.vue';
+import BreadcrumbNavigation from '@/renderer/components/BreadcrumbNavigation.vue';
 import { useSettingsStore } from '@/renderer/stores/settings';
 import { useOllamaStore } from '@/renderer/stores/ollama';
 import { useDownloadsStore } from '@/renderer/stores/downloads';
@@ -231,8 +232,9 @@ onUnmounted(() => {
           </div>
         </aside>
       </div>
-      <footer class="h-9 shrink-0 flex items-center justify-end px-3">
-        <ThemeSwitcher />
+      <footer class="h-9 shrink-0 flex items-center gap-3 px-3">
+        <BreadcrumbNavigation />
+        <div class="shrink-0"><ThemeSwitcher /></div>
       </footer>
     </div>
     <InputDialog />

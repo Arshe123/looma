@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue';
 import { EditorView, basicSetup } from 'codemirror';
 import { markdown } from '@codemirror/lang-markdown';
-import { codeFolding, indentUnit } from '@codemirror/language';
+import { codeFolding, indentUnit, syntaxTree } from '@codemirror/language';
+import { dispatchEditorFocus, getEditorFocusLabel, type EditorFocusKind } from '@/shared/utils/editor-focus'
 import { EditorState, Compartment } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
@@ -47,6 +48,38 @@ let saveTimeout: any = null;
 let applyingExternalUpdate = false;
 let scrollSyncFrame: number | null = null;
 let scrollApplyFrame: number | null = null;
+
+let editorFocusActive = true
+onActivated(() => { editorFocusActive = true })
+onDeactivated(() => { editorFocusActive = false })
+
+const publishEditorFocus = (view: EditorView, position = view.state.selection.main.head, clicked = false) => {
+  if (!editorFocusActive || !view.dom.isConnected || !props.relativeFilePath) return
+  if (!clicked && (!view.hasFocus || applyingExternalUpdate)) return
+  const line = view.state.doc.lineAt(position)
+  let text = view.state.doc.sliceString(line.from, Math.min(line.to, line.from + 512))
+  let kind: EditorFocusKind = props.mode === 'markdown' ? 'markdown' : 'text'
+  if (props.mode === 'markdown') {
+    // 复用增量语法树，仅沿当前位置的祖先链向上读取；不强制解析大文档。
+    for (let node = syntaxTree(view.state).resolveInner(position, 1); node; node = node.parent!) {
+      if (node.name === 'FencedCode' || node.name === 'CodeBlock') { kind = 'code'; break }
+      if (node.name === 'Table') { kind = 'table'; break }
+      if (node.name === 'HorizontalRule') { kind = 'separator'; break }
+      if (node.name === 'Image') {
+        kind = 'image'
+        text = view.state.doc.sliceString(node.from, Math.min(node.to, node.from + 512)).match(/^!\[([^\]]*)\]/)?.[1] || ''
+        break
+      }
+    }
+  }
+  dispatchEditorFocus({ relativePath: props.relativeFilePath, label: getEditorFocusLabel(text, kind), sourceLine: line.number })
+}
+
+const handleEditorFocusClick = (event: MouseEvent) => {
+  if (!editorFocusActive || !editor || !(event.target instanceof Node) || !editor.contentDOM.contains(event.target)) return
+  const position = editor.posAtCoords({ x: event.clientX, y: event.clientY }) ?? editor.state.selection.main.head
+  publishEditorFocus(editor, position, true)
+}
 
 // Compartments for dynamic reconfiguration without destroying editor
 const themeCompartment = new Compartment()
@@ -266,6 +299,7 @@ const createEditor = () => {
   const updateListener = EditorView.updateListener.of((update) => {
     if ((update.docChanged || update.selectionSet) && update.view.hasFocus) {
       ensureCursorComfort(update.view);
+      publishEditorFocus(update.view)
     }
 
     if (update.docChanged) {
@@ -323,6 +357,7 @@ const createEditor = () => {
     parent: editorContainer.value,
   });
   editor.scrollDOM.addEventListener('scroll', handleEditorScroll, { passive: true })
+  editor.dom.addEventListener('click', handleEditorFocusClick, true)
 };
 
 const getEditorScrollState = (): ScrollSyncState => {
@@ -408,7 +443,9 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  editorFocusActive = false
   if (editor) {
+    editor.dom.removeEventListener('click', handleEditorFocusClick, true)
     editor.scrollDOM.removeEventListener('scroll', handleEditorScroll)
     editor.destroy();
   }

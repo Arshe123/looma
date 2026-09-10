@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '@/renderer/styles/reading-area.css'
 import { shallowRef, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick } from 'vue'
 import { dispatchEditorFocus, getRenderedEditorFocus } from '@/shared/utils/editor-focus'
 import { findChildren } from '@tiptap/core'
@@ -950,7 +951,7 @@ onMounted(() => {
     contentType: 'markdown',
     editorProps: {
       attributes: {
-        class: 'prose dark:prose-invert max-w-none focus:outline-hidden min-h-full p-8 markdown-body dark:markdown-body-dark',
+        class: 'prose dark:prose-invert looma-reading-area focus:outline-hidden min-h-full p-8 markdown-body dark:markdown-body-dark',
         spellcheck: 'false',
         autocorrect: 'off',
         autocapitalize: 'off',
@@ -1098,7 +1099,7 @@ defineExpose({
 <template>
   <div
     ref="previewContainerRef"
-    class="h-full w-full bg-surface overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar"
+    class="h-full w-full min-w-0 bg-surface overflow-y-auto relative tiptap-preview-container tiptap-editor-wrapper focus-scrollbar"
     :class="{ 'line-numbers-hidden': !props.showLineNumbers }"
     @dragover="handleExternalImageDragOver"
   >
@@ -1239,7 +1240,6 @@ defineExpose({
 
 .tiptap-preview-container .looma-active-line {
   background: var(--editor-active-line-bg);
-  box-shadow: -100vw 0 0 var(--editor-active-line-bg);
 }
 
 /* 行内菜单 "+" 按钮出现时，当前行行号隐藏（断点化占位） */

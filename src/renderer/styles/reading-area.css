@@ -1,0 +1,34 @@
+/* Opt in only the two note-reading surfaces, never help or hover previews.
+   The 800px cap is text width; existing padding/gutters sit outside it. */
+.markdown-body.looma-reading-area {
+  --reading-padding-left: 2rem;
+  --reading-padding-right: 2rem;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: calc(800px + var(--reading-padding-left) + var(--reading-padding-right));
+  margin-inline: auto;
+}
+
+.tiptap-preview-container .looma-reading-area {
+  --reading-padding-left: 3rem;
+}
+
+/* markdown-it has no Tiptap tableWrapper: the table itself must scroll. */
+.looma-reading-area.chunked-markdown table {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.looma-reading-area .tableWrapper {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.looma-reading-area img {
+  max-width: 100%;
+  height: auto;
+}

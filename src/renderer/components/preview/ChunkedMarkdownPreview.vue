@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '@/renderer/styles/reading-area.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, onActivated, onDeactivated, ref, watch } from 'vue'
 import { dispatchEditorFocus, getRenderedEditorFocus } from '@/shared/utils/editor-focus'
 import 'github-markdown-css/github-markdown-light.css'
@@ -241,8 +242,8 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="containerRef" class="h-full w-full overflow-y-auto bg-surface focus-scrollbar">
-    <div class="markdown-body chunked-markdown mx-auto max-w-none p-8">
+  <div ref="containerRef" class="h-full w-full min-w-0 overflow-y-auto bg-surface focus-scrollbar">
+    <div class="markdown-body chunked-markdown looma-reading-area p-8">
       <section
         v-for="(html, index) in renderedChunks"
         :key="index"

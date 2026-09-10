@@ -35,6 +35,7 @@ const emit = defineEmits<{
 const settingsStore = useSettingsStore()
 const platform = window.electronAPI.platform
 const menuVisible = ref(false)
+const menuContainerRef = ref<HTMLElement | null>(null)
 const panelVisible = ref(false)
 const buttonPosition = ref({ top: 0, left: 0 })
 const panelPosition = ref({ top: 0, left: 0 })
@@ -43,6 +44,7 @@ const tablePickerVisible = ref(false)
 const menuMode = ref<'default' | 'table'>('default')
 let isDisposed = false
 let blurTimer: ReturnType<typeof setTimeout> | null = null
+let resizeObserver: ResizeObserver | null = null
 // 当前被隐藏的行号元素（"+ 按钮断点化"：按钮出现时该行行号消失）
 let hiddenLineNumberEl: HTMLElement | null = null
 
@@ -136,21 +138,21 @@ const updatePosition = () => {
         }
         lineNumberEl?.classList.add('looma-line-number-hidden')
 
-        if (lineNumberRect) {
-          buttonPosition.value = getOverlayPositionAtLineNumber({
-            lineNumberRect,
-            containerRect,
-            scrollTop: container.scrollTop,
-            scrollLeft: container.scrollLeft,
-            overlaySize: 24,
-          })
-        } else {
-          // 无行号元素（表格单元格/叶子块）：回退到行号栏列中心
-          buttonPosition.value = {
-            top: rect.top - containerRect.top + container.scrollTop + (rect.height / 2) - 12,
-            left: 26 - 12,
-          }
+        // display:none anchors (e.g. table cells) have no usable geometry.
+        const rootFontSize = parseFloat(getComputedStyle(document.documentElement).fontSize)
+        const gutterRect = lineNumberRect && lineNumberRect.width > 0 ? lineNumberRect : {
+          top: rect.top,
+          height: rect.height,
+          left: editorDom.getBoundingClientRect().left + 0.5 * rootFontSize,
+          width: 2.25 * rootFontSize,
         }
+        buttonPosition.value = getOverlayPositionAtLineNumber({
+          lineNumberRect: gutterRect,
+          containerRect,
+          scrollTop: container.scrollTop,
+          scrollLeft: container.scrollLeft,
+          overlaySize: 24,
+        })
       } else {
         const editorRect = editorDom.getBoundingClientRect()
         buttonPosition.value = {
@@ -411,7 +413,24 @@ const handleTableSizeSelect = (size: { rows: number; cols: number }) => {
   editor.commands.focus()
 }
 
+// Panels use a separate selection anchor. Close them on reflow rather than
+// leave stale coordinates or steal focus to reopen them at another location.
+const handleLayoutResize = () => {
+  if (isDisposed) return
+  panelVisible.value = false
+  tablePickerVisible.value = false
+  updatePosition()
+}
+
 onMounted(() => {
+  const editorDom = props.editor.view.dom
+  resizeObserver = new ResizeObserver(handleLayoutResize)
+  resizeObserver.observe(editorDom)
+  // Once text reaches its cap only the outer pane resizes; its gutter still moves.
+  // EditorContent attaches editorDom asynchronously; our own root is already mounted.
+  const container = menuContainerRef.value?.closest('.overflow-y-auto')
+  if (container) resizeObserver.observe(container)
+
   props.editor.on('selectionUpdate', updatePosition)
   props.editor.on('update', updatePosition)
   props.editor.on('focus', updatePosition)
@@ -436,6 +455,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   isDisposed = true
+  resizeObserver?.disconnect()
+  resizeObserver = null
   restoreLineNumbers(hiddenLineNumberEl)
   hiddenLineNumberEl = null
   if (blurTimer) {
@@ -459,7 +480,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div>
+  <div ref="menuContainerRef">
     <!-- "+" Button -->
     <button
       v-if="menuVisible"

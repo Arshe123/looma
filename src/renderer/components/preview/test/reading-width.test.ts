@@ -55,7 +55,13 @@ describe('preview reading width', () => {
     expect(preview('TiptapPreview')).not.toContain('max-w-none')
     expect(preview('ChunkedMarkdownPreview')).not.toContain('max-w-none')
     expect(read('src/renderer/components/editor/Editor.vue')).not.toContain('looma-reading-area')
-    expect(read('src/renderer/components/help/HelpPage.vue')).not.toContain('looma-reading-area')
+    const help = read('src/renderer/components/help/HelpPage.vue')
+    expect(help).toContain("import '@/renderer/styles/reading-area.css'")
+    expect(help).toContain('help-markdown markdown-body looma-reading-area')
+    expect(help).not.toContain('max-w-3xl')
+    expect(declarations('.markdown-body.looma-reading-area.help-markdown')).toMatchObject({
+      '--reading-padding-left': '2.5rem', '--reading-padding-right': '2.5rem',
+    })
     expect(preview('NoteLinkPreview')).not.toContain('looma-reading-area')
   })
 })

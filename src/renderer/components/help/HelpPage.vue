@@ -4,6 +4,7 @@ import { renderMarkdown } from '@/shared/utils/markdown-renderer'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import helpMarkdown from './help.md?raw'
 import 'github-markdown-css/github-markdown-light.css'
+import '@/renderer/styles/reading-area.css'
 
 const html = computed(() => renderMarkdown(helpMarkdown))
 const articleRef = ref<HTMLElement | null>(null)
@@ -33,7 +34,7 @@ const handleContentClick = (event: MouseEvent) => {
   <main class="flex-1 min-h-0 overflow-y-auto bg-surface">
     <article
       ref="articleRef"
-      class="help-markdown markdown-body w-full max-w-3xl mx-auto px-10 py-9"
+      class="help-markdown markdown-body looma-reading-area px-10 py-9"
       @click="handleContentClick"
       v-html="html"
     />

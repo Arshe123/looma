@@ -17,6 +17,7 @@ const props = defineProps<{
 
 const workspaceStore = useWorkspaceStore()
 const userMenuOpen = ref(false)
+const userEntryRef = ref<HTMLButtonElement | null>(null)
 const updateModalOpen = ref(false)
 const appVersion = ref('0.0.0')
 const toolbarWidth = SIDEBAR_TOOLBAR_WIDTH
@@ -74,10 +75,12 @@ onMounted(() => {
 
   window.addEventListener('pointerdown', onPointerDown)
   window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('resize', closeUserMenu)
 
   cleanupUserEntry = () => {
     window.removeEventListener('pointerdown', onPointerDown)
     window.removeEventListener('keydown', onKeyDown)
+    window.removeEventListener('resize', closeUserMenu)
   }
 
   // 获取当前应用版本号
@@ -153,6 +156,7 @@ onUnmounted(() => {
       <div class="flex flex-col items-center gap-2">
         <div class="relative" data-user-entry>
           <button
+            ref="userEntryRef"
             class="p-2 rounded-md text-text-muted hover:bg-accent-soft hover:text-text-main cursor-pointer"
             :class="{ 'bg-accent-soft text-text-main': userMenuOpen }"
             title="更多"
@@ -163,6 +167,7 @@ onUnmounted(() => {
 
           <UserMenu
             :open="userMenuOpen"
+            :anchor="userEntryRef"
             @checkUpdate="openUpdateModal"
             @help="openHelpPage"
             @close="closeUserMenu"

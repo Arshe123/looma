@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Code2, Cpu } from 'lucide-vue-next'
+import { Code2, Cpu, Palette } from 'lucide-vue-next'
 import { useWorkspaceStore, type SettingsSectionId } from '../stores/workspace'
 import AiSettings from './settings/AiSettings.vue'
+import AppearanceSettings from './settings/AppearanceSettings.vue'
 import EditorSettings from './settings/EditorSettings.vue'
 import SettingsSectionNav from './settings/SettingsSectionNav.vue'
 
@@ -10,13 +11,12 @@ const workspaceStore = useWorkspaceStore()
 const activeSection = ref<SettingsSectionId>(workspaceStore.activeSettingsSection)
 
 const settingSections = [
-  // {
-  //   id: 'appearance',
-  //   title: '主题',
-  //   description: '管理界面主题与窗口显示偏好。',
-  //   icon: Monitor,
-  //   items: ['跟随系统主题', '紧凑侧边栏', '减少界面动效'],
-  // },
+  {
+    id: 'appearance',
+    title: '主题',
+    description: '选择主题配色与日间、夜间模式。',
+    icon: Palette,
+  },
   {
     id: 'editor',
     title: '编辑器',
@@ -37,9 +37,7 @@ const currentSection = computed(() => {
 
 const isEditorSection = computed(() => currentSection.value.id === 'editor')
 const isAiSection = computed(() => currentSection.value.id === 'ai')
-// const appearanceItems = computed(() =>
-//   currentSection.value.id === 'appearance' ? currentSection.value.items : [],
-// )
+const isAppearanceSection = computed(() => currentSection.value.id === 'appearance')
 
 watch(() => workspaceStore.activeSettingsSection, (section) => {
   activeSection.value = section
@@ -67,9 +65,9 @@ watch(activeSection, (section) => {
             class="min-h-0 flex-1 overflow-auto p-5"
             data-testid="settings-section-scroll-body"
           >
-            <EditorSettings v-if="isEditorSection" />
+            <AppearanceSettings v-if="isAppearanceSection" />
+            <EditorSettings v-else-if="isEditorSection" />
             <AiSettings v-else-if="isAiSection" />
-            <!-- <AppearanceSettings v-else :items="appearanceItems" /> -->
           </div>
         </section>
       </div>

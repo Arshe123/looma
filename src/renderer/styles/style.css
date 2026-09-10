@@ -67,6 +67,95 @@
   --scrollbar-thumb-hover: #6f7885;
 }
 
+/* Shared by the application root and the settings palette previews. */
+[data-palette="graphite"][data-theme="light"] {
+  --bg: #ebedef;
+  --panel: #f2f3f5;
+  --panel-soft: #e5e7eb;
+  --surface: #fafafa;
+  --text-main: #30343b;
+  --text-muted: #686e78;
+  --text-subtle: #828894;
+  --border-soft: #d7dbe1;
+  --accent: #596579;
+  --accent-hover: #465164;
+  --accent-contrast: #ffffff;
+  --accent-soft: #dfe4ed;
+  --editor-active-line-bg: rgb(89 101 121 / 0.06);
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warning: #d97706;
+  --overlay: rgb(15 23 42 / 0.38);
+  --scrollbar-thumb: #cbd0d8;
+  --scrollbar-thumb-hover: #9ea6b3;
+}
+
+[data-palette="graphite"][data-theme="dark"] {
+  --bg: #202226;
+  --panel: #282b30;
+  --panel-soft: #353941;
+  --surface: #2d3036;
+  --text-main: #e3e5e9;
+  --text-muted: #adb3bd;
+  --text-subtle: #9199a6;
+  --border-soft: #424750;
+  --accent: #b8c5db;
+  --accent-hover: #cbd6e8;
+  --accent-contrast: #202226;
+  --accent-soft: #404b5e;
+  --editor-active-line-bg: rgb(255 255 255 / 0.04);
+  --success: #63c174;
+  --danger: #ff7373;
+  --warning: #f3b35d;
+  --overlay: rgb(0 0 0 / 0.44);
+  --scrollbar-thumb: #555d68;
+  --scrollbar-thumb-hover: #6f7885;
+}
+
+[data-palette="ocean"][data-theme="light"] {
+  --bg: #e7eff3;
+  --panel: #eff5f8;
+  --panel-soft: #dfebf1;
+  --surface: #f8fcfd;
+  --text-main: #2c424f;
+  --text-muted: #617d8d;
+  --text-subtle: #7d95a3;
+  --border-soft: #cddfe8;
+  --accent: #286c92;
+  --accent-hover: #205775;
+  --accent-contrast: #ffffff;
+  --accent-soft: #d7eaf4;
+  --editor-active-line-bg: rgb(40 108 146 / 0.06);
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warning: #d97706;
+  --overlay: rgb(15 23 42 / 0.38);
+  --scrollbar-thumb: #bdd3df;
+  --scrollbar-thumb-hover: #91b2c4;
+}
+
+[data-palette="ocean"][data-theme="dark"] {
+  --bg: #1b2730;
+  --panel: #23313d;
+  --panel-soft: #304353;
+  --surface: #293946;
+  --text-main: #dfebf2;
+  --text-muted: #a6bece;
+  --text-subtle: #87a4b7;
+  --border-soft: #3b5365;
+  --accent: #8fc6e7;
+  --accent-hover: #acdaf3;
+  --accent-contrast: #1b2730;
+  --accent-soft: #354f64;
+  --editor-active-line-bg: rgb(143 198 231 / 0.06);
+  --success: #63c174;
+  --danger: #ff7373;
+  --warning: #f3b35d;
+  --overlay: rgb(0 0 0 / 0.44);
+  --scrollbar-thumb: #4c677a;
+  --scrollbar-thumb-hover: #65879d;
+}
+
 :root {
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica,

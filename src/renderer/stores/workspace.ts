@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { DEFAULT_THEME_PALETTE, getStoredThemePalette, normalizeThemePalette, THEME_PALETTE_STORAGE_KEY, type ThemePalette } from '../theme'
 import {
   DEFAULT_ACTIVE_SIDEBAR_PANEL,
   resolveActiveSidebarPanel,
@@ -399,6 +400,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     fileCreationTimes: {} as Record<string, number>,
     trashedFileCreationTimes: {} as Record<string, { restoreTo: string; entries: Record<string, number> }>,
     theme: getStoredTheme() as ThemeName,
+    themePalette: getStoredThemePalette(),
     resolvedTheme: resolveThemeName(getStoredTheme()) as ResolvedThemeName,
     hasElectronWindowAPI: false as boolean,
     watchedWorkspaceId: null as string | null,
@@ -569,12 +571,22 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (typeof localStorage !== 'undefined') localStorage.setItem('theme', this.theme)
       this.applyTheme()
     },
+    setThemePalette(palette: ThemePalette) {
+      this.themePalette = normalizeThemePalette(palette)
+      if (typeof localStorage !== 'undefined') localStorage.setItem(THEME_PALETTE_STORAGE_KEY, this.themePalette)
+      this.applyTheme()
+    },
+    restoreDefaultTheme() {
+      this.setThemePalette(DEFAULT_THEME_PALETTE)
+      this.setTheme('system')
+    },
     applyTheme() {
       const nextResolved = resolveThemeName(this.theme)
       this.resolvedTheme = nextResolved
 
       if (typeof document !== 'undefined') {
         document.documentElement.dataset.theme = nextResolved
+        document.documentElement.dataset.palette = this.themePalette
         document.documentElement.classList.toggle('dark', nextResolved === 'dark')
       }
 

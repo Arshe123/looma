@@ -1361,6 +1361,12 @@ defineExpose({
   user-select: none;
 }
 
+.tiptap:focus-within h1.looma-active-line::after,
+.tiptap:focus-within h2.looma-active-line::after,
+.tiptap:focus-within h3.looma-active-line::after,
+.tiptap:focus-within h4.looma-active-line::after,
+.tiptap:focus-within h5.looma-active-line::after,
+.tiptap:focus-within h6.looma-active-line::after,
 .tiptap h1:hover::after,
 .tiptap h2:hover::after,
 .tiptap h3:hover::after,

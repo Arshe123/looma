@@ -86,7 +86,7 @@ const handleContentClick = (event: MouseEvent) => {
   border-radius: 6px;
   color: var(--text-main);
   background: var(--panel-soft);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--font-code);
   font-size: 0.92em;
   line-height: 1.55;
 }

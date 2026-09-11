@@ -462,7 +462,7 @@ onBeforeUnmount(() => {
   outline: 0;
   color: var(--text-main);
   background: transparent;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--font-code);
   font-size: 0.78rem;
   cursor: text;
 }

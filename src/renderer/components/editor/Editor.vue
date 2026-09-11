@@ -130,7 +130,8 @@ const getCustomStyleExtension = () => {
     '&': { height: '100%', fontSize: `${props.fontSize}px`, backgroundColor: 'var(--surface)', color: 'var(--text-main)' },
     '.cm-scroller': {
       overflow: 'auto',
-      fontFamily: 'Consolas, Monaco, monospace',
+      fontFamily: 'var(--font-code)',
+      fontVariantLigatures: 'none',
       scrollbarWidth: 'thin',
       scrollbarColor: 'transparent transparent',
       backgroundColor: 'var(--surface)',
@@ -166,7 +167,7 @@ const getCustomStyleExtension = () => {
     '.cm-lineNumbers .cm-gutterElement': {
       padding: '0 10px 0 8px',
       fontSize: `${props.fontSize - 1}px`,
-      fontFamily: 'Consolas, Monaco, monospace',
+      fontFamily: 'var(--font-code)',
     },
     '.cm-activeLineGutter': {
       color: 'var(--text-main)',

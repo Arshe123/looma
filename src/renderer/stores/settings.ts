@@ -17,6 +17,7 @@ import {
   type AppShortcutId,
 } from '@/shared/utils/app-shortcuts'
 import { normalizeRichTextZoom } from '@/shared/utils/rich-text-zoom'
+import { normalizeFontPreset, type FontPreset } from '@/shared/utils/font-presets'
 
 type NamedEditorShortcut =
   | 'headingLevelUp'
@@ -36,6 +37,7 @@ export const useSettingsStore = defineStore('settings', {
   }),
 
   getters: {
+    fontPreset: (state) => state.settings.appearance.fontPreset,
     inlineMenuItems: (state) => state.settings.inlineMenu.items,
     showLineNumbers: (state) => state.settings.editor.showLineNumbers,
     richTextZoom: (state) => state.settings.editor.richTextZoom,
@@ -45,6 +47,11 @@ export const useSettingsStore = defineStore('settings', {
   },
 
   actions: {
+    async setFontPreset(preset: FontPreset) {
+      this.settings.appearance.fontPreset = normalizeFontPreset(preset)
+      await this.persist()
+    },
+
     async load() {
       try {
         const result = await window.electronAPI?.appSettings?.get?.()

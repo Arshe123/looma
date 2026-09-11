@@ -10,6 +10,7 @@ import {
   type AppShortcutSettings,
 } from './app-shortcuts'
 import { DEFAULT_RICH_TEXT_ZOOM, normalizeRichTextZoom } from './rich-text-zoom'
+import { DEFAULT_FONT_PRESET, normalizeFontPreset, type FontPreset } from './font-presets'
 
 export type AiProvider = 'ollama' | 'openai' | 'deepseek' | 'qwen' | 'custom'
 
@@ -34,6 +35,9 @@ export type ChunkingStrategy = 'fixed' | 'markdown' | 'semantic' | 'parent_child
 export type ConversationContextStrategy = 'sliding_window' | 'summary'
 
 export interface AppSettings {
+  appearance: {
+    fontPreset: FontPreset
+  }
   inlineMenu: {
     items: string[]
     version: number
@@ -186,6 +190,7 @@ const createDefaultAppSettings = (): AppSettings => {
   const embeddingProviderConfigs = defaultEmbeddingProviderConfigs()
 
   return {
+    appearance: { fontPreset: DEFAULT_FONT_PRESET },
     inlineMenu: {
       items: defaultInlineMenuItems(),
       version: INLINE_MENU_VERSION,
@@ -388,6 +393,9 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
   embeddingProviderConfigs[embeddingProvider] = activeEmbeddingConfig
 
   return {
+    appearance: {
+      fontPreset: normalizeFontPreset(asRecord((value as { appearance?: unknown }).appearance).fontPreset),
+    },
     inlineMenu: {
       items: normalizedInlineMenuItems,
       version: INLINE_MENU_VERSION,

@@ -13,8 +13,8 @@ const activeSection = ref<SettingsSectionId>(workspaceStore.activeSettingsSectio
 const settingSections = [
   {
     id: 'appearance',
-    title: '主题',
-    description: '选择主题配色与日间、夜间模式。',
+    title: '外观',
+    description: '选择主题配色、外观模式与字体搭配。',
     icon: Palette,
   },
   {

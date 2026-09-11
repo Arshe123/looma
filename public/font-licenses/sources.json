@@ -1,0 +1,56 @@
+[
+  {
+    "file": "sans-cn.woff2",
+    "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/release/Variable/WOFF2/TTF/Subset/SourceHanSansCN-VF.ttf.woff2",
+    "bytes": 7711988,
+    "sha256": "f971e3bff46f76b49e1d5510556c2297c618ec4b491a295a4e741cdd38257799"
+  },
+  {
+    "file": "serif-cn.woff2",
+    "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-serif/release/Variable/WOFF2/TTF/Subset/SourceHanSerifCN-VF.ttf.woff2",
+    "bytes": 11035128,
+    "sha256": "556749ba783b148fa1f48644e8883e5b9351f01abd0d1faad0ba24a21185e76a"
+  },
+  {
+    "file": "wenkai.ttf",
+    "url": "https://raw.githubusercontent.com/lxgw/LxgwWenKai/main/fonts/TTF/LXGWWenKai-Regular.ttf",
+    "bytes": 25575676,
+    "sha256": "39ad71264b588165b469e35e6afb162a378dacd1f95348160240ba9038ac3009"
+  },
+  {
+    "file": "wenkai-medium.ttf",
+    "url": "https://raw.githubusercontent.com/lxgw/LxgwWenKai/main/fonts/TTF/LXGWWenKai-Medium.ttf",
+    "bytes": 25379848,
+    "sha256": "d4bdeb38a39151d74d084cba5090f8cb7d20bf83eedb78c35939ae70b9f4e3f6"
+  },
+  {
+    "file": "mono.woff2",
+    "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/master/fonts/webfonts/JetBrainsMono%5Bwght%5D.woff2",
+    "bytes": 113672,
+    "sha256": "31ec365b93e4bad6f202ce23352a56d01ca4462b2afc782ed2cf6fa42ca9ac0e"
+  },
+  {
+    "file": "sans-LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/master/LICENSE.txt",
+    "bytes": 4463,
+    "sha256": "fcac737e761ec63dbfbdce11030a1780161920d80315edba9c8beff1c2bac5a2"
+  },
+  {
+    "file": "serif-LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-serif/master/LICENSE.txt",
+    "bytes": 4463,
+    "sha256": "9ff5bb567e1b92c801fc1069e5fbf992ff8efccacb9db94e5959a5b3ba9bb903"
+  },
+  {
+    "file": "wenkai-OFL.txt",
+    "url": "https://raw.githubusercontent.com/lxgw/LxgwWenKai/main/OFL.txt",
+    "bytes": 5171,
+    "sha256": "1a25e35da1031c6c3436fde545bb9cb5aca954e9873afe510c834b8b79bd21a0"
+  },
+  {
+    "file": "mono-OFL.txt",
+    "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/master/OFL.txt",
+    "bytes": 4399,
+    "sha256": "a76abf002c49097d146e86740a3105a5d00450b1592e820a1109a8c5680cd697"
+  }
+]

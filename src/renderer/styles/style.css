@@ -1,8 +1,11 @@
 @import "tailwindcss";
+@import "./fonts.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
   --color-bg: var(--bg);
   --color-panel: var(--panel);
   --color-panel-soft: var(--panel-soft);
@@ -157,9 +160,7 @@
 }
 
 :root {
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica,
-    Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  font-family: var(--font-ui);
   line-height: 1.5;
   font-weight: 400;
   font-synthesis: none;

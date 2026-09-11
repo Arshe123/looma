@@ -1,0 +1,71 @@
+/* Official, unmodified fonts. Redistribution notices: public/font-licenses/. */
+/* Use Adobe's CN builds: the full SC WOFF2 builds fail decoding in Electron 28. */
+@font-face {
+  font-family: 'LoomaSans';
+  src: url('../assets/fonts/sans-cn.woff2') format('woff2');
+  font-weight: 250 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'LoomaSerif';
+  src: url('../assets/fonts/serif-cn.woff2') format('woff2');
+  font-weight: 200 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'LoomaWenkai';
+  src: url('../assets/fonts/wenkai.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+
+/* Medium is the supplied emphasis face, not a synthetic bold. */
+@font-face {
+  font-family: 'LoomaWenkai';
+  src: url('../assets/fonts/wenkai-medium.ttf') format('truetype');
+  font-weight: 500 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'LoomaMono';
+  src: url('../assets/fonts/mono.woff2') format('woff2');
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+:root {
+  --font-ui: 'LoomaSans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  --font-code: 'LoomaMono', 'LoomaSans', ui-monospace, monospace;
+  --font-body: 'LoomaWenkai', var(--font-ui);
+}
+
+[data-font-preset="simple"] {
+  --font-body: var(--font-ui);
+}
+
+[data-font-preset="literary"] {
+  --font-body: 'LoomaSerif', var(--font-ui);
+}
+
+[data-font-preset="handwritten"] {
+  --font-body: 'LoomaWenkai', var(--font-ui);
+}
+
+/* Specificity must exceed github-markdown-css, even when it loads lazily. */
+.markdown-body.markdown-body {
+  font-family: var(--font-body);
+}
+
+.markdown-body.markdown-body :is(pre, code, kbd, samp),
+.ai-markdown :is(pre, code, kbd, samp) {
+  font-family: var(--font-code);
+  font-variant-ligatures: none;
+}
+
+.markdown-body :is(button, select),
+.ai-markdown :is(button, select) {
+  font-family: var(--font-ui);
+}

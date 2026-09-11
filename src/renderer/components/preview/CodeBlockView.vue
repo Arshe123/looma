@@ -184,7 +184,7 @@ onBeforeUnmount(() => {
   border-radius: 0;
   color: inherit;
   background: transparent;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--font-code);
   font-size: 0.92em;
   line-height: 1.55;
   white-space: pre;

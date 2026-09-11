@@ -86,7 +86,8 @@ onBeforeUnmount(() => {
 .ai-markdown {
   color: inherit;
   background: transparent;
-  font-family: inherit;
+  font-family: var(--font-body);
+  font-synthesis: style;
   font-size: inherit;
   line-height: inherit;
   user-select: text;
@@ -179,7 +180,7 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   background: var(--panel-soft);
   padding: 0.12em 0.32em;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--font-code);
   font-size: 0.9em;
 }
 
@@ -282,7 +283,7 @@ onBeforeUnmount(() => {
   border-radius: 0;
   color: inherit;
   background: transparent;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--font-code);
   font-size: 0.92em;
   line-height: 1.55;
   white-space: pre;

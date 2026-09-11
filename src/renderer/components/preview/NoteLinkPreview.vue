@@ -353,7 +353,7 @@ onBeforeUnmount(() => {
 
 <style>
 .looma-note-preview {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: var(--font-ui);
 }
 
 /* ---- 引用预览行号 gutter ---- */
@@ -377,7 +377,7 @@ onBeforeUnmount(() => {
   left: 0.25rem;
   right: 0.4rem;
   text-align: right;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--font-code);
   font-size: 10.5px;
   /* 与正文 13px * 1.6 行高一致，保证行号与文本行垂直对齐 */
   line-height: 20.8px;

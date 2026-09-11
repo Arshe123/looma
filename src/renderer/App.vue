@@ -7,6 +7,7 @@ import OutlinePanel from '@/renderer/components/OutlinePanel.vue';
 import ThemeSwitcher from '@/renderer/components/ThemeSwitcher.vue';
 import BreadcrumbNavigation from '@/renderer/components/BreadcrumbNavigation.vue';
 import { useSettingsStore } from '@/renderer/stores/settings';
+import { watchFontPreset } from '@/renderer/utils/font-preset';
 import { useOllamaStore } from '@/renderer/stores/ollama';
 import { useDownloadsStore } from '@/renderer/stores/downloads';
 import TopBar from '@/renderer/components/TopBar.vue';
@@ -29,6 +30,7 @@ import { matchesAppShortcut } from '@/shared/utils/app-shortcuts';
 
 const workspaceStore = useWorkspaceStore();
 const settingsStore = useSettingsStore();
+watchFontPreset(() => settingsStore.fontPreset)
 const ollamaStore = useOllamaStore();
 const downloadsStore = useDownloadsStore();
 const platform = window.electronAPI.platform

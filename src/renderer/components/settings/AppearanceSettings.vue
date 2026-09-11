@@ -2,6 +2,7 @@
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { THEME_PALETTES } from '@/renderer/theme'
 import ThemeSwitcher from '../ThemeSwitcher.vue'
+import FontSettings from './FontSettings.vue'
 
 const workspaceStore = useWorkspaceStore()
 </script>
@@ -9,7 +10,7 @@ const workspaceStore = useWorkspaceStore()
 <template>
   <div class="space-y-6 text-text-main">
     <header>
-      <h2 class="text-base font-semibold">主题</h2>
+      <h2 class="text-base font-semibold">外观</h2>
       <p class="mt-1 text-sm text-text-muted">选择喜欢的配色，即时生效并自动记住，不会修改笔记内容。</p>
     </header>
     <section class="space-y-3" aria-label="外观模式">
@@ -47,6 +48,7 @@ const workspaceStore = useWorkspaceStore()
     </section>
     <button type="button" class="cursor-pointer rounded-md border border-border-soft px-3 py-2 text-sm hover:bg-panel-soft" @click="workspaceStore.restoreDefaultTheme()">恢复默认主题</button>
     <p class="text-xs text-text-muted">默认使用暮纸配色并跟随系统。</p>
+    <FontSettings />
   </div>
 </template>
 

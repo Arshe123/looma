@@ -1149,7 +1149,7 @@ defineExpose({
 
 <style>
 .tiptap-preview-container {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: var(--font-ui);
 }
 
 .looma-link-icon {
@@ -1215,7 +1215,7 @@ defineExpose({
   left: 0.5rem;
   min-width: 2.25rem;
   text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--font-code);
   font-size: 0.72rem;
   line-height: inherit;
   color: var(--text-subtle);
@@ -1263,7 +1263,7 @@ defineExpose({
   min-width: 1.5rem;
 }
 .markdown-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: var(--font-body);
   line-height: 1.6;
   color: var(--text-main);
   background-color: transparent !important;
@@ -1305,7 +1305,7 @@ defineExpose({
   border-radius: 6px;
   color: var(--text-main);
   background: var(--panel-soft);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--font-code);
   font-size: 0.92em;
   line-height: 1.55;
 }

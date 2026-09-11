@@ -173,6 +173,11 @@
   font-synthesis: style;
 }
 
+.markdown-body input[type="checkbox"],
+.ai-markdown input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
 .rich-text-zoom-scope .markdown-body {
   font-size: var(--rich-text-font-size, 1rem);
 }

@@ -10,6 +10,10 @@ const tokens = (selector: string) => {
 }
 
 describe('built-in palette colors', () => {
+  it('uses the current palette accent for Markdown task checkboxes', () => {
+    expect(css).toMatch(/\.markdown-body input\[type="checkbox"\],\s*\.ai-markdown input\[type="checkbox"\]\s*\{\s*accent-color: var\(--accent\);\s*\}/)
+  })
+
   it.each(['light', 'dark'])('provides every default token for every %s palette', (mode) => {
     const defaults = tokens(`[data-theme="${mode}"]`)
     for (const palette of THEME_PALETTES.filter((item) => item.id !== 'paper')) {

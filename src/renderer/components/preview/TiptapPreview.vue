@@ -42,6 +42,7 @@ import {
   setScrollRatio,
 } from '@/shared/utils/editor-scroll-sync'
 import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
+import { getWritingBottomMargin } from '@/shared/utils/editor-writing-scroll'
 import { createMarkdownSerializationGate } from '@/shared/utils/markdown-serialization-gate'
 import { createEditorSaveGate } from '@/shared/utils/editor-save-gate'
 import { isPrimaryModifierPressed } from '@/shared/utils/platform-shortcuts'
@@ -950,6 +951,19 @@ onMounted(() => {
     content: prepareMarkdownForRichText(props.content),
     contentType: 'markdown',
     editorProps: {
+      // Padding makes room to scroll; threshold AND margin make typing use it.
+      scrollThreshold: {
+        top: 0, right: 0, left: 0,
+        get bottom() {
+          return getWritingBottomMargin(previewContainerRef.value, editor.value?.view.dom ?? null)
+        },
+      },
+      scrollMargin: {
+        top: 5, right: 5, left: 5,
+        get bottom() {
+          return getWritingBottomMargin(previewContainerRef.value, editor.value?.view.dom ?? null)
+        },
+      },
       attributes: {
         class: 'prose dark:prose-invert looma-reading-area focus:outline-hidden min-h-full p-8 markdown-body dark:markdown-body-dark',
         spellcheck: 'false',

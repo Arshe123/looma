@@ -1,0 +1,34 @@
+<!doctype html><html><body style="margin:0"><div id="app" style="height:600px"></div><script type="module">
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import { EditorView } from '@codemirror/view'
+import Preview from '/src/renderer/components/preview/TiptapPreview.vue'
+import Source from '/src/renderer/components/editor/Editor.vue'
+import '/src/renderer/styles/style.css'
+// Isolated in-memory document: never load or save user notes.
+window.electronAPI = { platform: 'darwin' }
+const source = new URLSearchParams(location.search).has('source')
+const content = Array.from({length:50}, (_,i)=>`这是第 ${i} 段长笔记，用于验证书写位置。`).join('\n\n')
+createApp(source ? Source : Preview, source ? { initialContent:content, filePath:'' } : {content}).use(createPinia()).mount('#app')
+window.ready = () => source ? !!document.querySelector('.cm-editor') : !!document.querySelector('.tiptap')?.editor
+window.focusEnd = () => {
+ if (source) {
+  window.e = EditorView.findFromDOM(document.querySelector('.cm-editor'))
+  e.focus(); e.dispatch({selection:{anchor:e.state.doc.length},scrollIntoView:true})
+ } else {
+  window.e = document.querySelector('.tiptap').editor
+  e.commands.focus('end')
+ }
+}
+window.measure = () => {
+ const pane = source ? e.scrollDOM : document.querySelector('.tiptap-preview-container')
+ const content = source ? e.contentDOM : e.view.dom
+ const coords = source ? e.coordsAtPos(e.state.selection.main.head) : e.view.coordsAtPos(e.state.selection.head)
+ return {gap:pane.getBoundingClientRect().bottom-coords.bottom,padding:parseFloat(getComputedStyle(content).paddingBottom),height:pane.clientHeight,scrollTop:pane.scrollTop,lines:source ? e.state.doc.lines : e.state.doc.childCount}
+}
+window.scrollManually = () => {
+ const pane = source ? e.scrollDOM : document.querySelector('.tiptap-preview-container')
+ pane.scrollTop=100
+ return pane.scrollTop
+}
+</script></body></html>

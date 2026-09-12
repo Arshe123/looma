@@ -16,6 +16,7 @@ import {
   setScrollRatio,
 } from '@/shared/utils/editor-scroll-sync';
 import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
+import { getWritingBottomMargin } from '@/shared/utils/editor-writing-scroll'
 import { getDroppedFilePaths, isSupportedDroppedImagePath } from '@/shared/utils/external-file-drop'
 import { formatMarkdownImage } from '@/shared/utils/tiptap-image-insertion'
 import EditorDropAlert from './EditorDropAlert.vue'
@@ -340,6 +341,9 @@ const createEditor = () => {
     doc: props.initialContent,
     extensions: [
       basicSetup,
+      EditorView.scrollMargins.of((view) => ({
+        bottom: getWritingBottomMargin(view.scrollDOM, view.contentDOM),
+      })),
       codeFolding({ placeholderDOM: createFoldPlaceholder }),
       keymap.of([indentWithTab]),
       indentUnit.of(EDITOR_INDENT),

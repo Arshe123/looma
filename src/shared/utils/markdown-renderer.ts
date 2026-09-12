@@ -180,13 +180,17 @@ markdown.renderer.rules.fence = (tokens, idx, options, env) => {
       .join('\n')
   }
 
+  const codeBlock = `<pre class="code-block-body"><code class="code-block-content language-${escapedLanguage}">${codeBody}</code></pre>`
+  // 只读文档未接入复制交互时，不生成无样式、不可用的按钮。
+  if (env?.codeBlockCopy === false) return codeBlock
+
   return [
     '<div class="code-block-shell">',
     `<button type="button" class="code-block-floating-copy" aria-label="复制 ${escapedLanguage} 代码" data-language="${escapedLanguage}">`,
     `<span class="code-block-copy-language">${escapedLanguage}</span>`,
     '<span class="code-block-copy-action">点击复制</span>',
     '</button>',
-    `<pre class="code-block-body"><code class="code-block-content language-${escapedLanguage}">${codeBody}</code></pre>`,
+    codeBlock,
     '</div>',
   ].join('')
 }
@@ -240,7 +244,8 @@ markdown.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   return /^https?:/i.test(href) ? `${openTag}${LINK_ICON}` : openTag
 }
 
-export const renderMarkdown = (content: string) => markdown.render(content || '')
+export const renderMarkdown = (content: string, options: { codeBlockCopy?: boolean } = {}) =>
+  markdown.render(content || '', options)
 
 /**
  * 渲染 markdown 并携带源码行号信息（data-line 属性）。

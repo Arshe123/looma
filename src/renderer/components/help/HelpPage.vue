@@ -6,7 +6,7 @@ import helpMarkdown from './help.md?raw'
 import 'github-markdown-css/github-markdown-light.css'
 import '@/renderer/styles/reading-area.css'
 
-const html = computed(() => renderMarkdown(helpMarkdown))
+const html = computed(() => renderMarkdown(helpMarkdown, { codeBlockCopy: false }))
 const articleRef = ref<HTMLElement | null>(null)
 
 const scrollToHeading = (target: MarkdownOutlineItem) => {

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>模板预览隔离验收</title></head><body><div id="app"></div>
+<script type="module">
+import { createApp, h, reactive, nextTick } from 'vue'
+import Manager from '/src/renderer/components/templates/NoteTemplateManager.vue'
+import '/src/renderer/styles/style.css'
+const calls = []
+window.electronAPI = { noteTemplates: Object.fromEntries(['list','create','update','remove','instantiate'].map(key => [key, async () => { calls.push(key); throw new Error('预览不应写入'); }])), app: { openExternal: async href => calls.push(href) } }
+Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => calls.push({copy:text}) } })
+const content = '# {{ title }}\n\n**加粗** *中文斜体* ~~删除~~ ==高亮== `==源码==`\n\n> 引用\n\n- 列表\n- [ ] 待办\n- [x] 完成\n\n1. 顺序\n\n| 列一 | 列二 |\n| --- | --- |\n| 内容 | 内容 |\n\n```js\nconst value = "**源码**"\n```\n\n[外部](https://example.com) [内部](note.md)\n\n![本地](./assets/example.png){width=60%}\n\n<script>alert(1)<\/script>'
+const store = reactive({schemaVersion:1, revision:0, templates:[{ id:'preview-only', name:'隔离验收', fileNameTemplate:'测试', contentTemplate:content, variables:[{id:'title',name:'title',type:'string',value:'预览标题',afterUseExpression:''}]}]})
+createApp({render:()=>h(Manager,{store})}).mount('#app')
+window.testState = { calls, content }
+window.setContent = async value => { const input = document.querySelector('textarea'); input.value=value; input.dispatchEvent(new Event('input',{bubbles:true})); await nextTick() }
+window.nextRender = nextTick
+await nextTick()
+document.querySelector('details').open = true
+window.ready = true
+</script></body></html>

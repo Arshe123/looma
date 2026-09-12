@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ArrowLeft, FilePlus2, Plus, Save, Trash2, X } from 'lucide-vue-next'
+import { renderMarkdown } from '@/shared/utils/markdown-renderer'
+import 'github-markdown-css/github-markdown-light.css'
 import {
   evaluateNoteTemplateExpression,
   normalizeMarkdownFilename,
@@ -176,6 +178,59 @@ const filenamePreview = computed(() => {
   return rendered.ok ? normalizeMarkdownFilename(rendered.value) : rendered
 })
 const contentPreview = computed(() => renderNoteTemplate(draft.contentTemplate, variablesRecord.value, previewNow.value))
+const contentPreviewHtml = computed(() => {
+  if (!contentPreview.value.ok) return ''
+  const html = renderMarkdown(contentPreview.value.value)
+  if (!html.includes('<img ')) return html
+  // A template's contents are inert: no image can request an app-relative URL
+  // before it is replaced. Global templates have no note directory to resolve.
+  const fragment = document.createElement('template')
+  fragment.innerHTML = html
+  for (const image of fragment.content.querySelectorAll('img')) {
+    const src = image.getAttribute('src') || ''
+    if (/^https?:\/\//i.test(src) || /^data:image\/(?:png|gif|jpeg|webp);/i.test(src)) continue
+    image.removeAttribute('src')
+    const placeholder = document.createElement('span')
+    placeholder.className = 'template-image-placeholder'
+    placeholder.textContent = `${image.getAttribute('alt') || '图片'}：相对路径图片将在创建笔记后显示`
+    image.replaceWith(placeholder)
+  }
+  return fragment.innerHTML
+})
+const previewFeedback = ref('')
+watch(contentPreview, () => { previewFeedback.value = '' })
+const handlePreviewClick = async (event: MouseEvent) => {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  const button = target.closest<HTMLButtonElement>('.code-block-floating-copy')
+  const anchor = target.closest<HTMLAnchorElement>('a[href]')
+  if (!button && !anchor) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (button) {
+    const code = button.closest('.code-block-shell')?.querySelector('.code-block-content')
+    if (!code) return
+    try {
+      await navigator.clipboard.writeText(code.textContent || '')
+      previewFeedback.value = '代码已复制'
+    } catch {
+      previewFeedback.value = '复制失败，请重试'
+    }
+    return
+  }
+  const href = anchor?.getAttribute('href') || ''
+  if (/^https?:\/\//i.test(href)) {
+    try {
+      await window.electronAPI.app.openExternal(href)
+    } catch {
+      previewFeedback.value = '打开链接失败，请重试'
+    }
+  } else if (!/^[a-z][a-z\d+.-]*:/i.test(href) && !href.startsWith('//')) {
+    previewFeedback.value = '创建笔记后可打开内部链接'
+  } else {
+    previewFeedback.value = '预览不支持打开此类链接'
+  }
+}
 const filenameError = computed(() => {
   if (!draft.fileNameTemplate.trim()) return '文件名模板不能为空。'
   if (draft.fileNameTemplate.length > 300) return '文件名模板不能超过 300 个字符。'
@@ -372,7 +427,12 @@ watch(() => props.store.revision, () => {
 
           <details class="rounded-xl border border-border-soft bg-panel-soft/45">
             <summary class="cursor-pointer px-4 py-3 text-xs font-semibold text-text-main">内容预览</summary>
-            <pre class="max-h-48 overflow-auto whitespace-pre-wrap border-t border-border-soft px-4 py-3 font-mono text-xs leading-5 text-text-muted">{{ renderResultText(contentPreview) }}</pre>
+            <div class="max-h-48 min-w-0 overflow-auto border-t border-border-soft px-4 py-3">
+              <p v-if="!contentPreview.ok" role="alert" class="text-sm text-danger">{{ renderErrorText(contentPreview) }}</p>
+              <p v-else-if="!contentPreview.value.trim()" class="text-sm text-text-muted">暂无内容</p>
+              <div v-else class="markdown-body template-markdown-preview" @mouseover.stop @mouseout.stop @click.capture="handlePreviewClick" @auxclick.capture="handlePreviewClick" v-html="contentPreviewHtml" />
+            </div>
+            <p v-if="previewFeedback" role="status" class="border-t border-border-soft px-4 py-2 text-xs text-text-muted">{{ previewFeedback }}</p>
           </details>
 
           <section>
@@ -470,3 +530,94 @@ watch(() => props.store.revision, () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.template-markdown-preview {
+  min-width: 0;
+  color: var(--text-main);
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.template-markdown-preview :deep(> :first-child) { margin-top: 0; }
+.template-markdown-preview :deep(> :last-child) { margin-bottom: 0; }
+.template-markdown-preview :deep(h1),
+.template-markdown-preview :deep(h2) { border-bottom-color: var(--border-soft); }
+.template-markdown-preview :deep(ul) { list-style: disc; }
+.template-markdown-preview :deep(ol) { list-style: decimal; }
+.template-markdown-preview :deep(.task-list-item) { list-style: none; }
+.template-markdown-preview :deep(blockquote) {
+  color: var(--text-muted);
+  border-left-color: var(--border-soft);
+  background: var(--panel-soft);
+}
+.template-markdown-preview :deep(code),
+.template-markdown-preview :deep(pre) {
+  font-family: var(--font-code);
+  color: var(--text-main);
+  background: var(--panel-soft);
+}
+.template-markdown-preview :deep(pre) { overflow-x: auto; }
+.template-markdown-preview :deep(pre code) { background: transparent; }
+.template-markdown-preview :deep(.code-block-shell) {
+  position: relative;
+  margin: 1rem 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel-soft);
+}
+.template-markdown-preview :deep(.code-block-body) { margin: 0; padding-top: 2.5rem; }
+.template-markdown-preview :deep(.code-block-floating-copy) {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.5rem;
+  max-width: calc(100% - 1rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  color: var(--text-muted);
+  background: var(--panel);
+  font-size: 11px;
+  cursor: pointer;
+}
+.template-markdown-preview :deep(.code-block-copy-action) { margin-left: 0.5rem; }
+.template-markdown-preview :deep(.code-block-floating-copy:hover) { color: var(--accent); }
+.template-markdown-preview :deep(table) {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.template-markdown-preview :deep(tr) { background: var(--panel); border-color: var(--border-soft); }
+.template-markdown-preview :deep(tr:nth-child(2n)),
+.template-markdown-preview :deep(th) { background: var(--panel-soft); }
+.template-markdown-preview :deep(td),
+.template-markdown-preview :deep(th) { border-color: var(--border-soft); }
+.template-markdown-preview :deep(mark) {
+  background: var(--accent-soft);
+  color: var(--text-main);
+  padding: 0.1em 0.2em;
+  border-radius: 3px;
+}
+.template-markdown-preview :deep(hr) { background: var(--border-soft); }
+.template-markdown-preview :deep(a) { color: var(--accent); }
+.template-markdown-preview :deep(.looma-note-ref),
+.template-markdown-preview :deep(.looma-external-link) { text-decoration: none; border-bottom: 1px solid currentColor; }
+.template-markdown-preview :deep(.looma-note-ref) { border-bottom-style: dotted; }
+.template-markdown-preview :deep(.looma-link-icon) {
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.2em;
+  vertical-align: -0.13em;
+}
+.template-markdown-preview :deep(img) { max-width: 100%; height: auto; background: transparent; }
+.template-markdown-preview :deep(.template-image-placeholder) { color: var(--text-muted); font-size: 0.9em; }
+</style>

@@ -4,7 +4,7 @@
   "author": "arshe",
   "description": "A convenient note app",
   "private": true,
-  "version": "1.4.2",
+  "version": "1.5.0",
   "type": "module",
   "main": "dist-electron/index.js",
   "scripts": {

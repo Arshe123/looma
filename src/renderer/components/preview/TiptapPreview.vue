@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import '@/renderer/styles/reading-area.css'
+import '@/renderer/styles/note-title.css'
 import { shallowRef, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick } from 'vue'
 import { dispatchEditorFocus, getRenderedEditorFocus } from '@/shared/utils/editor-focus'
 import { findChildren } from '@tiptap/core'
@@ -73,6 +74,7 @@ import {
   parseNoteLinkHref,
 } from '@/shared/utils/note-link-ref'
 import { LineNumbers } from '@/shared/utils/tiptap-line-numbers'
+import { NoteTitle } from '@/shared/utils/tiptap-note-title'
 import { LinkIcons } from '@/shared/utils/tiptap-link-icons'
 import { getNoteRefClickIntent } from '@/shared/utils/note-ref-interaction'
 import { ResizableMarkdownImage } from '@/shared/utils/resizable-markdown-image'
@@ -946,6 +948,7 @@ onMounted(() => {
         markedOptions: { gfm: true },
       }),
       LineNumbers,
+      NoteTitle,
       LinkIcons,
     ],
     content: prepareMarkdownForRichText(props.content),
@@ -965,7 +968,7 @@ onMounted(() => {
         },
       },
       attributes: {
-        class: 'prose dark:prose-invert looma-reading-area focus:outline-hidden min-h-full p-8 markdown-body dark:markdown-body-dark',
+        class: 'prose dark:prose-invert looma-reading-area looma-note-body focus:outline-hidden min-h-full p-8 markdown-body dark:markdown-body-dark',
         spellcheck: 'false',
         autocorrect: 'off',
         autocapitalize: 'off',

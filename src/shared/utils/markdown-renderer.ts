@@ -1,6 +1,7 @@
 import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
 import { isInternalNoteHref } from './note-link-ref'
+import { findMarkdownNoteTitle, readMarkdownReadingMinutes, readingTimeLabel } from './note-reading-time'
 
 const markdown = new MarkdownIt({
   html: false,
@@ -251,5 +252,28 @@ export const renderMarkdown = (content: string, options: { codeBlockCopy?: boole
  * 渲染 markdown 并携带源码行号信息（data-line 属性）。
  * lineBase 为内容首行在源文件中的 0 基行号。
  */
-export const renderMarkdownWithLineData = (content: string, lineBase: number) =>
-  markdown.render(content || '', { lineBase })
+export type NoteTitleMetadata = { line: number; minutes: number | null }
+
+/** Determine eligibility once from the whole loaded document, never per chunk. */
+export const getMarkdownNoteTitleMetadata = (content: string, isPartial: boolean): NoteTitleMetadata | null => {
+  const tokens = markdown.parse(content || '', {})
+  const line = findMarkdownNoteTitle(tokens)
+  return line === null ? null : { line, minutes: isPartial ? null : readMarkdownReadingMinutes(tokens) }
+}
+
+export const renderMarkdownWithLineData = (content: string, lineBase: number, noteTitle?: NoteTitleMetadata | null) => {
+  const env = { lineBase }
+  const tokens = markdown.parse(content || '', env)
+  if (noteTitle) {
+    const index = tokens.findIndex(token => token.type === 'heading_open' && token.tag === 'h1'
+      && token.level === 0 && token.map?.[0] === noteTitle.line - lineBase)
+    if (index >= 0) {
+      tokens[index].attrJoin('class', 'looma-note-title')
+      // A renderer-only token: it is never a Markdown/document node or source-line anchor.
+      const meta = new tokens[index].constructor('html_block', '', 0)
+      meta.content = `<div class="looma-note-reading-time">${readingTimeLabel(noteTitle.minutes)}</div>\n`
+      tokens.splice(index + 3, 0, meta)
+    }
+  }
+  return markdown.renderer.render(tokens, markdown.options, env)
+}

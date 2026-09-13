@@ -1,0 +1,48 @@
+<!doctype html><html><body style="margin:0"><div id="app" style="height:700px"></div><script type="module">
+import { createApp, h, reactive, nextTick, ref } from 'vue'
+import { createPinia } from 'pinia'
+import MarkdownEditor from '/src/renderer/components/editor/MarkdownEditor.vue'
+import { useSettingsStore } from '/src/renderer/stores/settings'
+import { getTiptapClipboardCopyText, getTiptapSelectionDocument } from '/src/shared/utils/tiptap-clipboard'
+import { serializeMarkdownAst } from '/src/shared/utils/markdown-rich-text'
+import { NOTE_TITLE_KEY } from '/src/shared/utils/tiptap-note-title'
+import { undoDepth } from '@tiptap/pm/history'
+import { parseMarkdownOutline } from '/src/shared/utils/markdown-outline'
+import '/src/renderer/styles/style.css'
+// No workspace is opened, all content/IPC is isolated in memory.
+window.electronAPI = { platform:'darwin' }
+window.events = { edits:0, updates:[], saves:[], loads:0 }
+const pinia = createPinia()
+window.settings = useSettingsStore(pinia)
+window.props = reactive({filePath:'',relativeFilePath:'fixture.md',content:'# 标题 Title\n\n## Section\n\n正文 body',saveTrigger:0,isPartial:false,isLoading:false,isLoadingMore:false,totalBytes:0,useChunkedPreview:false})
+const component = ref()
+createApp({setup:()=>()=>h(MarkdownEditor,{...props,ref:component,'onUpdate:content':value=>{events.updates.push(value);props.content=value},onSave:value=>events.saves.push(value),onEditPending:()=>events.edits++,onLoadMore:()=>events.loads++})}).use(pinia).mount('#app')
+window.ready = () => !!document.querySelector('.tiptap')?.editor
+window.editor = () => document.querySelector('.tiptap')?.editor
+window.setFixture = async (content, chunked=false, partial=false) => {
+ props.content=content; props.useChunkedPreview=chunked; props.isPartial=partial; await nextTick();
+}
+window.metadata = () => [...document.querySelectorAll('.looma-note-reading-time')].map(el=>el.textContent)
+window.measure = () => {
+ const root=document.querySelector('.looma-note-body'), title=root.querySelector('h1'), meta=root.querySelector('.looma-note-reading-time')
+ if(!title||!meta) return {count:metadata().length}
+ const ts=getComputedStyle(title),ms=getComputedStyle(meta), mr=meta.getBoundingClientRect(),tr=title.getBoundingClientRect()
+ const next=meta.nextElementSibling || meta.parentElement.nextElementSibling?.firstElementChild
+ return {count:metadata().length,font:ts.fontSize,weight:ts.fontWeight,lineHeight:ts.lineHeight,border:ts.borderBottomWidth,metaFont:ms.fontSize,color:ms.color,expectedColor:getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim(),titleGap:mr.top+parseFloat(ms.paddingTop)-tr.bottom,bodyGap:next?next.getBoundingClientRect().top-(mr.bottom-parseFloat(ms.paddingBottom)):null,align:mr.left-tr.left,marker:getComputedStyle(title,'::after').content,markerVisibility:getComputedStyle(title,'::after').visibility,overflow:root.scrollWidth-root.clientWidth}
+}
+window.snapshot = () => {
+ const e=editor();e.commands.selectAll()
+ return {markdown:serializeMarkdownAst(e),html:e.getHTML(),json:e.getJSON(),copy:getTiptapClipboardCopyText(e.state),source:serializeMarkdownAst({getJSON:()=>getTiptapSelectionDocument(e.state),markdown:e.markdown}),history:undoDepth(e.state)}
+}
+window.refreshMetadata = () => {const e=editor();e.view.dispatch(e.state.tr.setMeta(NOTE_TITLE_KEY,7).setMeta('addToHistory',false))}
+window.jump = index => component.value.scrollToHeading(parseMarkdownOutline(props.content)[index])
+window.appearance = async (font,theme,palette,zoom,width=1000) => {
+ document.documentElement.dataset.fontPreset=font
+ document.documentElement.dataset.theme=theme
+ document.documentElement.dataset.palette=palette
+ document.documentElement.classList.toggle('dark',theme==='dark')
+ settings.settings.editor.richTextZoom=zoom
+ document.querySelector('#app').style.width=width+'px'
+ await nextTick();await document.fonts.ready
+}
+</script></body></html>

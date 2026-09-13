@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import '@/renderer/styles/reading-area.css'
+import '@/renderer/styles/note-title.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, onActivated, onDeactivated, ref, watch } from 'vue'
 import { dispatchEditorFocus, getRenderedEditorFocus } from '@/shared/utils/editor-focus'
 import 'github-markdown-css/github-markdown-light.css'
-import { renderMarkdownWithLineData } from '@/shared/utils/markdown-renderer'
+import { getMarkdownNoteTitleMetadata, renderMarkdownWithLineData } from '@/shared/utils/markdown-renderer'
 import { splitMarkdownIntoRenderChunksWithLines } from '@/shared/utils/markdown-chunks'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import { dispatchOpenNoteRef, parseNoteLinkHref } from '@/shared/utils/note-link-ref'
@@ -32,14 +33,25 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLElement | null>(null)
 const renderedChunkCache = new Map<string, string>()
-const renderedChunks = computed(() => splitMarkdownIntoRenderChunksWithLines(props.content).map((chunk) => {
-  const cacheKey = `${chunk.startLine}\0${chunk.content}`
-  const cached = renderedChunkCache.get(cacheKey)
-  if (cached !== undefined) return cached
-  const html = renderMarkdownWithLineData(chunk.content, chunk.startLine)
-  renderedChunkCache.set(cacheKey, html)
-  return html
-}))
+const noteTitleMetadata = computed(() => getMarkdownNoteTitleMetadata(props.content, props.isPartial))
+const renderedChunks = computed(() => {
+  const chunks = splitMarkdownIntoRenderChunksWithLines(props.content)
+  const usedKeys = new Set<string>()
+  const rendered = chunks.map((chunk, index) => {
+    const metadata = noteTitleMetadata.value
+    const noteTitle = metadata && metadata.line >= chunk.startLine
+      && metadata.line < (chunks[index + 1]?.startLine ?? Infinity) ? metadata : null
+    const cacheKey = `${chunk.startLine}\0${chunk.content}\0${JSON.stringify(noteTitle)}`
+    usedKeys.add(cacheKey)
+    const cached = renderedChunkCache.get(cacheKey)
+    if (cached !== undefined) return cached
+    const html = renderMarkdownWithLineData(chunk.content, chunk.startLine, noteTitle)
+    renderedChunkCache.set(cacheKey, html)
+    return html
+  })
+  for (const key of renderedChunkCache.keys()) if (!usedKeys.has(key)) renderedChunkCache.delete(key)
+  return rendered
+})
 const progress = computed(() => {
   if (!props.totalBytes) return 100
   return Math.min(100, Math.round((new Blob([props.content]).size / props.totalBytes) * 100))
@@ -243,7 +255,7 @@ defineExpose({
 
 <template>
   <div ref="containerRef" class="h-full w-full min-w-0 overflow-y-auto bg-surface focus-scrollbar">
-    <div class="markdown-body chunked-markdown looma-reading-area p-8">
+    <div class="markdown-body chunked-markdown looma-reading-area looma-note-body p-8">
       <section
         v-for="(html, index) in renderedChunks"
         :key="index"

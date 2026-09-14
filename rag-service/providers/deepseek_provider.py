@@ -18,6 +18,7 @@ from agent.models import (
     AgentToolBatch,
     AgentToolCall,
 )
+from agent.prompts import native_tool_protocol_prompt, with_agent_protocol
 from providers.openai_provider import OpenAIChatProvider, _openai_chat_messages
 from providers.tool_call_repair import (
     ToolCallFormatError,
@@ -117,24 +118,15 @@ class DeepSeekChatProvider(OpenAIChatProvider):
     def _agent_messages(
         self, messages: Sequence[ChatMessage], tools_available: bool
     ) -> list[dict[str, Any]]:
-        if tools_available:
-            instruction = (
-                "你是 Looma Agent。需要外部信息或操作时，只能使用 API 提供的原生 function tools；"
-                "可以在同一轮调用多个互相独立的工具。不要在 content 中输出 XML、DSML、<tool_call> 或伪造的工具 JSON。"
-                "无需工具时，直接在 content 中给出普通最终答案。"
-            )
-        else:
-            instruction = (
-                "你是 Looma Agent。本轮没有可用工具；请仅根据已有上下文直接给出普通最终答案。"
-                "不要输出 JSON 决策包装、XML、DSML 或工具调用。"
-            )
-        payloads = _openai_chat_messages(list(messages))
+        payloads = _openai_chat_messages(
+            with_agent_protocol(messages, native_tool_protocol_prompt(tools_available))
+        )
         # DeepSeek's thinking/tool-call guide replays the complete assistant
         # message. Preserve an explicit JSON null instead of dropping content.
         for payload in payloads:
             if payload.get("role") == "assistant" and payload.get("tool_calls"):
                 payload.setdefault("content", None)
-        return [{"role": "system", "content": instruction}, *payloads]
+        return payloads
 
     def _parse_native_decision(
         self, response: Any, allowed_tools: frozenset[str]

@@ -18,6 +18,7 @@ from agent.models import (
     AgentToolBatch,
     AgentToolCall,
 )
+from agent.prompts import native_tool_protocol_prompt, with_agent_protocol
 from providers.base import (
     BaseChatProvider,
     BaseEmbeddingProvider,
@@ -226,17 +227,9 @@ class OllamaChatProvider(BaseChatProvider):
     def _agent_messages(
         self, messages: List[ChatMessage], tools_available: bool
     ) -> list[dict[str, Any]]:
-        instruction = (
-            "你是 Looma Agent。需要外部信息或操作时，只能使用 API 提供的原生 function tools；"
-            "可以在同一轮调用多个互相独立的工具。不要在 content 中输出 XML、DSML、"
-            "<tool_call> 或伪造的工具 JSON。无需工具时，直接在 content 中给出普通最终答案。"
-            if tools_available
-            else (
-                "你是 Looma Agent。本轮没有可用工具；请仅根据已有上下文直接给出普通最终答案。"
-                "不要输出 JSON 决策包装、XML、DSML 或工具调用。"
-            )
+        return _ollama_chat_messages(
+            with_agent_protocol(messages, native_tool_protocol_prompt(tools_available))
         )
-        return [{"role": "system", "content": instruction}, *_ollama_chat_messages(messages)]
 
     async def _create_agent_completion(
         self,

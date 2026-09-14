@@ -6,6 +6,7 @@ from typing import AbstractSet, Any, Sequence, get_args
 from pydantic import ValidationError
 
 from agent.models import AgentDecision, AgentToolCall, parse_agent_decision
+from agent.prompts import json_decision_protocol_prompt, with_agent_protocol
 from schemas import ChatMessage, ToolName
 
 
@@ -258,18 +259,7 @@ def prepare_native_tool_schemas(
 def _build_messages_from_serialized_tools(
     messages: Sequence[ChatMessage], serialized_tools: str
 ) -> list[ChatMessage]:
-    protocol = (
-        "你是结构化 Agent 决策器。仅输出一个 JSON（json）object；禁止 Markdown、代码围栏、"
-        "解释性 prose、chain-of-thought 和 DSML。只允许以下两种形状，字段必须完全匹配：\n"
-        '{"type":"tool_call","thought_summary":"一条不超过500字符、可展示的简短摘要",'
-        '"tool":"可用工具名","arguments":{}}\n'
-        '或 {"type":"final","answer":"给用户的最终答案"}\n'
-        "调用工具时 type 必须严格为 tool_call，type 绝不能填写工具名；工具名只放在 tool 字段。"
-        "thought_summary 不是隐藏推理，不得输出详细思维过程。tool 必须来自下方运行时可用工具，"
-        "arguments 必须符合对应 schema。运行时可用工具 JSON：\n"
-        + serialized_tools
-    )
-    return [ChatMessage(role="system", content=protocol), *list(messages)]
+    return with_agent_protocol(messages, json_decision_protocol_prompt(serialized_tools))
 
 
 def prepare_agent_decision_messages(

@@ -33,7 +33,7 @@ from agent.models import (
     ToolResult,
     parse_agent_decision,
 )
-from agent.prompts import final_only_prompt, observation_prompt
+from agent.prompts import AGENT_SYSTEM_PROMPT, final_only_prompt, observation_prompt
 from agent.tools.base import AgentToolContext
 from agent.tools.registry import ToolRegistry
 from agent.tools.staging import AgentStagingArea
@@ -220,7 +220,11 @@ class AgentRuntime:
         run_context = replace(self.context, run_id=run_id)
         yield event("run_started", run_id, startedAt=utc_iso_z())
 
-        messages = [*history, ChatMessage(role="user", content=input)]
+        messages = [
+            ChatMessage(role="system", content=AGENT_SYSTEM_PROMPT),
+            *history,
+            ChatMessage(role="user", content=input),
+        ]
         schemas = self.registry.tool_schemas(
             enabled_tools=config.enabled_tools, allow_write=config.allow_write
         )

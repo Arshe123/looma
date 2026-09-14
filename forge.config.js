@@ -5,7 +5,7 @@ const { FusesPlugin } = pluginFuses;
 const { FuseV1Options, FuseVersion } = electronFuses;
 
 const releaseOnlyIgnore = new RegExp(
-  `^[\\\\/](?:\\.agents|\\.codex|\\.hermes|\\.idea|\\.looma|\\.pytest_cache|\\.vscode|build|docs|out|public|rag-service|scripts|src)(?:[\\\\/]|$)`,
+  `^[\\\\/](?:\\.agents|\\.codex|\\.hermes|\\.idea|\\.looma|\\.pytest_cache|\\.vscode|build|docs|out|public|looma-agent-service|scripts|src)(?:[\\\\/]|$)`,
   'i',
 );
 

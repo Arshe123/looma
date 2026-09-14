@@ -17,8 +17,8 @@ describe('resolveRagPython', () => {
       platform: 'darwin',
       projectRoot: '/project',
       env: {},
-      existsSync: (candidate) => candidate === path.join('/project', 'rag-service', '.venv', 'bin', 'python'),
-    })).toBe(path.join('/project', 'rag-service', '.venv', 'bin', 'python'))
+      existsSync: (candidate) => candidate === path.join('/project', 'looma-agent-service', '.venv', 'bin', 'python'),
+    })).toBe(path.join('/project', 'looma-agent-service', '.venv', 'bin', 'python'))
   })
 
   it('falls back to python3 on macOS without a project virtual environment', () => {

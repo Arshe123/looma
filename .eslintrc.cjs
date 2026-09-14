@@ -22,7 +22,7 @@ module.exports = {
     'dist',
     'dist-electron',
     'build',
-    'rag-service',
+    'looma-agent-service',
     '.venv',
     '**/__pycache__',
     '*.d.ts',

@@ -4,7 +4,7 @@ import path from 'node:path'
 import process from 'node:process'
 
 const projectRoot = path.resolve(import.meta.dirname, '..')
-const serviceRoot = path.join(projectRoot, 'rag-service')
+const serviceRoot = path.join(projectRoot, 'looma-agent-service')
 const outputRoot = path.join(projectRoot, 'build', 'python-service')
 const workRoot = path.join(projectRoot, 'build', 'pyinstaller-work')
 const requirements = path.join(serviceRoot, 'requirements.txt')

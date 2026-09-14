@@ -150,7 +150,7 @@ if (useExternalRagService) {
   process.stdout.write(`[rag] starting on ${ragServiceUrl}\n`)
 
   ragService = spawn(pythonBinary, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(ragPort)], {
-    cwd: path.join(process.cwd(), 'rag-service'),
+    cwd: path.join(process.cwd(), 'looma-agent-service'),
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
@@ -171,7 +171,7 @@ if (useExternalRagService) {
 
   ragService.on('exit', (code) => {
     if (shuttingDown || code === 0) return
-    process.stderr.write(`[rag] exited with code ${code}. Check Python dependencies in rag-service/requirements.txt.\n`)
+    process.stderr.write(`[rag] exited with code ${code}. Check Python dependencies in looma-agent-service/requirements.txt.\n`)
     shutdown(code ?? 1).catch((err) => {
       process.stderr.write(String(err) + '\n')
       process.exit(code ?? 1)

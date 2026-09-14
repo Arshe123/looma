@@ -10,8 +10,8 @@ export const resolveRagPython = ({
   if (explicit) return explicit
 
   const virtualEnvPython = platform === 'win32'
-    ? path.join(projectRoot, 'rag-service', '.venv', 'Scripts', 'python.exe')
-    : path.join(projectRoot, 'rag-service', '.venv', 'bin', 'python')
+    ? path.join(projectRoot, 'looma-agent-service', '.venv', 'Scripts', 'python.exe')
+    : path.join(projectRoot, 'looma-agent-service', '.venv', 'bin', 'python')
   if (existsSync(virtualEnvPython)) return virtualEnvPython
 
   return platform === 'win32' ? 'E:\\anaconda3\\python.exe' : 'python3'

@@ -134,12 +134,10 @@ def make_embedding_model(config: EmbeddingModelConfig):
 
     class ProviderEmbedding(BaseEmbedding):
         _provider: Any = PrivateAttr()
-        _model_name: str = PrivateAttr()
 
         def __init__(self, embedding_config: EmbeddingModelConfig):
             super().__init__(model_name=embedding_config.model)
             self._provider = create_embedding_provider(embedding_config)
-            self._model_name = embedding_config.model
 
         @classmethod
         def class_name(cls) -> str:

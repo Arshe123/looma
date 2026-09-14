@@ -8,6 +8,7 @@ from unittest.mock import patch
 from pydantic import Field
 
 from agent.models import (
+    AgentBatchCall,
     AgentFinalAnswer,
     AgentInvalidToolCall,
     AgentToolBatch,
@@ -16,7 +17,7 @@ from agent.models import (
 from agent.runtime import AgentRuntime
 from agent.tools.base import AgentTool, AgentToolContext, StrictToolArgs
 from agent.tools.registry import ToolRegistry
-from schemas import AgentConfig, AgentRunRequest, ChatMessage, WorkspaceContext
+from schemas import AgentConfig, AgentRunRequest, ChatMessage, ToolName, WorkspaceContext
 
 
 class EchoArgs(StrictToolArgs):
@@ -191,6 +192,39 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source_event["sources"][0]["retrievalId"], source_event["retrievalId"])
         self.assertEqual(source_event["sources"][0]["runId"], call["runId"])
         self.assertTrue(source_event["sources"][0]["sourceId"].startswith("src_"))
+
+    async def test_mixed_batch_runs_reads_and_network_before_writes_but_preserves_result_order(self):
+        execution_order = []
+
+        class RecordingTool(FakeTool):
+            async def execute(self, context, args):
+                execution_order.append(self.name)
+                return await super().execute(context, args)
+
+        read = RecordingTool()
+        network = RecordingTool()
+        network.name = "rag_search"
+        network.risk_level = "network"
+        write = RecordingTool()
+        write.name = "file_patch"
+        write.risk_level = "write"
+        names: list[ToolName] = ["file_patch", "rag_search", "workspace_search"]
+        calls: list[AgentBatchCall] = [
+            AgentToolCall(type="tool_call", thought_summary="执行", tool=name, arguments={"value": name})
+            for name in names
+        ]
+        provider = FakeProvider([
+            AgentToolBatch(type="tool_calls", calls=calls),
+            AgentFinalAnswer(type="final", answer="完成"),
+        ])
+        events = await collect(
+            build_runtime(provider, read, network, write),
+            input="执行混合批次", history=[],
+            config=AgentConfig(enabled_tools=names, allow_write=True),
+        )
+        self.assertEqual(execution_order, ["rag_search", "workspace_search", "file_patch"])
+        self.assertEqual([item["result"]["tool"] for item in events if item["type"] == "tool_result"], names)
+        self.assertEqual(events[-1]["status"], "completed")
 
     async def test_tool_batch_executes_read_tools_concurrently_and_echoes_all_results(self):
         first = FakeTool(delay=0.2)

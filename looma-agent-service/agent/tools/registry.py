@@ -209,12 +209,10 @@ class ToolRegistry:
         """Return provider-neutral schemas for tools allowed in this run."""
         schemas = []
         for tool in self.list_tools(enabled_tools=enabled_tools, allow_write=allow_write):
-            model_json_schema = getattr(tool.args_model, "model_json_schema", None)
-            parameters = model_json_schema() if model_json_schema else tool.args_model.schema()
             schemas.append({
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": parameters,
+                "parameters": tool.args_model.model_json_schema(),
             })
         return schemas
 

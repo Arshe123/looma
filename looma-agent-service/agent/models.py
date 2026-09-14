@@ -90,11 +90,6 @@ class ToolResult(StrictAgentModel):
 def parse_agent_decision(value: Any) -> AgentDecision:
     """Validate an untrusted model response as one canonical decision."""
 
-    try:
-        from pydantic import TypeAdapter
-    except ImportError:  # Pydantic v1
-        from pydantic import parse_obj_as
-
-        return parse_obj_as(AgentDecision, value)
+    from pydantic import TypeAdapter
 
     return TypeAdapter(AgentDecision).validate_python(value)

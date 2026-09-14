@@ -140,14 +140,14 @@ def sorted_directory_entries(
 def iter_workspace_files(workspace: Path, budget: ScanBudget) -> Iterator[Path]:
     """Yield ordinary files in stable path order without following reparse points."""
 
-    stack: list[tuple[Path, Iterator[os.DirEntry[str]]]] = []
+    stack: list[Iterator[os.DirEntry[str]]] = []
     root_entries = sorted_directory_entries(workspace, budget)
     if root_entries is None:
         return
-    stack.append((workspace, iter(root_entries)))
+    stack.append(iter(root_entries))
 
     while stack:
-        _directory, entries = stack[-1]
+        entries = stack[-1]
         try:
             entry = next(entries)
         except StopIteration:
@@ -166,7 +166,7 @@ def iter_workspace_files(workspace: Path, budget: ScanBudget) -> Iterator[Path]:
                     continue
                 children = sorted_directory_entries(path, budget)
                 if children is not None:
-                    stack.append((path, iter(children)))
+                    stack.append(iter(children))
             elif entry.is_file(follow_symlinks=False):
                 yield path
         except OSError:

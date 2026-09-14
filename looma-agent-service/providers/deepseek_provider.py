@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import re
-import uuid
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -49,12 +47,10 @@ class _NativeDecisionError(Exception):
         self,
         code: str,
         *,
-        raw_call: _RawToolCall | None = None,
         content: str = "",
         reasoning_content: str | None = None,
     ) -> None:
         self.code = code
-        self.raw_call = raw_call
         self.content = content
         self.reasoning_content = reasoning_content
         super().__init__(code)
@@ -92,11 +88,6 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         if last_error is not None and last_error.code == "empty_decision":
             raise AgentEmptyDecisionError() from None
         raise AgentDecisionParseError() from None
-
-    async def chat_structured(self, messages: list[ChatMessage]):
-        """Compatibility hook: DeepSeek Agent decisions use complete_structured()."""
-
-        return await super().chat_structured(messages)
 
     async def _create_agent_completion(
         self,
@@ -308,60 +299,6 @@ class DeepSeekChatProvider(OpenAIChatProvider):
     ) -> list[dict[str, Any]]:
         repaired = [*messages]
         available = ", ".join(sorted(allowed_tools)) or "无"
-        if error.raw_call is not None:
-            used_call_ids = {
-                call.get("id")
-                for message in messages
-                for call in (message.get("tool_calls") or [])
-                if isinstance(call, dict) and isinstance(call.get("id"), str)
-            }
-            call_id = (
-                error.raw_call.id
-                if _SAFE_CALL_ID.fullmatch(error.raw_call.id)
-                and error.raw_call.id not in used_call_ids
-                else f"repair_{uuid.uuid4().hex}"
-            )
-            name = error.raw_call.name if _SAFE_TOOL_NAME.fullmatch(error.raw_call.name) else "invalid_tool_call"
-            raw_arguments = error.raw_call.arguments
-            if isinstance(raw_arguments, str):
-                arguments = raw_arguments[:_MAX_REPAIR_CONTENT_CHARS]
-            elif isinstance(raw_arguments, dict):
-                try:
-                    arguments = json.dumps(
-                        raw_arguments,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                        allow_nan=False,
-                    )[:_MAX_REPAIR_CONTENT_CHARS]
-                except (TypeError, ValueError, OverflowError, RecursionError):
-                    arguments = "{}"
-            else:
-                arguments = "{}"
-            assistant: dict[str, Any] = {
-                "role": "assistant",
-                "content": error.content[:_MAX_REPAIR_CONTENT_CHARS] or None,
-                "tool_calls": [{
-                    "id": call_id,
-                    "type": "function",
-                    "function": {"name": name, "arguments": arguments},
-                }],
-            }
-            if thinking_enabled:
-                assistant["reasoning_content"] = error.reasoning_content or " "
-            repaired.extend([
-                assistant,
-                {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "name": name,
-                    "content": (
-                        "Error: invalid tool call. Generate one or more native function calls with "
-                        f"a valid tool name and JSON object arguments. Available tools: {available}."
-                    ),
-                },
-            ])
-            return repaired
-
         assistant_content = error.content[:_MAX_REPAIR_CONTENT_CHARS]
         if assistant_content:
             assistant: dict[str, Any] = {"role": "assistant", "content": assistant_content}

@@ -69,7 +69,7 @@ class FilePatchToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result._approval_payload["proposed_content"], content)
         self.assertTrue(result._approval_payload["requiresApproval"])
         self.assertGreater(len(result._approval_payload["unified_diff"]), 100_000)
-        serialized = result.model_dump_json() if hasattr(result, "model_dump_json") else result.json()
+        serialized = result.model_dump_json()
         self.assertNotIn("_approval_payload", serialized)
         self.assertNotIn(content, serialized)
 

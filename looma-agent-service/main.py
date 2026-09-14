@@ -21,7 +21,7 @@ from agent.tools import (
 from config import with_global_ai_config, with_global_knowledge_config
 from providers.factory import create_chat_provider
 
-from rag.index_service import build_index as build_knowledge_index, build_index_events, get_index_status
+from rag.index_service import build_index as build_knowledge_index, build_index_events
 from rag.index_manager import (
     build_managed_index,
     build_managed_index_events,

@@ -173,7 +173,6 @@ class _ToolPlan:
 @dataclass(frozen=True)
 class _BlockedToolCall:
     revision: int | None
-    outcome: str
     result: ToolResult
 
 
@@ -455,7 +454,7 @@ class AgentRuntime:
                         # A synthesized duplicate result must never replace the real
                         # canonical outcome stored for this signature.
                         plan.signature = None
-                        if previous_call.outcome == "success":
+                        if previous_call.result.success:
                             plan.result = _reused_success_result(
                                 call.tool, previous_call.result
                             )
@@ -494,15 +493,15 @@ class AgentRuntime:
                     duration_ms = int((time.perf_counter() - started) * 1000)
                     return result, duration_ms
 
-                runnable = [
-                    plan for plan in plans
-                    if plan.result is None and plan.reuse_from is None
-                ]
-                parallel = [
-                    plan for plan in runnable
-                    if tool_risk_levels.get(plan.call.tool) in {"read", "network"}
-                ]
-                serial = [plan for plan in runnable if plan not in parallel]
+                parallel: list[_ToolPlan] = []
+                serial: list[_ToolPlan] = []
+                for plan in plans:
+                    if plan.result is not None or plan.reuse_from is not None:
+                        continue
+                    if tool_risk_levels.get(plan.call.tool) in {"read", "network"}:
+                        parallel.append(plan)
+                    else:
+                        serial.append(plan)
                 if parallel:
                     completed = await _wait_with_cancellation(
                         asyncio.gather(*(execute_plan(plan) for plan in parallel)),
@@ -582,10 +581,8 @@ class AgentRuntime:
                             if risk_level == "read"
                             else None
                         )
-                        outcome = "success" if result.success else "non_retryable_failure"
                         blocked_call_signatures[plan.signature] = _BlockedToolCall(
                             revision=revision,
-                            outcome=outcome,
                             result=result,
                         )
                         if result.success and risk_level in {"write", "terminal"}:

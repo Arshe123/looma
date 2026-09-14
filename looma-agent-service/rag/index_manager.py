@@ -681,14 +681,10 @@ def _build_managed_index_locked(request: IndexRequest, mode: Literal["incrementa
 
     if mode == "full" or status_before.get("needRebuild"):
         clear_vector_store(request)
-    elif mode == "incremental" and not status_before.get("needRebuild") and targets:
-        # Per-file incremental: delete outdated vectors and rebuild them alongside new files.
-        # For simplicity (and correctness) we still call the full build_vector_index which
-        # creates a fresh index with doc_id-tagged documents.  The doc_id ensures future
-        # single-file deletes work.
-        pass
 
     try:
+        # All non-skipped modes currently rebuild the full index; stable doc_ids
+        # preserve support for subsequent single-file deletes.
         build_result = build_vector_index(request)
     except Exception as exc:
         manifest = load_manifest(workspace)

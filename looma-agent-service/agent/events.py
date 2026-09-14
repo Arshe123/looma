@@ -4,8 +4,6 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel
-
 from agent.models import AgentError, ToolResult
 
 
@@ -17,11 +15,6 @@ _SENSITIVE_KEYS = {
     "passwd", "secret", "credential", "private_key", "access_key",
     "proposed_content", "unified_diff",
 }
-
-
-def model_dump(value: BaseModel) -> dict[str, Any]:
-    dump = getattr(value, "model_dump", None)
-    return dump() if dump is not None else value.dict()
 
 
 def utc_iso_z() -> str:
@@ -95,7 +88,7 @@ def tool_result_event(
             "uiSummary": result.summary[:1_000],
             "modelContext": tool_result_model_context(result),
             "durationMs": max(0, int(duration_ms)),
-            "error": model_dump(result.error) if result.error is not None else None,
+            "error": result.error.model_dump() if result.error is not None else None,
             "truncated": result.truncated,
         },
     )
@@ -132,4 +125,4 @@ def usage_event(
 
 
 def error_event(run_id: str, error: AgentError) -> dict[str, Any]:
-    return event("error", run_id, error=model_dump(error))
+    return event("error", run_id, error=error.model_dump())

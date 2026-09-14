@@ -4,7 +4,7 @@ import json
 from typing import Any, Sequence
 
 from agent.events import tool_result_model_context
-from agent.models import AgentToolCall, ToolResult
+from agent.models import ToolResult
 from schemas import ChatMessage
 
 MAX_OBSERVATION_CHARS = 12_000
@@ -67,16 +67,6 @@ def with_agent_protocol(
             *messages[1:],
         ]
     return [ChatMessage(role="system", content=protocol), *messages]
-
-
-def decision_prompt(decision: AgentToolCall) -> str:
-    payload = {
-        "type": "tool_call",
-        "thought_summary": decision.thought_summary,
-        "tool": decision.tool,
-        "arguments": decision.arguments,
-    }
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
 def observation_prompt(result: ToolResult, max_chars: int = MAX_OBSERVATION_CHARS) -> str:

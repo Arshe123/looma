@@ -22,10 +22,7 @@ Retriever = Callable[[RagQueryRequest], Awaitable[list[dict[str, Any]]]]
 
 def _copy_knowledge(config: KnowledgeConfig, top_k: int | None) -> KnowledgeConfig:
     update = {} if top_k is None else {"top_k": top_k}
-    model_copy = getattr(config, "model_copy", None)
-    if model_copy is not None:
-        return model_copy(update=update, deep=True)
-    return config.copy(update=update, deep=True)
+    return config.model_copy(update=update, deep=True)
 
 
 def _absolute_path_style(value: str) -> str | None:

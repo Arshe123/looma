@@ -52,18 +52,5 @@ class AgentTool(ABC):
 
 
 def validate_tool_args(model: Type[StrictToolArgs], value: Any) -> StrictToolArgs:
-    """Validate arguments with either Pydantic v1 or v2."""
-
-    model_validate = getattr(model, "model_validate", None)
-    if model_validate is not None:
-        return model_validate(value)
-    return model.parse_obj(value)
-
-
-def dump_tool_args(value: BaseModel) -> dict[str, Any]:
-    """Dump validated arguments with either Pydantic v1 or v2."""
-
-    model_dump = getattr(value, "model_dump", None)
-    if model_dump is not None:
-        return model_dump()
-    return value.dict()
+    """Validate arguments against the tool's strict schema."""
+    return model.model_validate(value)

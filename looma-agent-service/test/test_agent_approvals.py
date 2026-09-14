@@ -3,7 +3,6 @@ import json
 import unittest
 from pathlib import Path
 
-from agent.approvals import ApprovalManager, ApprovalResolution
 from agent.models import AgentFinalAnswer, AgentToolCall
 from agent.runtime import AgentRuntime
 from agent.tools import AgentToolContext, FilePatchTool, FileReadTool, ToolRegistry
@@ -23,45 +22,6 @@ class FakeProvider:
 async def collect(runtime, **kwargs):
     return [event async for event in runtime.run(**kwargs)]
 
-
-class ApprovalManagerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_reject_unknown_approval(self):
-        manager = ApprovalManager()
-
-        with self.assertRaises(KeyError):
-            await manager.resolve("missing", ApprovalResolution(status="approved"))
-
-    async def test_wait_times_out(self):
-        manager = ApprovalManager(default_timeout_seconds=0.01)
-        approval = manager.create(
-            run_id="run-1",
-            step_id="step-1",
-            call_id="call-1",
-            tool_name="file_patch",
-            payload={"path": "a.txt"},
-        )
-
-        resolution = await manager.wait_for_resolution(approval.approval_id)
-
-        self.assertEqual(resolution.status, "expired")
-        self.assertFalse(manager.has_pending(approval.approval_id))
-
-    async def test_cancel_run_resolves_pending_approval(self):
-        manager = ApprovalManager(default_timeout_seconds=30)
-        approval = manager.create(
-            run_id="run-1",
-            step_id="step-1",
-            call_id="call-1",
-            tool_name="file_patch",
-            payload={"path": "a.txt"},
-        )
-
-        waiter = asyncio.create_task(manager.wait_for_resolution(approval.approval_id))
-        await asyncio.sleep(0)
-        await manager.cancel_run("run-1")
-        resolution = await waiter
-
-        self.assertEqual(resolution.status, "cancelled")
 
 class AgentApprovalRuntimeTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

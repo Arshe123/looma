@@ -157,8 +157,7 @@ def with_global_knowledge_config(request_knowledge: KnowledgeConfig | None = Non
     global_config = load_global_knowledge_config()
     if request_knowledge is None:
         return global_config
-    dump = lambda model: model.model_dump() if hasattr(model, "model_dump") else model.dict()
-    data = dump(request_knowledge)
+    data = request_knowledge.model_dump()
     # Requests may override per-workspace values when explicitly provided, but the
     # common Electron path now omits them so the backend reads settings.json directly.
-    return KnowledgeConfig(**{**dump(global_config), **data})
+    return KnowledgeConfig(**{**global_config.model_dump(), **data})

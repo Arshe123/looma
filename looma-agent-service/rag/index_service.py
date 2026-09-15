@@ -2,17 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import re
+import stat
 import threading
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterable
+from typing import TYPE_CHECKING, Any, AsyncIterator, Iterable
 
 from pydantic import PrivateAttr
 
 from providers.factory import create_embedding_provider
 from schemas import EmbeddingModelConfig, IndexRequest, KnowledgeConfig
 
+if TYPE_CHECKING:
+    from llama_index.core.schema import TransformComponent
+
 SUPPORTED_EXTENSIONS = {".md", ".txt", ".pdf"}
+EXCLUDE_PARTS = {".git", "node_modules", "dist", "build", ".looma"}
 REQUIRED_INDEX_FILES = {
     "index_store.json",
     "docstore.json",
@@ -113,20 +119,49 @@ def get_index_status(workspace_path: str, vector_store_path: str) -> dict[str, A
     }
 
 
+def _is_link_or_reparse(path: Path) -> bool:
+    info = path.lstat()
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+def is_indexable_file(path: Path, workspace: Path) -> bool:
+    try:
+        relative = path.relative_to(workspace)
+        if any(part.casefold() in EXCLUDE_PARTS or part == ".." for part in relative.parts):
+            return False
+        if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            return False
+        current = workspace
+        for part in relative.parts:
+            current = current / part
+            if _is_link_or_reparse(current):
+                return False
+        return path.is_file() and path.resolve().is_relative_to(workspace)
+    except (OSError, ValueError):
+        return False
+
+
+def scan_indexable_files(workspace: Path) -> tuple[list[Path], list[Path]]:
+    workspace = workspace.expanduser().resolve()
+    accepted: list[Path] = []
+    ignored: list[Path] = []
+    for directory, dirs, filenames in os.walk(workspace, followlinks=False):
+        for name in list(dirs):
+            path = Path(directory) / name
+            if _is_link_or_reparse(path):
+                dirs.remove(name)
+                ignored.append(path)
+        for name in filenames:
+            path = Path(directory) / name
+            (accepted if is_indexable_file(path, workspace) else ignored).append(path)
+    key = lambda path: (str(path).casefold(), str(path))
+    return sorted(accepted, key=key), sorted(ignored, key=key)
+
+
 def collect_indexable_files(workspace_path: str | Path) -> list[Path]:
-    workspace = Path(workspace_path).expanduser().resolve()
-    files: list[Path] = []
-    for path in workspace.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-            continue
-        try:
-            relative = path.relative_to(workspace)
-        except ValueError:
-            continue
-        if ".looma" in relative.parts:
-            continue
-        files.append(path)
-    return sorted(files, key=lambda item: str(item).lower())
+    return scan_indexable_files(Path(workspace_path))[0]
 
 
 def make_embedding_model(config: EmbeddingModelConfig):
@@ -193,14 +228,16 @@ def load_documents(input_files: Iterable[Path], workspace_path: Path):
         # Let llama-index handle PDFs and any parser-specific metadata.
         loaded = SimpleDirectoryReader(input_files=[str(file_path)]).load_data()
         doc_id = file_doc_id(workspace_path, relative)
-        for document in loaded:
-            document.metadata = {**metadata, **getattr(document, "metadata", {})}
-            document.doc_id = doc_id
+        for page_index, document in enumerate(loaded):
+            document.metadata = {**getattr(document, "metadata", {}), **metadata}
+            # Parsers key original documents by ID. Shared IDs overwrite earlier
+            # pages' metadata; keep page IDs distinct and match files by source.
+            document.doc_id = f"{doc_id}:page:{page_index}"
             documents.append(document)
     return documents
 
 
-def make_node_transformations(knowledge: KnowledgeConfig):
+def make_node_transformations(knowledge: KnowledgeConfig) -> list[TransformComponent]:
     from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 
     sentence_splitter = SentenceSplitter(
@@ -225,6 +262,7 @@ def configure_llama_index(
     chunk_overlap: int = 100,
 ):
     from llama_index.core import Settings
+    from llama_index.core.node_parser import NodeParser
 
     if isinstance(knowledge_or_chunk_size, KnowledgeConfig):
         knowledge = knowledge_or_chunk_size
@@ -237,7 +275,9 @@ def configure_llama_index(
     # actual transformation pipeline too. Settings.transformations is cached after
     # first access, so updating only Settings.node_parser can keep using stale
     # chunking behavior until the process restarts.
-    Settings.node_parser = transformations[-1]
+    parser = transformations[-1]
+    assert isinstance(parser, NodeParser)
+    Settings.node_parser = parser
     Settings.transformations = transformations
     # Avoid llama-index trying to instantiate its own default LLM during indexing.
     Settings.llm = None
@@ -265,7 +305,8 @@ def build_index(request: IndexRequest) -> dict[str, Any]:
             "persist_dir": str(persist_dir),
         }
 
-    configure_llama_index(request.ai_config.embedding, request.knowledge)
+    embedding = make_embedding_model(request.ai_config.embedding)
+    transformations = make_node_transformations(request.knowledge or KnowledgeConfig())
     documents = load_documents(input_files, workspace)
     if not documents:
         return {
@@ -276,7 +317,7 @@ def build_index(request: IndexRequest) -> dict[str, Any]:
             "persist_dir": str(persist_dir),
         }
 
-    index = VectorStoreIndex.from_documents(documents)
+    index = VectorStoreIndex.from_documents(documents, embed_model=embedding, transformations=transformations)
     persist_dir.mkdir(parents=True, exist_ok=True)
     index.storage_context.persist(persist_dir=str(persist_dir))
 
@@ -325,7 +366,8 @@ async def build_index_events(request: IndexRequest) -> AsyncIterator[dict[str, A
         yield {"type": "done", "result": {"status": "ok", "document_count": 0, "exists": False, "persist_dir": str(persist_dir)}}
         return
 
-    configure_llama_index(request.ai_config.embedding, request.knowledge)
+    embedding = make_embedding_model(request.ai_config.embedding)
+    transformations = make_node_transformations(request.knowledge or KnowledgeConfig())
     yield {"type": "timeline", "stepId": "load-documents", "status": "active", "title": "读取文档", "detail": "正在读取文件内容。"}
     documents = []
     for index, file_path in enumerate(input_files, start=1):
@@ -349,7 +391,7 @@ async def build_index_events(request: IndexRequest) -> AsyncIterator[dict[str, A
     from llama_index.core import VectorStoreIndex
 
     yield {"type": "timeline", "stepId": "build-vectors", "status": "active", "title": "构建向量", "detail": f"正在为 {len(documents)} 个文档生成向量索引。"}
-    index = VectorStoreIndex.from_documents(documents)
+    index = VectorStoreIndex.from_documents(documents, embed_model=embedding, transformations=transformations)
     yield {"type": "timeline", "stepId": "build-vectors", "status": "completed", "detail": "向量索引已构建完成。"}
 
     yield {"type": "timeline", "stepId": "persist-index", "status": "active", "title": "写入索引", "detail": "正在写入索引文件。"}

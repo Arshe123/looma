@@ -5,8 +5,9 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 
-from rag.index_manager import CorruptIndexError, validate_persisted_index_json as _validate_persisted_index_json
-from rag.index_service import configure_llama_index, get_persist_dir, has_index
+from rag.index_manager import CorruptIndexError, index_operation_lock, validate_persisted_index_json as _validate_persisted_index_json
+from rag import index_service
+from rag.index_service import get_persist_dir, has_index
 from schemas import RagQueryRequest
 
 
@@ -55,19 +56,19 @@ def load_index(request: RagQueryRequest):
 
     if not workspace.exists() or not workspace.is_dir():
         raise ValueError("工作空间不存在或不是文件夹。")
-    if not has_index(workspace, request.knowledge.vector_store_path):
-        raise IndexMissingError(f"当前工作空间还没有可用索引：{persist_dir}")
+    with index_operation_lock(persist_dir):
+        if not has_index(workspace, request.knowledge.vector_store_path):
+            raise IndexMissingError(f"当前工作空间还没有可用索引：{persist_dir}")
+        validate_persisted_index_json(persist_dir)
+        from llama_index.core import StorageContext, load_index_from_storage
 
-    validate_persisted_index_json(persist_dir)
-
-    from llama_index.core import StorageContext, load_index_from_storage
-
-    configure_llama_index(request.ai_config.embedding, request.knowledge.chunk_size, request.knowledge.chunk_overlap)
-    try:
-        storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
-        return load_index_from_storage(storage_context)
-    except (JSONDecodeError, UnicodeDecodeError, KeyError, TypeError, ValueError) as exc:
-        raise CorruptIndexError(persist_dir, str(exc)) from exc
+        embedding = index_service.make_embedding_model(request.ai_config.embedding)
+        transformations = index_service.make_node_transformations(request.knowledge)
+        try:
+            storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
+            return load_index_from_storage(storage_context, embed_model=embedding, transformations=transformations)
+        except (JSONDecodeError, UnicodeDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise CorruptIndexError(persist_dir, str(exc)) from exc
 
 
 def retrieve_context_sources_sync(request: RagQueryRequest) -> list[dict[str, Any]]:

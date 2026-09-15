@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import fnmatch
+
 import hashlib
 import json
 import shutil
@@ -9,11 +9,14 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from json import JSONDecodeError
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, AsyncIterator, Literal
 
 from providers.base import ProviderConnectionError
-from rag.index_service import build_index as build_vector_index, configure_llama_index, get_persist_dir, has_index
+from rag import index_service
+from rag.index_transaction import staged_index_update
+from rag.index_service import build_index as build_vector_index, get_persist_dir, has_index
+from rag.index_service import scan_indexable_files
 from schemas import IndexBuildRequest, IndexRequest, IndexStatusRequest, KnowledgeConfig
 
 INDEX_DIR = ".looma/index"
@@ -22,17 +25,7 @@ METADATA_FILE = "index_metadata.json"
 INDEX_VERSION = 1
 PARSER_VERSION = 1
 PARSER_TYPE = "markdown-text"
-SUPPORTED_EXTENSIONS = {".md", ".txt"}
-EXCLUDE_PARTS = {".git", "node_modules", "dist", "build", ".looma"}
-EXCLUDE_GLOBS = {
-    "*.log",
-    "*.tmp",
-    "*.png",
-    "*.jpg",
-    "*.jpeg",
-    "*.gif",
-    "*.exe",
-}
+
 STATUSES = ["indexed", "not_indexed", "outdated", "deleted", "failed", "ignored"]
 REQUIRED_INDEX_FILES = {"index_store.json", "docstore.json", "default__vector_store.json"}
 _index_locks: dict[str, threading.RLock] = {}
@@ -48,6 +41,19 @@ class CorruptIndexError(RuntimeError):
 
 def normalize_relative_path(path: str | Path) -> str:
     return str(path).replace("\\", "/").strip("/")
+
+
+def _metadata_relative_path(value: Any, workspace: Path) -> str | None:
+    """Resolve legacy metadata identities without matching arbitrary suffixes."""
+    raw = str(value or "").replace("\\", "/")
+    prefix = str(workspace).replace("\\", "/").rstrip("/") + "/"
+    if raw.startswith(prefix):
+        raw = raw[len(prefix):]
+    elif PurePosixPath(raw).is_absolute() or PureWindowsPath(raw).is_absolute():
+        return None
+    if not raw or any(part in {".", ".."} for part in raw.split("/")):
+        return None
+    return raw
 
 
 @contextmanager
@@ -99,11 +105,10 @@ def _remove_doc_vectors(workspace: Path, persist_dir: Path, doc_id: str, rel: st
         return 0
 
     validate_persisted_index_json(persist_dir)
-    from llama_index.core import StorageContext, load_index_from_storage
+    from llama_index.core import StorageContext
 
     storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
-    index = load_index_from_storage(storage_context)
-    vector_store = index._vector_store if hasattr(index, "_vector_store") else getattr(index, "vector_store", None)
+    vector_store = storage_context.vector_store
     if not hasattr(vector_store, "_data"):
         return 0
 
@@ -118,10 +123,10 @@ def _remove_doc_vectors(workspace: Path, persist_dir: Path, doc_id: str, rel: st
     # doc_id and metadata. Match metadata too so reindex removes duplicate old chunks.
     if normalized_rel:
         for node_id, metadata in list(getattr(data, "metadata_dict", {}).items()):
-            source = normalize_relative_path(
-                metadata.get("source") or metadata.get("path") or metadata.get("file_path") or ""
+            source = _metadata_relative_path(
+                metadata.get("source") or metadata.get("path") or metadata.get("file_path"), workspace
             )
-            if source == normalized_rel or source.endswith(f"/{normalized_rel}"):
+            if source == normalized_rel:
                 nodes_to_delete.add(node_id)
 
     removed = len(nodes_to_delete)
@@ -140,57 +145,36 @@ def _remove_doc_vectors(workspace: Path, persist_dir: Path, doc_id: str, rel: st
                     pass
 
     if removed:
-        index.storage_context.persist(persist_dir=str(persist_dir))
+        storage_context.persist(persist_dir=str(persist_dir))
     return removed
 
 
 def _insert_doc_vectors(workspace: Path, persist_dir: Path, file_path: Path, request: IndexRequest) -> int:
-    """Insert a single file's vectors into an existing index.  Returns chunk count."""
-    from llama_index.core import StorageContext, load_index_from_storage
-    from llama_index.core import Document
+    """Insert all documents/pages with one explicit transformation pipeline."""
+    from llama_index.core import StorageContext, VectorStoreIndex, load_index_from_storage
+    from llama_index.core.ingestion import run_transformations
 
-    relative = normalize_relative_path(file_path.resolve().relative_to(workspace))
-    doc_id = file_doc_id(workspace, relative)
-
-    suffix = file_path.suffix.lower()
-    metadata = {
-        "source": relative,
-        "file_path": str(file_path),
-        "path": relative,
-        "extension": suffix,
-    }
-    if suffix in {".md", ".txt"}:
-        text = file_path.read_text(encoding="utf-8", errors="ignore")
-        if not text.strip():
-            return 0
-        doc = Document(text=text, metadata=metadata, doc_id=doc_id)
-    elif suffix == ".pdf":
-        from llama_index.core import SimpleDirectoryReader
-        loaded = SimpleDirectoryReader(input_files=[str(file_path)]).load_data()
-        if not loaded:
-            return 0
-        doc = loaded[0]
-        doc.metadata = {**metadata, **getattr(doc, "metadata", {})}
-        doc.doc_id = doc_id
-    else:
+    if request.ai_config is None or request.ai_config.embedding is None:
+        raise ValueError("单文件重建需要配置嵌入模型。")
+    documents = index_service.load_documents([file_path], workspace)
+    if not documents:
         return 0
-
-    # Load existing index and insert
-    validate_persisted_index_json(persist_dir)
-    storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
-    index = load_index_from_storage(storage_context)
-    index.insert(doc)
+    embedding = index_service.make_embedding_model(request.ai_config.embedding)
+    transformations = index_service.make_node_transformations(request.knowledge or KnowledgeConfig())
+    nodes = run_transformations(documents, transformations=transformations)
+    if persist_dir.exists():
+        validate_persisted_index_json(persist_dir)
+        storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
+        index = load_index_from_storage(storage_context, embed_model=embedding, transformations=transformations)
+    else:
+        index = VectorStoreIndex(nodes=[], embed_model=embedding, transformations=transformations)
+    index.insert_nodes(nodes)
+    for document in documents:
+        index.docstore.set_document_hash(document.id_, document.hash)
     index.storage_context.persist(persist_dir=str(persist_dir))
+    return len(nodes)
 
-    # Count chunks with the same transformation pipeline used by index.insert().
-    from llama_index.core import Settings
-    try:
-        from llama_index.core.ingestion import run_transformations
-        nodes = run_transformations([doc], transformations=Settings.transformations)
-    except Exception:
-        parser = getattr(Settings, "node_parser", None)
-        nodes = parser.get_nodes_from_documents([doc]) if parser else []
-    return len(nodes) or 1
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -320,31 +304,8 @@ def validate_metadata_compatibility(current: dict[str, Any], stored: dict[str, A
     return {"compatible": True, "needRebuild": False, "reason": "索引配置兼容。"}
 
 
-def is_ignored(path: Path, workspace: Path) -> bool:
-    try:
-        relative = path.relative_to(workspace)
-    except ValueError:
-        return True
-    if any(part in EXCLUDE_PARTS for part in relative.parts):
-        return True
-    name = path.name.lower()
-    return any(fnmatch.fnmatch(name, pattern) for pattern in EXCLUDE_GLOBS)
-
-
 def scan_workspace(workspace: Path) -> tuple[list[Path], list[Path]]:
-    indexed: list[Path] = []
-    ignored: list[Path] = []
-    for path in workspace.rglob("*"):
-        if not path.is_file():
-            continue
-        if is_ignored(path, workspace):
-            ignored.append(path)
-            continue
-        if path.suffix.lower() in SUPPORTED_EXTENSIONS:
-            indexed.append(path)
-        else:
-            ignored.append(path)
-    return sorted(indexed, key=lambda item: str(item).lower()), sorted(ignored, key=lambda item: str(item).lower())
+    return scan_indexable_files(workspace)
 
 
 def file_sha256(path: Path) -> str:
@@ -355,7 +316,7 @@ def file_sha256(path: Path) -> str:
     return "sha256:" + digest.hexdigest()
 
 
-def file_entry(path: Path, workspace: Path, status: str, previous: dict[str, Any] | None = None) -> dict[str, Any]:
+def file_entry(path: Path, workspace: Path, status: str, previous: dict[str, Any] | None = None, *, computed_hash: str | None = None) -> dict[str, Any]:
     stat = path.stat()
     rel = str(path.relative_to(workspace)).replace("\\", "/")
     content_hash = previous.get("contentHash") if previous else None
@@ -366,7 +327,9 @@ def file_entry(path: Path, workspace: Path, status: str, previous: dict[str, Any
         or previous.get("mtimeMs") != int(stat.st_mtime * 1000)
         or status in {"not_indexed", "outdated"}
     )
-    if should_hash:
+    if computed_hash is not None:
+        content_hash = computed_hash
+    elif should_hash:
         content_hash = file_sha256(path)
     return {
         "path": rel,
@@ -401,6 +364,13 @@ def chunk_ids(workspace_id: str, rel: str, content_hash: str, chunk_count: int) 
 
 def build_status_snapshot(request: IndexRequest | IndexStatusRequest) -> dict[str, Any]:
     workspace = Path(request.workspace.workspace_path if isinstance(request, IndexRequest) else request.workspace_path).expanduser().resolve()
+    vector_store = (request.knowledge or KnowledgeConfig()).vector_store_path if isinstance(request, IndexRequest) else request.vector_store_path or ".looma/rag-index"
+    with index_operation_lock(get_persist_dir(workspace, vector_store)):
+        return _build_status_snapshot_locked(request)
+
+
+def _build_status_snapshot_locked(request: IndexRequest | IndexStatusRequest) -> dict[str, Any]:
+    workspace = Path(request.workspace.workspace_path if isinstance(request, IndexRequest) else request.workspace_path).expanduser().resolve()
     if not workspace.exists() or not workspace.is_dir():
         return {
             "workspaceId": workspace_id_for_path(workspace),
@@ -423,6 +393,7 @@ def build_status_snapshot(request: IndexRequest | IndexStatusRequest) -> dict[st
         rel = str(path.relative_to(workspace)).replace("\\", "/")
         seen.add(rel)
         previous = manifest_files.get(rel)
+        computed_hash = None
         if not previous:
             status = "not_indexed"
         elif previous.get("status") == "failed":
@@ -433,9 +404,10 @@ def build_status_snapshot(request: IndexRequest | IndexStatusRequest) -> dict[st
             if previous.get("size") != stat.st_size:
                 status = "outdated"
             elif previous.get("mtimeMs") != int(stat.st_mtime * 1000):
-                if previous.get("contentHash") != file_sha256(path):
+                computed_hash = file_sha256(path)
+                if previous.get("contentHash") != computed_hash:
                     status = "outdated"
-        files.append(file_entry(path, workspace, status, previous))
+        files.append(file_entry(path, workspace, status, previous, computed_hash=computed_hash))
 
     for rel, previous in manifest_files.items():
         if rel in seen:
@@ -581,12 +553,10 @@ def get_persisted_chunk_counts(workspace: Path, persist_dir: Path, relative_path
         if not rel:
             metadata = metadata_map.get(node_id) or {}
             if isinstance(metadata, dict):
-                source = normalize_relative_path(
-                    metadata.get("source") or metadata.get("path") or metadata.get("file_path") or ""
+                source = _metadata_relative_path(
+                    metadata.get("source") or metadata.get("path") or metadata.get("file_path"), workspace
                 )
                 rel = source if source in counts else ""
-                if not rel:
-                    rel = next((candidate for candidate in counts if source.endswith(f"/{candidate}")), "")
         if rel:
             counts[rel] = counts.get(rel, 0) + 1
 
@@ -607,7 +577,7 @@ def mark_all_scanned_indexed(request: IndexRequest, build_result: dict[str, Any]
         entry = file_entry(path, workspace, "indexed")
         chunk_count = persisted_chunk_counts.get(entry["path"])
         if chunk_count is None:
-            chunk_count = estimate_chunk_count(path, request.knowledge.chunk_size)
+            chunk_count = 0 if not build_result.get("exists") else estimate_chunk_count(path, request.knowledge.chunk_size)
         entry["chunkCount"] = chunk_count
         entry["chunkIds"] = chunk_ids(workspace_id, entry["path"], entry.get("contentHash") or "", chunk_count)
         entry["lastIndexedAt"] = indexed_at
@@ -640,6 +610,11 @@ def clear_vector_store(request: IndexRequest) -> None:
     persist_dir = get_persist_dir(workspace, request.knowledge.vector_store_path)
     if persist_dir.exists():
         shutil.rmtree(persist_dir)
+
+
+def _validate_transaction_target(workspace: Path, persist_dir: Path) -> None:
+    if persist_dir == workspace or index_dir(workspace).is_relative_to(persist_dir):
+        raise ValueError("向量存储目录不能覆盖工作空间或索引管理目录。")
 
 
 def target_statuses_for_mode(mode: str) -> set[str]:
@@ -679,27 +654,20 @@ def _build_managed_index_locked(request: IndexRequest, mode: Literal["incrementa
             "file_count": status_before.get("summary", {}).get("indexed", 0),
         }
 
-    if mode == "full" or status_before.get("needRebuild"):
-        clear_vector_store(request)
-
-    try:
-        # All non-skipped modes currently rebuild the full index; stable doc_ids
-        # preserve support for subsequent single-file deletes.
-        build_result = build_vector_index(request)
-    except Exception as exc:
-        manifest = load_manifest(workspace)
-        for item in targets:
-            rel = item.get("path")
-            if not rel or item.get("status") == "deleted":
-                continue
-            failed = dict(item)
-            failed["status"] = "failed"
-            failed["error"] = str(exc)
-            manifest.setdefault("files", {})[rel] = failed
-        save_manifest(workspace, manifest)
-        raise
-
-    mark_all_scanned_indexed(request, build_result)
+    persist_dir = get_persist_dir(workspace, request.knowledge.vector_store_path)
+    _validate_transaction_target(workspace, persist_dir)
+    with staged_index_update(
+        persist_dir, [manifest_path(workspace), metadata_path(workspace)], copy_existing=False
+    ) as staged_dir:
+        # Build privately, including the empty-corpus case. Absence of a staged
+        # store commits an empty index instead of leaving stale vectors behind.
+        staged_knowledge = request.knowledge.model_copy(update={
+            "vector_store_path": staged_dir.relative_to(workspace).as_posix(),
+        })
+        staged_request = request.model_copy(update={"knowledge": staged_knowledge})
+        build_result = build_vector_index(staged_request)
+        mark_all_scanned_indexed(staged_request, build_result)
+    build_result["persist_dir"] = str(persist_dir)
     status_after = build_status_snapshot(request)
     return {
         **build_result,
@@ -750,18 +718,18 @@ def delete_file_index(request: IndexBuildRequest) -> dict[str, Any]:
     persist_dir = get_persist_dir(workspace, vector_store)
     doc_id = file_doc_id(workspace, rel)
 
-    # Physically remove vectors from the vector store
-    with index_operation_lock(persist_dir):
-        try:
-            removed = _remove_doc_vectors(workspace, persist_dir, doc_id, rel)
-        except CorruptIndexError as exc:
-            return corrupt_index_response(exc, rel)
-
-        # Remove from manifest
-        manifest = load_manifest(workspace)
-        existed = rel in manifest.get("files", {})
-        manifest.get("files", {}).pop(rel, None)
-        save_manifest(workspace, manifest)
+    _validate_transaction_target(workspace, persist_dir)
+    try:
+        with index_operation_lock(persist_dir), staged_index_update(
+            persist_dir, [manifest_path(workspace), metadata_path(workspace)], copy_existing=True
+        ) as staged_dir:
+            removed = _remove_doc_vectors(workspace, staged_dir, doc_id, rel)
+            manifest = load_manifest(workspace)
+            existed = rel in manifest.get("files", {})
+            manifest.get("files", {}).pop(rel, None)
+            save_manifest(workspace, manifest)
+    except CorruptIndexError as exc:
+        return corrupt_index_response(exc, rel)
 
     return {
         "success": True,
@@ -788,6 +756,13 @@ def _node_metadata(node: Any) -> dict[str, Any]:
 def get_file_chunks(request: IndexBuildRequest) -> dict[str, Any]:
     """Return persisted chunk/node details for one indexed file."""
     workspace = Path(request.workspace.workspace_path).expanduser().resolve()
+    knowledge = request.knowledge or KnowledgeConfig()
+    with index_operation_lock(get_persist_dir(workspace, knowledge.vector_store_path)):
+        return _get_file_chunks_locked(request)
+
+
+def _get_file_chunks_locked(request: IndexBuildRequest) -> dict[str, Any]:
+    workspace = Path(request.workspace.workspace_path).expanduser().resolve()
     if not workspace.exists() or not workspace.is_dir():
         raise ValueError("工作空间不存在或不是文件夹。")
 
@@ -809,23 +784,19 @@ def get_file_chunks(request: IndexBuildRequest) -> dict[str, Any]:
             "error": "索引不存在，请先构建索引。",
         }
 
-    if request.ai_config and request.ai_config.embedding:
-        configure_llama_index(request.ai_config.embedding, knowledge)
-
     try:
         validate_persisted_index_json(persist_dir)
     except CorruptIndexError as exc:
         return corrupt_index_response(exc, rel)
 
-    from llama_index.core import StorageContext, load_index_from_storage
+    from llama_index.core import StorageContext
 
     with index_operation_lock(persist_dir):
         try:
             storage_context = StorageContext.from_defaults(persist_dir=str(persist_dir))
-            index = load_index_from_storage(storage_context)
         except JSONDecodeError as exc:
             return corrupt_index_response(CorruptIndexError(persist_dir, str(exc)), rel)
-    vector_store_obj = index._vector_store if hasattr(index, "_vector_store") else getattr(index, "vector_store", None)
+    vector_store_obj = storage_context.vector_store
     docstore = getattr(storage_context, "docstore", None)
     docs = dict(getattr(docstore, "docs", {}) or {})
 
@@ -889,18 +860,13 @@ def delete_index_data(request: IndexBuildRequest) -> dict[str, Any]:
     vector_store = knowledge.vector_store_path or ".looma/rag-index"
     persist_dir = get_persist_dir(workspace, vector_store)
 
-    cleared = False
-    if persist_dir.exists():
-        shutil.rmtree(persist_dir)
-        cleared = True
-
-    manifest_file = manifest_path(workspace)
-    if manifest_file.exists():
-        manifest_file.unlink()
-
-    metadata_file = metadata_path(workspace)
-    if metadata_file.exists():
-        metadata_file.unlink()
+    _validate_transaction_target(workspace, persist_dir)
+    with index_operation_lock(persist_dir), staged_index_update(
+        persist_dir, [manifest_path(workspace), metadata_path(workspace)], copy_existing=False
+    ):
+        cleared = persist_dir.exists()
+        manifest_path(workspace).unlink(missing_ok=True)
+        metadata_path(workspace).unlink(missing_ok=True)
 
     return {
         "success": True,
@@ -912,52 +878,48 @@ def delete_index_data(request: IndexBuildRequest) -> dict[str, Any]:
 
 def reindex_file(request: IndexBuildRequest) -> dict[str, Any]:
     if not request.path:
-        raise ValueError("path is required")
+        raise ValueError("必须提供工作空间相对路径。")
 
     workspace = Path(request.workspace.workspace_path).expanduser().resolve()
     rel = request.path.strip().replace("\\", "/")
-    file_path = workspace / rel
-
-    if not file_path.exists():
-        raise ValueError(f"文件不存在：{rel}")
+    if PurePosixPath(rel).is_absolute() or PureWindowsPath(rel).is_absolute() or ".." in rel.split("/"):
+        raise ValueError("文件路径必须位于工作空间内。")
+    if not index_service.is_indexable_file(workspace / rel, workspace):
+        raise ValueError("文件格式不支持或该文件已排除索引。")
+    file_path = (workspace / rel).resolve()
+    try:
+        rel = file_path.relative_to(workspace).as_posix()
+    except ValueError as exc:
+        raise ValueError("文件路径必须位于工作空间内。") from exc
+    if not file_path.is_file():
+        raise ValueError(f"文件不存在或不是普通文件：{rel}")
 
     knowledge = request.knowledge or KnowledgeConfig()
     vector_store = knowledge.vector_store_path or ".looma/rag-index"
     persist_dir = get_persist_dir(workspace, vector_store)
     doc_id = file_doc_id(workspace, rel)
-
-    with index_operation_lock(persist_dir):
-        try:
-            # Delete old vectors for this file. Pass rel as a metadata fallback so
-            # indexes created before path normalization do not leave duplicate chunks.
-            _remove_doc_vectors(workspace, persist_dir, doc_id, rel)
-        except CorruptIndexError as exc:
-            return corrupt_index_response(exc, rel)
-
-        # Ensure embedding is configured
-        if not request.ai_config or not request.ai_config.embedding:
-            raise ValueError("ai_config.embedding is required for reindex")
-
-        index_request = IndexRequest(workspace=request.workspace, knowledge=knowledge, ai_config=request.ai_config)
-        configure_llama_index(request.ai_config.embedding, knowledge)
-
-        try:
-            # Insert new vectors
-            chunks = _insert_doc_vectors(workspace, persist_dir, file_path, index_request)
-        except CorruptIndexError as exc:
-            return corrupt_index_response(exc, rel)
-
-        # Update manifest and metadata
-        manifest = load_manifest(workspace)
-        entry = file_entry(file_path, workspace, "indexed")
-        indexed_at = now_iso()
-        entry["chunkCount"] = chunks
-        entry["chunkIds"] = chunk_ids(workspace_id_for_path(workspace), rel, entry.get("contentHash") or "", chunks)
-        entry["lastIndexedAt"] = indexed_at
-        entry["error"] = None
-        manifest["files"][rel] = entry
-        save_manifest(workspace, manifest)
-        metadata = update_metadata_after_file_reindex(index_request, workspace, rel, chunks, indexed_at)
+    _validate_transaction_target(workspace, persist_dir)
+    if not request.ai_config or not request.ai_config.embedding:
+        raise ValueError("单文件重建需要配置嵌入模型。")
+    index_request = IndexRequest(workspace=request.workspace, knowledge=knowledge, ai_config=request.ai_config)
+    try:
+        with index_operation_lock(persist_dir), staged_index_update(
+            persist_dir, [manifest_path(workspace), metadata_path(workspace)], copy_existing=True
+        ) as staged_dir:
+            _remove_doc_vectors(workspace, staged_dir, doc_id, rel)
+            chunks = _insert_doc_vectors(workspace, staged_dir, file_path, index_request)
+            manifest = load_manifest(workspace)
+            entry = file_entry(file_path, workspace, "indexed")
+            indexed_at = now_iso()
+            entry["chunkCount"] = chunks
+            entry["chunkIds"] = chunk_ids(workspace_id_for_path(workspace), rel, entry.get("contentHash") or "", chunks)
+            entry["lastIndexedAt"] = indexed_at
+            entry["error"] = None
+            manifest["files"][rel] = entry
+            save_manifest(workspace, manifest)
+            metadata = update_metadata_after_file_reindex(index_request, workspace, rel, chunks, indexed_at)
+    except CorruptIndexError as exc:
+        return corrupt_index_response(exc, rel)
 
     return {
         "success": True,

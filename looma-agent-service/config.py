@@ -157,7 +157,7 @@ def with_global_knowledge_config(request_knowledge: KnowledgeConfig | None = Non
     global_config = load_global_knowledge_config()
     if request_knowledge is None:
         return global_config
-    data = request_knowledge.model_dump()
-    # Requests may override per-workspace values when explicitly provided, but the
-    # common Electron path now omits them so the backend reads settings.json directly.
+    # Omitted request fields inherit global settings, even when their schema
+    # defaults differ; explicitly supplied defaults and False still override.
+    data = request_knowledge.model_dump(exclude_unset=True)
     return KnowledgeConfig(**{**global_config.model_dump(), **data})

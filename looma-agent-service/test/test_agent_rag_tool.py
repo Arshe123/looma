@@ -415,7 +415,7 @@ class QueryServiceLoadFailureTest(unittest.TestCase):
                     raise storage_error
                 return object()
 
-        def load_index_from_storage(_storage_context):
+        def load_index_from_storage(_storage_context, **_kwargs):
             if load_error is not None:
                 raise load_error
             return object()
@@ -432,7 +432,8 @@ class QueryServiceLoadFailureTest(unittest.TestCase):
             with (
                 patch("rag.query_service.has_index", return_value=True),
                 patch("rag.query_service.validate_persisted_index_json"),
-                patch("rag.query_service.configure_llama_index"),
+                patch("rag.query_service.index_service.make_embedding_model"),
+                patch("rag.query_service.index_service.make_node_transformations"),
                 patch.dict(sys.modules, fake_modules),
                 self.assertRaises(CorruptIndexError) as raised,
             ):
@@ -445,7 +446,7 @@ class QueryServiceLoadFailureTest(unittest.TestCase):
             with (
                 patch("rag.query_service.has_index", return_value=True),
                 patch("rag.query_service.validate_persisted_index_json"),
-                patch("rag.query_service.configure_llama_index", side_effect=ValueError("bad provider config")),
+                patch("rag.query_service.index_service.make_embedding_model", side_effect=ValueError("bad provider config")),
                 patch.dict(sys.modules, fake_modules),
                 self.assertRaisesRegex(ValueError, "bad provider config"),
             ):

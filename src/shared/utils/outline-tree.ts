@@ -21,9 +21,9 @@ export const resolveOutlineExpandedIds = (
   knownIds: string[],
   resetExpansion: boolean,
   hasPersistedExpansion: boolean,
+  roots: OutlineTreeNode[] = buildOutlineTree(items),
 ) => {
   const idSet = new Set(items.map((item) => item.id))
-  const roots = buildOutlineTree(items)
   const defaultExpandedIds = roots.length === 1
     ? [roots[0].item.id, ...roots[0].children.map((child) => child.item.id)]
     : roots.map((root) => root.item.id)

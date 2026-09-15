@@ -4,12 +4,14 @@ import {
   flattenOutlineTree,
   resolveOutlineExpandedIds,
   type OutlineFlatRow,
+  type OutlineTreeNode,
 } from '@/shared/utils/outline-tree'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 
 type MarkdownOutlineWorkerRequest = {
   requestId: number
-  content: string
+  content?: string
+  contentRevision: number
   expandedIds: string[]
   knownIds: string[]
   resetExpansion: boolean
@@ -38,20 +40,32 @@ const getErrorMessage = (error: unknown) => {
   return String(error || 'Failed to build markdown outline')
 }
 
+// One document per panel worker; expansion messages carry only the revision and IDs.
+let cachedOutline: { revision: number; items: MarkdownOutlineItem[]; tree: OutlineTreeNode[] } | null = null
+
 self.onmessage = (event: MessageEvent<MarkdownOutlineWorkerRequest>) => {
-  const { requestId, content, expandedIds, knownIds, resetExpansion, hasPersistedExpansion } = event.data
+  const { requestId, content, contentRevision, expandedIds, knownIds, resetExpansion, hasPersistedExpansion } = event.data
 
   try {
-    const items = parseMarkdownOutline(content)
+    if (content !== undefined) {
+      cachedOutline = null
+      const items = parseMarkdownOutline(content)
+      cachedOutline = { revision: contentRevision, items, tree: buildOutlineTree(items) }
+    }
+    if (!cachedOutline || cachedOutline.revision !== contentRevision) {
+      throw new Error('Outline content revision is unavailable')
+    }
+    const { items, tree: outlineTree } = cachedOutline
     const ids = items.map((item) => item.id)
     const nextExpandedIds = resolveOutlineExpandedIds(
       items,
       expandedIds,
       knownIds,
-      resetExpansion,
-      hasPersistedExpansion,
+      // Explicit expansion must not reapply defaults while a parse reply is pending.
+      content === undefined ? true : resetExpansion,
+      content === undefined ? true : hasPersistedExpansion,
+      outlineTree,
     )
-    const outlineTree = buildOutlineTree(items)
     const visibleRows = flattenOutlineTree(outlineTree, new Set(nextExpandedIds))
     const response: MarkdownOutlineWorkerResponse = {
       requestId,

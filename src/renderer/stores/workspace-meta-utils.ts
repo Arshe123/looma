@@ -6,7 +6,7 @@ interface BuildWorkspaceMetaInput {
   expandedDirs: string[]
   selectedPaths: string[]
   noteOrder: Record<string, string[]>
-  openedFiles: string[]
+  openedFiles?: string[]
   activeFileRelativePath: string
   tabs?: WorkspaceTab[]
   activeTabId?: string
@@ -54,7 +54,7 @@ export const buildWorkspaceMetaPayload = (input: BuildWorkspaceMetaInput) => {
     .filter((tab) => tab.id !== input.previewTabId && !(tab.kind === 'system' && tab.page === 'agent-diff'))
   const openedFiles = Array.isArray(input.tabs)
     ? getFilePathsFromTabs(normalizedTabs)
-    : input.openedFiles.map(normalizeDir)
+    : (input.openedFiles ?? []).map(normalizeDir)
   // Temporary previews retain their reading state until closed, but not across restarts.
   const runtimeFiles = Array.isArray(input.tabs) ? getFilePathsFromTabs(allTabs) : openedFiles
   const cleanedSessions = cleanupSessionsForOpenedFiles(runtimeFiles, input.fileSessions)

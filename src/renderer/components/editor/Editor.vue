@@ -19,6 +19,7 @@ import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
 import { getWritingBottomMargin } from '@/shared/utils/editor-writing-scroll'
 import { getDroppedFilePaths, isSupportedDroppedImagePath } from '@/shared/utils/external-file-drop'
 import { formatMarkdownImage } from '@/shared/utils/tiptap-image-insertion'
+import { importImageBatch } from '@/shared/utils/image-import-batch'
 import EditorDropAlert from './EditorDropAlert.vue'
 
 const props = withDefaults(defineProps<{
@@ -255,16 +256,12 @@ const importDroppedImages = async (event: DragEvent, insertAt: number) => {
     return
   }
 
-  const imported: Array<{ relativePath: string; fileName: string }> = []
-  const failures: string[] = []
-  workspaceStore.setBusy(true, sourcePaths.length > 1 ? `正在导入 ${sourcePaths.length} 张图片...` : '正在导入图片...')
-  try {
-    for (const sourcePath of sourcePaths) {
-      const result = await window.electronAPI.fs.importImage(workspaceId, props.relativeFilePath, sourcePath)
-      if (result.success && result.data) imported.push(result.data)
-      else failures.push(result.error || sourcePath)
-    }
-    if (editor && imported.length > 0) {
+  await importImageBatch({
+    sourcePaths,
+    importImage: sourcePath => window.electronAPI.fs.importImage(workspaceId, props.relativeFilePath, sourcePath),
+    setBusy: (busy, message) => workspaceStore.setBusy(busy, message),
+    insertImages: imported => {
+      if (!editor) return
       const markdownImages = imported.map(image => formatMarkdownImage({
         alt: image.fileName,
         src: image.relativePath,
@@ -275,19 +272,12 @@ const importDroppedImages = async (event: DragEvent, insertAt: number) => {
         selection: { anchor: safePosition + markdownImages.length },
       })
       editor.focus()
-    }
-    if (failures.length > 0) {
-      dropErrorMessage.value = imported.length > 0
-        ? '部分图片未能导入，其余图片已插入。'
-        : '图片导入失败，请确认图片仍然存在且当前笔记目录可写。'
-      dropTechnicalDetail.value = failures.join('\n')
-    }
-  } catch (error) {
-    dropErrorMessage.value = '图片导入失败，请稍后重试。'
-    dropTechnicalDetail.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    workspaceStore.setBusy(false)
-  }
+    },
+    reportError: (message, detail) => {
+      dropErrorMessage.value = message
+      dropTechnicalDetail.value = detail
+    },
+  })
 }
 
 const clearDropError = () => {

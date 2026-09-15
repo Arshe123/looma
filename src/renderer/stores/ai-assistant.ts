@@ -9,7 +9,7 @@ import {
   failAiTimelineStep,
   formatAiRuntimeError,
 } from '../components/ai/aiTimeline'
-import { isArtifactBackedFilePatchBridgeInterruption, projectAgentRunView } from './agent-event-view'
+import { isArtifactBackedFilePatchBridgeInterruption, projectAgentDisplayEvents, projectAgentRunView } from './agent-event-view'
 import {
   flattenAgentHistoryForSummary,
   normalizeAgentConversationHistory,
@@ -269,7 +269,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     getMessageAgentDisplayEvents: (state) => (conversationId: string | null | undefined, messageId: number | undefined) => {
       if (!conversationId || messageId === undefined) return []
       const key = getAgentDisplayMessageKey(conversationId, messageId)
-      return projectAgentRunView(state.agentEventsByMessageKey[key] || [], state.agentSourcesByMessageKey[key] || []).displayEvents
+      return projectAgentDisplayEvents(state.agentEventsByMessageKey[key] || [])
     },
     isWorkspaceIndexing: (state) => (workspaceId: string | null | undefined) => (
       Boolean(workspaceId && state.indexStreamsByWorkspaceId[workspaceId])

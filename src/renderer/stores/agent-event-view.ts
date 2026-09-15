@@ -1,5 +1,5 @@
 import type { AgentEvent, AgentSource } from '../../shared/types/agent-events'
-import { foldAgentState, projectEventIndexes } from '../../shared/utils/agent-event-projections'
+import { foldAgentState, orderAgentEvents, projectEventIndexes } from '../../shared/utils/agent-event-projections'
 import type { AgentConversationDisplayEvent, AgentConversationDisplayEventStatus } from '../components/ai/agentConversationDisplay'
 import type { AiAssistantTimelineOutput, AiAssistantTimelineStep } from './workspace-types'
 
@@ -15,7 +15,7 @@ export interface ProjectedAgentApproval {
   error?: string
 }
 
-const ordered = (events: AgentEvent[]) => [...events].sort((a, b) => a.sequence - b.sequence)
+const ordered = orderAgentEvents
 const jsonPreview = (value: unknown) => {
   try {
     return JSON.stringify(value, null, 2).slice(0, 4_000)
@@ -50,11 +50,13 @@ export const isArtifactBackedFilePatchBridgeInterruption = (events: AgentEvent[]
   ))
 }
 
-export const projectAgentApprovals = (events: AgentEvent[]): ProjectedAgentApproval[] => {
-  const indexes = projectEventIndexes(events)
+const projectApprovalsWithIndexes = (
+  events: AgentEvent[],
+  indexes: ReturnType<typeof projectEventIndexes>,
+): ProjectedAgentApproval[] => {
   const artifacts = new Map<string, Extract<AgentEvent, { type: 'artifact_created' }>['payload']>()
   const stepByCallId = new Map<string, string>()
-  for (const event of ordered(events)) {
+  for (const event of events) {
     if (event.type === 'artifact_created') artifacts.set(event.payload.artifactId, event.payload)
     if (event.type === 'tool_call_requested') stepByCallId.set(event.payload.callId, event.payload.stepId)
   }
@@ -75,16 +77,18 @@ export const projectAgentApprovals = (events: AgentEvent[]): ProjectedAgentAppro
   })
 }
 
-export const projectAgentDisplayEvents = (events: AgentEvent[]): AgentConversationDisplayEvent[] => {
-  const indexes = projectEventIndexes(events)
-  const state = foldAgentState(events)
+const projectDisplayWithContext = (
+  events: AgentEvent[],
+  indexes: ReturnType<typeof projectEventIndexes>,
+  state: ReturnType<typeof foldAgentState>,
+): AgentConversationDisplayEvent[] => {
   const approvals = indexes.approvals
   const approvalByArtifact = new Map(Object.values(approvals).map((approval) => [approval.artifactId, approval]))
   const artifactCallIds = new Set(events.flatMap(event => event.type === 'artifact_created' ? [event.payload.callId] : []))
   const result: AgentConversationDisplayEvent[] = []
   const batchThoughtSummaries = new Set<string>()
 
-  for (const event of ordered(events)) {
+  for (const event of events) {
     // Tool calls from one model decision are recorded before their results. Old
     // ledgers may contain the same provider-level summary once per call, so use
     // the first result as the batch boundary while projecting historical data.
@@ -166,24 +170,33 @@ export const projectAgentDisplayEvents = (events: AgentEvent[]): AgentConversati
   return result
 }
 
-export const projectAgentTimeline = (events: AgentEvent[], sources: AgentSource[]): AiAssistantTimelineStep[] => {
-  const indexes = projectEventIndexes(events)
-  const state = foldAgentState(events)
-  const cancelledAt = ordered(events).find((event) => event.type === 'run_cancelled')?.timestamp
-  const failedAt = ordered(events).find((event) => event.type === 'run_failed')?.timestamp
-  const artifactCallIds = new Set(events.flatMap(event => event.type === 'artifact_created' ? [event.payload.callId] : []))
+const projectTimelineWithContext = (
+  events: AgentEvent[],
+  sources: AgentSource[],
+  indexes: ReturnType<typeof projectEventIndexes>,
+  state: ReturnType<typeof foldAgentState>,
+): AiAssistantTimelineStep[] => {
+  const cancelledAt = events.find((event) => event.type === 'run_cancelled')?.timestamp
+  const failedAt = events.find((event) => event.type === 'run_failed')?.timestamp
+  const artifactCreatedAtByCallId = new Map<string, number>()
+  for (const event of events) {
+    // Preserve the first artifact in sequence order, not the latest timestamp.
+    if (event.type === 'artifact_created' && !artifactCreatedAtByCallId.has(event.payload.callId)) {
+      artifactCreatedAtByCallId.set(event.payload.callId, event.timestamp)
+    }
+  }
   const steps: AiAssistantTimelineStep[] = []
-  const started = ordered(events).find((event) => event.type === 'agent_started')
+  const started = events.find((event) => event.type === 'agent_started')
   if (started) {
     steps.push({ id: 'agent-start', title: '启动 Agent', detail: 'Agent 已启动。', status: 'completed', startedAt: started.timestamp, endedAt: started.timestamp, outputs: [] })
   }
-  for (const event of ordered(events)) {
+  for (const event of events) {
     if (event.type !== 'tool_call_requested') continue
     const call = indexes.toolCalls[event.payload.callId]
     const failed = call?.status === 'failed'
     const cancelled = state.status === 'cancelled' && call?.status === 'running'
     const interrupted = state.status === 'failed' && call?.status === 'running'
-    const patchProposalCreated = event.payload.tool === 'file_patch' && artifactCallIds.has(event.payload.callId)
+    const patchProposalCreated = event.payload.tool === 'file_patch' && artifactCreatedAtByCallId.has(event.payload.callId)
     const outputs: AiAssistantTimelineOutput[] = [{ id: `${event.id}-arguments`, type: 'json', title: '调用参数', content: jsonPreview(event.payload.argumentsPreview) }]
     if (call?.uiSummary) outputs.push({
       id: `${event.id}-result`,
@@ -211,7 +224,7 @@ export const projectAgentTimeline = (events: AgentEvent[], sources: AgentSource[
             : 'active',
       startedAt: event.payload.startedAt,
       endedAt: patchProposalCreated
-        ? ordered(events).find(item => item.type === 'artifact_created' && item.payload.callId === event.payload.callId)?.timestamp
+        ? artifactCreatedAtByCallId.get(event.payload.callId)
         : cancelled
           ? cancelledAt
           : interrupted
@@ -222,7 +235,7 @@ export const projectAgentTimeline = (events: AgentEvent[], sources: AgentSource[
   }
   if (sources.length) {
     let sourceTimestamp = 0
-    for (const event of ordered(events)) {
+    for (const event of events) {
       if (event.type === 'retrieval_completed') sourceTimestamp = Math.max(sourceTimestamp, event.timestamp)
     }
     steps.push({
@@ -245,15 +258,31 @@ export const projectAgentTimeline = (events: AgentEvent[], sources: AgentSource[
   return steps
 }
 
+export const projectAgentApprovals = (events: AgentEvent[]): ProjectedAgentApproval[] => {
+  events = ordered(events)
+  return projectApprovalsWithIndexes(events, projectEventIndexes(events))
+}
+
+export const projectAgentDisplayEvents = (events: AgentEvent[]): AgentConversationDisplayEvent[] => {
+  events = ordered(events)
+  return projectDisplayWithContext(events, projectEventIndexes(events), foldAgentState(events))
+}
+
+export const projectAgentTimeline = (events: AgentEvent[], sources: AgentSource[]): AiAssistantTimelineStep[] => {
+  events = ordered(events)
+  return projectTimelineWithContext(events, sources, projectEventIndexes(events), foldAgentState(events))
+}
+
 export const projectAgentRunView = (events: AgentEvent[], sources: AgentSource[]) => {
+  events = ordered(events)
   const state = foldAgentState(events)
   const indexes = projectEventIndexes(events)
   return {
     state,
     indexes,
-    displayEvents: projectAgentDisplayEvents(events),
-    timeline: projectAgentTimeline(events, sources),
-    approvals: projectAgentApprovals(events),
+    displayEvents: projectDisplayWithContext(events, indexes, state),
+    timeline: projectTimelineWithContext(events, sources, indexes, state),
+    approvals: projectApprovalsWithIndexes(events, indexes),
     toolCallCount: Object.keys(indexes.toolCalls).length,
     sourceCount: sources.length,
   }

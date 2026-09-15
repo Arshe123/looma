@@ -24,6 +24,7 @@ const props = defineProps<{
   isPartial: boolean
   isLoadingMore: boolean
   totalBytes: number
+  scrollSyncEnabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -59,6 +60,7 @@ const progress = computed(() => {
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
 const imageCache = new Map<string, string | null>()
+const pendingImageReads = new Map<string, Promise<string | null>>()
 let imageResolveGeneration = 0
 let scrollSyncFrame: number | null = null
 
@@ -103,9 +105,16 @@ const resolveLocalImages = async () => {
     if (!filePath) return
     let data = imageCache.get(filePath)
     if (data === undefined) {
-      const result = await window.electronAPI.file.readFileBase64(filePath)
-      data = result.success && result.data ? result.data : null
-      imageCache.set(filePath, data)
+      let pending = pendingImageReads.get(filePath)
+      if (!pending) {
+        pending = window.electronAPI.file.readFileBase64(filePath).then(result => {
+          const resolved = result.success && result.data ? result.data : null
+          imageCache.set(filePath, resolved)
+          return resolved
+        }).finally(() => pendingImageReads.delete(filePath))
+        pendingImageReads.set(filePath, pending)
+      }
+      data = await pending
     }
     if (generation === imageResolveGeneration && data && image.isConnected) image.src = data
   }))
@@ -194,10 +203,10 @@ const applyScrollState = (state: ScrollSyncState) => {
 
 const handleScroll = () => {
   requestMoreNearBoundary()
-  if (scrollSyncFrame !== null) return
+  if (!props.scrollSyncEnabled || scrollSyncFrame !== null) return
   scrollSyncFrame = requestAnimationFrame(() => {
     scrollSyncFrame = null
-    emit('scroll-sync', getScrollState())
+    if (props.scrollSyncEnabled) emit('scroll-sync', getScrollState())
   })
 }
 

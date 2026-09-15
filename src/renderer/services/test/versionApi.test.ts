@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareVersions, mapGitHubRelease } from '../versionApi'
+import { compareVersions, mapGitHubRelease } from '@/shared/utils/version-api'
 
 describe('versionApi', () => {
   it('compares semantic versions with v prefixes and prerelease suffixes', () => {

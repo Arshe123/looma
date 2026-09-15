@@ -79,7 +79,17 @@ export interface EventSnapshot {
   indexes: AgentEventIndexes
 }
 
-const orderedEvents = (events: AgentEvent[]) => [...events].sort((a, b) => a.sequence - b.sequence)
+// Projections only read this array. Reuse ordered ledgers without copying or
+// sorting, but never cache by identity: streaming callers can mutate in place.
+export const orderAgentEvents = (events: AgentEvent[]): AgentEvent[] => {
+  for (let index = 1; index < events.length; index += 1) {
+    if (events[index - 1].sequence > events[index].sequence) {
+      return [...events].sort((a, b) => a.sequence - b.sequence)
+    }
+  }
+  return events
+}
+const orderedEvents = orderAgentEvents
 const unique = <T>(values: T[]) => Array.from(new Set(values))
 
 export const foldAgentState = (events: AgentEvent[]): AgentState => {
@@ -272,6 +282,7 @@ export const projectUsage = (events: AgentEvent[]): AgentUsageProjection => {
 }
 
 export const projectEventIndexes = (events: AgentEvent[]): AgentEventIndexes => {
+  events = orderedEvents(events)
   const artifactIds: string[] = []
   for (const event of orderedEvents(events)) {
     if (event.type === 'artifact_created') artifactIds.push(event.payload.artifactId)

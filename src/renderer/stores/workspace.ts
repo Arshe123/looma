@@ -367,8 +367,6 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeFileSaveError: '' as string,
     openedTextFileContents: {} as Record<string, OpenTextFileState>,
     nextTextFileLoadRequestId: 0 as number,
-    openedFiles: [] as string[],
-    openedSystemPages: [] as SystemPageId[],
     tabs: [] as WorkspaceTab[],
     previewTabId: '',
     activeTabId: '' as string,
@@ -819,20 +817,18 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     setAiAssistantActionDisabled(type: AiAssistantMessageAction['type'], disabled: boolean) {
       if (this.aiAssistant.isTemporaryConversation || !this.aiAssistant.activeConversationId) return
-      let changed = false
       const conversation = this.ensureActiveAiAssistantConversation()
+      const needsUpdate = (action: AiAssistantMessageAction) => action.type === type && !!action.disabled !== disabled
+      if (!conversation.messages.some((message) => message.actions?.some(needsUpdate))) return
       conversation.messages = conversation.messages.map((message) => {
-        if (!message.actions?.some((action) => action.type === type)) return message
-        changed = true
+        if (!message.actions?.some(needsUpdate)) return message
         return {
           ...message,
-          actions: message.actions.map((action) => action.type === type ? { ...action, disabled } : action),
+          actions: message.actions.map((action) => needsUpdate(action) ? { ...action, disabled } : action),
         }
       })
-      if (changed) {
-        this.touchAiAssistantConversation(conversation)
-        this.saveAiAssistantState()
-      }
+      this.touchAiAssistantConversation(conversation)
+      this.saveAiAssistantState()
     },
 
     removeAiAssistantMessagesByText(texts: string[]) {
@@ -1042,11 +1038,6 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     syncLegacyTabState() {
       if (!this.tabs.some((tab) => tab.id === this.previewTabId)) this.previewTabId = ''
-      this.openedFiles = getFilePathsFromTabs(this.tabs)
-      this.openedSystemPages = this.tabs
-        .filter((tab): tab is SystemWorkspaceTab => tab.kind === 'system')
-        .map((tab) => tab.page)
-
       const active = this.tabs.find((tab) => tab.id === this.activeTabId) || null
       this.activeSystemPage = active?.kind === 'system' ? active.page : null
     },
@@ -1762,12 +1753,10 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeWorkspaceId = null
       this.previewTabId = ''
       this.resetActiveFileState()
-      this.openedSystemPages = []
       this.tabs = []
       this.activeTabId = ''
       this.activeSystemPage = null
       this.watchedWorkspaceId = null
-      this.openedFiles = []
       this.openedTextFileContents = {}
       this.activeSidebarPanel = DEFAULT_ACTIVE_SIDEBAR_PANEL
       this.resetAiAssistantState()
@@ -1861,8 +1850,6 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.expandedDirs = []
         this.selectedPaths = []
         this.noteOrder = {}
-        this.openedFiles = []
-        this.openedSystemPages = []
         this.tabs = []
         this.activeTabId = ''
         this.activeSystemPage = null
@@ -1950,7 +1937,6 @@ export const useWorkspaceStore = defineStore('workspace', {
         expandedDirs: this.expandedDirs,
         selectedPaths: this.selectedPaths,
         noteOrder: this.noteOrder,
-        openedFiles: this.openedFiles,
         tabs: this.tabs,
         previewTabId: this.previewTabId,
         activeTabId: this.activeTabId,

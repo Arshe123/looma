@@ -383,6 +383,7 @@ defineExpose({
       <ChunkedMarkdownPreview
         v-else-if="useChunkedPreview"
         ref="chunkedPreviewRef"
+        :scroll-sync-enabled="viewMode === 'split'"
         :content="props.content"
         :filePath="props.filePath"
         :relativeFilePath="props.relativeFilePath"

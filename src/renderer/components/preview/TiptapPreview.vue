@@ -55,6 +55,7 @@ import {
   insertImportedImagesAt,
   renderCurrentMarkdownImage,
 } from '@/shared/utils/tiptap-image-insertion'
+import { importImageBatch } from '@/shared/utils/image-import-batch'
 import {
   handleMarkdownNoteRefEnter,
   insertMarkdownNoteRefTemplate,
@@ -305,32 +306,21 @@ const importImagePaths = async (sourcePaths: string[], insertAt: number) => {
   }
   if (supported.length === 0) return
 
-  const imported: Array<{ relativePath: string; fileName: string }> = []
-  const failures: string[] = []
-  workspaceStore.setBusy(true, supported.length > 1 ? `正在导入 ${supported.length} 张图片...` : '正在导入图片...')
-  try {
-    for (const sourcePath of supported) {
-      const result = await window.electronAPI.fs.importImage(workspaceId, props.relativeFilePath, sourcePath)
-      if (result.success && result.data) imported.push(result.data)
-      else failures.push(result.error || sourcePath)
-    }
-    if (imported.length > 0 && !currentEditor.isDestroyed) {
+  await importImageBatch({
+    sourcePaths: supported,
+    importImage: sourcePath => window.electronAPI.fs.importImage(workspaceId, props.relativeFilePath, sourcePath),
+    setBusy: (busy, message) => workspaceStore.setBusy(busy, message),
+    insertImages: imported => {
+      if (currentEditor.isDestroyed) return
       if (!insertImportedImagesAt(currentEditor, imported, insertAt)) {
-        failures.push(`图片已复制到 assets，但编辑器拒绝在位置 ${insertAt} 插入。`)
+        return `图片已复制到 assets，但编辑器拒绝在位置 ${insertAt} 插入。`
       }
-    }
-    if (failures.length > 0) {
-      dropErrorMessage.value = imported.length > 0
-        ? '部分图片未能导入，其余图片已插入。'
-        : '图片导入失败，请确认图片仍然存在且当前笔记目录可写。'
-      dropTechnicalDetail.value = failures.join('\n')
-    }
-  } catch (error) {
-    dropErrorMessage.value = '图片导入失败，请稍后重试。'
-    dropTechnicalDetail.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    workspaceStore.setBusy(false)
-  }
+    },
+    reportError: (message, detail) => {
+      dropErrorMessage.value = message
+      dropTechnicalDetail.value = detail
+    },
+  })
 }
 
 const importDroppedImages = async (event: DragEvent) => {

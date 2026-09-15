@@ -16,6 +16,7 @@ const isOutlineLoading = ref(false)
 const outlineError = ref('')
 let outlineWorker: Worker | null = null
 let activeRequestId = 0
+let contentRevision = 0
 let hasPersistedExpansion = false
 
 const outlineSource = computed(() => {
@@ -89,10 +90,11 @@ const ensureOutlineWorker = () => {
   return outlineWorker
 }
 
-const requestOutline = (content: string, resetExpansion: boolean) => {
+const requestOutline = (content: string | undefined, resetExpansion: boolean) => {
   const worker = ensureOutlineWorker()
   const requestId = activeRequestId + 1
   activeRequestId = requestId
+  if (content !== undefined) contentRevision += 1
   outlineError.value = ''
   isOutlineLoading.value = true
 
@@ -103,7 +105,8 @@ const requestOutline = (content: string, resetExpansion: boolean) => {
 
   worker?.postMessage({
     requestId,
-    content,
+    ...(content !== undefined ? { content } : {}),
+    contentRevision,
     expandedIds: Array.from(expandedHeadingIds.value),
     knownIds: Array.from(knownHeadingIds.value),
     resetExpansion,
@@ -156,7 +159,7 @@ const toggleHeading = (id: string) => {
   }
   expandedHeadingIds.value = nextExpanded
   workspaceStore.setOutlineExpandedHeadingIds(outlineSource.value.key, Array.from(nextExpanded))
-  requestOutline(outlineSource.value.content, false)
+  requestOutline(undefined, false)
 }
 
 const jumpToHeading = (item: MarkdownOutlineItem) => {

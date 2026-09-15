@@ -4,7 +4,6 @@ import asyncio
 
 import hashlib
 import json
-import shutil
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -603,13 +602,6 @@ def mark_all_scanned_indexed(request: IndexRequest, build_result: dict[str, Any]
     build_result["chunk_count"] = summary["chunkCount"]
     build_result["metadata"] = metadata
     return build_result
-
-
-def clear_vector_store(request: IndexRequest) -> None:
-    workspace = Path(request.workspace.workspace_path).expanduser().resolve()
-    persist_dir = get_persist_dir(workspace, request.knowledge.vector_store_path)
-    if persist_dir.exists():
-        shutil.rmtree(persist_dir)
 
 
 def _validate_transaction_target(workspace: Path, persist_dir: Path) -> None:

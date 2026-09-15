@@ -7,7 +7,7 @@ import re
 import stat
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncIterator, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 from pydantic import PrivateAttr
 
@@ -99,24 +99,6 @@ def has_index(workspace_path: str | Path, vector_store_path: str) -> bool:
     except ValueError:
         return False
     return persist_dir.is_dir() and all((persist_dir / filename).is_file() for filename in REQUIRED_INDEX_FILES)
-
-
-def get_index_status(workspace_path: str, vector_store_path: str) -> dict[str, Any]:
-    workspace = Path(workspace_path).expanduser().resolve()
-    try:
-        persist_dir = get_persist_dir(workspace, vector_store_path)
-    except ValueError as exc:
-        return {"exists": False, "error": str(exc)}
-    if not workspace.exists() or not workspace.is_dir():
-        return {
-            "exists": False,
-            "persist_dir": str(persist_dir),
-            "error": "工作空间不存在或不是文件夹。",
-        }
-    return {
-        "exists": has_index(workspace, vector_store_path),
-        "persist_dir": str(persist_dir),
-    }
 
 
 def _is_link_or_reparse(path: Path) -> bool:
@@ -256,34 +238,6 @@ def make_node_transformations(knowledge: KnowledgeConfig) -> list[TransformCompo
     return [sentence_splitter]
 
 
-def configure_llama_index(
-    embedding_config: EmbeddingModelConfig,
-    knowledge_or_chunk_size: KnowledgeConfig | int = 800,
-    chunk_overlap: int = 100,
-):
-    from llama_index.core import Settings
-    from llama_index.core.node_parser import NodeParser
-
-    if isinstance(knowledge_or_chunk_size, KnowledgeConfig):
-        knowledge = knowledge_or_chunk_size
-    else:
-        knowledge = KnowledgeConfig(chunk_size=int(knowledge_or_chunk_size), chunk_overlap=chunk_overlap)
-
-    Settings.embed_model = make_embedding_model(embedding_config)
-    transformations = make_node_transformations(knowledge)
-    # Keep node_parser populated for older LlamaIndex code paths, but force the
-    # actual transformation pipeline too. Settings.transformations is cached after
-    # first access, so updating only Settings.node_parser can keep using stale
-    # chunking behavior until the process restarts.
-    parser = transformations[-1]
-    assert isinstance(parser, NodeParser)
-    Settings.node_parser = parser
-    Settings.transformations = transformations
-    # Avoid llama-index trying to instantiate its own default LLM during indexing.
-    Settings.llm = None
-    return transformations
-
-
 def build_index(request: IndexRequest) -> dict[str, Any]:
     from llama_index.core import VectorStoreIndex
 
@@ -334,89 +288,3 @@ def build_index(request: IndexRequest) -> dict[str, Any]:
         "chunk_overlap": request.knowledge.chunk_overlap,
         "chunking_strategy": request.knowledge.chunking_strategy,
     }
-
-
-async def build_index_events(request: IndexRequest) -> AsyncIterator[dict[str, Any]]:
-    workspace = get_workspace_path(request)
-    persist_dir = get_persist_dir(workspace, request.knowledge.vector_store_path)
-
-    yield {
-        "type": "timeline",
-        "stepId": "validate-workspace",
-        "status": "active",
-        "title": "检查工作空间",
-        "detail": "正在确认工作空间和索引目录。",
-    }
-    if not workspace.exists() or not workspace.is_dir():
-        raise ValueError("工作空间不存在或不是文件夹。")
-    if request.ai_config is None or request.ai_config.embedding is None:
-        raise ValueError("ai_config.embedding is required for index building")
-    yield {"type": "timeline", "stepId": "validate-workspace", "status": "completed", "detail": "工作空间可用。"}
-
-    yield {"type": "timeline", "stepId": "scan-files", "status": "active", "title": "扫描文件", "detail": "正在查找 Markdown、文本和 PDF 文件。"}
-    input_files = collect_indexable_files(workspace)
-    yield {
-        "type": "timeline",
-        "stepId": "scan-files",
-        "status": "completed",
-        "detail": f"找到 {len(input_files)} 个可索引文件。",
-        "outputs": [{"type": "metric", "title": "可索引文件", "value": len(input_files), "unit": "个"}],
-    }
-    if not input_files:
-        yield {"type": "done", "result": {"status": "ok", "document_count": 0, "exists": False, "persist_dir": str(persist_dir)}}
-        return
-
-    embedding = make_embedding_model(request.ai_config.embedding)
-    transformations = make_node_transformations(request.knowledge or KnowledgeConfig())
-    yield {"type": "timeline", "stepId": "load-documents", "status": "active", "title": "读取文档", "detail": "正在读取文件内容。"}
-    documents = []
-    for index, file_path in enumerate(input_files, start=1):
-        relative = str(file_path.resolve().relative_to(workspace))
-        yield {"type": "progress", "stepId": "load-documents", "current": index, "total": len(input_files), "message": f"正在读取：{relative}"}
-        documents.extend(load_documents([file_path], workspace))
-    yield {
-        "type": "timeline",
-        "stepId": "load-documents",
-        "status": "completed",
-        "detail": f"已读取 {len(input_files)} 个文件，生成 {len(documents)} 个文档。",
-        "outputs": [
-            {"type": "metric", "title": "文件数量", "value": len(input_files), "unit": "个"},
-            {"type": "metric", "title": "文档数量", "value": len(documents), "unit": "个"},
-        ],
-    }
-    if not documents:
-        yield {"type": "done", "result": {"status": "ok", "document_count": 0, "exists": False, "persist_dir": str(persist_dir)}}
-        return
-
-    from llama_index.core import VectorStoreIndex
-
-    yield {"type": "timeline", "stepId": "build-vectors", "status": "active", "title": "构建向量", "detail": f"正在为 {len(documents)} 个文档生成向量索引。"}
-    index = VectorStoreIndex.from_documents(documents, embed_model=embedding, transformations=transformations)
-    yield {"type": "timeline", "stepId": "build-vectors", "status": "completed", "detail": "向量索引已构建完成。"}
-
-    yield {"type": "timeline", "stepId": "persist-index", "status": "active", "title": "写入索引", "detail": "正在写入索引文件。"}
-    persist_dir.mkdir(parents=True, exist_ok=True)
-    index.storage_context.persist(persist_dir=str(persist_dir))
-    yield {
-        "type": "timeline",
-        "stepId": "persist-index",
-        "status": "completed",
-        "detail": "索引文件已写入。",
-        "outputs": [{"type": "source", "title": "索引目录", "path": str(persist_dir)}],
-    }
-
-    exists = has_index(workspace, request.knowledge.vector_store_path)
-    result = {
-        "status": "ok",
-        "document_count": len(documents),
-        "file_count": len(input_files),
-        "exists": exists,
-        "persist_dir": str(persist_dir),
-        "embedding_model": request.ai_config.embedding.model,
-        "embedding_provider": request.ai_config.embedding.provider,
-        "chunk_size": request.knowledge.chunk_size,
-        "chunk_overlap": request.knowledge.chunk_overlap,
-        "chunking_strategy": request.knowledge.chunking_strategy,
-    }
-    yield {"type": "timeline", "stepId": "verify-index", "status": "completed", "title": "验证索引", "detail": "索引文件验证完成。"}
-    yield {"type": "done", "result": result, **result}

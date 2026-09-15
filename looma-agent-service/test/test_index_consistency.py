@@ -111,25 +111,21 @@ class IndexConsistencyTest(unittest.TestCase):
                 self.assertFalse(service.has_index(self.workspace, '.looma/rag-index'))
                 self.assertEqual(result['chunk_count'], 0)
 
-    def test_legacy_build_endpoints_also_commit_empty_state(self):
+    def test_build_stream_commits_empty_state(self):
         import main
 
         async def stream():
-            return [json.loads(line) async for line in main.index_events(self.request)]
+            response = await main.rag_index_build_stream(IndexBuildRequest(mode='full', **self.request.model_dump()))
+            return [json.loads(line if isinstance(line, str) else bytes(line)) async for line in response.body_iterator]
 
         with patch.object(main, 'resolve_request_config', side_effect=lambda request: request):
-            for streaming in (False, True):
-                with self.subTest(streaming=streaming):
-                    self.write_note('a.md')
-                    self.build()
-                    (self.workspace / 'a.md').unlink()
-                    if streaming:
-                        events = asyncio.run(stream())
-                        self.assertEqual(events[-1]['type'], 'done')
-                    else:
-                        self.assertTrue(asyncio.run(main.build_index_result(self.request))['success'])
-                    self.assertFalse(service.has_index(self.workspace, '.looma/rag-index'))
-                    self.assertEqual(manager.load_manifest(self.workspace)['files'], {})
+            self.write_note('a.md')
+            self.build()
+            (self.workspace / 'a.md').unlink()
+            events = asyncio.run(stream())
+            self.assertEqual(events[-1]['type'], 'done')
+            self.assertFalse(service.has_index(self.workspace, '.looma/rag-index'))
+            self.assertEqual(manager.load_manifest(self.workspace)['files'], {})
 
     def test_full_build_failure_keeps_previous_index(self):
         self.write_note('a.md')

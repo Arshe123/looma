@@ -1,47 +1,8 @@
 import { ipcMain } from 'electron';
-import { aiService, type AISettings } from '../services/ai/AIService';
-import { normalizeOllamaBaseUrl } from '../services/ollama/ollamaService';
+import { aiService } from '../services/ai/AIService';
 import { getWorkspacePathById }  from './workspaceIpc';
-import { appSettingsService } from './appSettingsIpc';
 
 const activeRagIndexStreams = new Map<string, AbortController>();
-
-
-type RagRuntimeSettings = AISettings & {
-  vectorStorePath: string
-  chunkSize: number
-  chunkOverlap: number
-  chunkingStrategy: 'fixed' | 'markdown' | 'semantic' | 'parent_child' | 'code_aware'
-}
-
-
-const normalizeVectorStorePath = (value: string) => {
-  return (value || '').trim() || '.looma/rag-index';
-};
-
-const getRagAiSettings = async (): Promise<RagRuntimeSettings> => {
-  const result = await appSettingsService.getSettings();
-  const ai = result.success && result.data ? result.data.ai : undefined;
-  return {
-    chat: ai?.chat ?? {
-      provider: 'ollama',
-      model: 'qwen2.5:7b',
-      baseUrl: normalizeOllamaBaseUrl(''),
-      apiKey: '',
-      temperature: 0.7,
-    },
-    embedding: ai?.embedding ?? {
-      provider: 'ollama',
-      model: 'bge-m3:latest',
-      baseUrl: normalizeOllamaBaseUrl(''),
-      apiKey: '',
-    },
-    vectorStorePath: normalizeVectorStorePath(ai?.vectorStorePath ?? ''),
-    chunkSize: ai?.chunkSize ?? 800,
-    chunkOverlap: ai?.chunkOverlap ?? 100,
-    chunkingStrategy: ai?.chunkingStrategy ?? 'fixed',
-  };
-};
 
 
 ipcMain.handle('rag:health', async () => {
@@ -51,7 +12,7 @@ ipcMain.handle('rag:health', async () => {
 ipcMain.handle('rag:status', async (_, workspaceId: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
-  return await aiService.getIndexStatus(workspacePath, await getRagAiSettings());
+  return await aiService.getIndexStatus(workspacePath);
 });
 
 ipcMain.handle('rag:indexStream:start', async (event, requestId: string, workspaceId: string, mode: 'incremental' | 'full' | 'retry_failed' = 'incremental') => {

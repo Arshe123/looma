@@ -17,7 +17,7 @@ from agent.models import (
 from agent.runtime import AgentRuntime
 from agent.tools.base import AgentTool, AgentToolContext, StrictToolArgs
 from agent.tools.registry import ToolRegistry
-from schemas import AgentConfig, AgentRunRequest, ChatMessage, ToolName, WorkspaceContext
+from schemas import AIConfig, AgentConfig, AgentRunRequest, ChatMessage, ToolName, WorkspaceContext
 
 
 class EchoArgs(StrictToolArgs):
@@ -916,7 +916,7 @@ class AgentMainStreamTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(main, "resolve_request_config", side_effect=lambda value: value), \
              patch.object(main, "create_chat_provider", return_value=object()), \
              patch.object(main, "AgentRuntime", return_value=RuntimeStub()):
-            request.ai_config = main.AIConfig(**ai)
+            request.ai_config = AIConfig.model_validate(ai)
             lines = [line async for line in main.agent_run_events(request)]
 
         self.assertTrue(all(isinstance(line, str) and line.endswith("\n") for line in lines))
@@ -966,7 +966,7 @@ class AgentMainStreamTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(main, "resolve_request_config", side_effect=lambda value: value), \
              patch.object(main, "create_chat_provider", return_value=object()), \
              patch.object(main, "AgentRuntime", return_value=RuntimeStub()):
-            request.ai_config = main.AIConfig(**ai)
+            request.ai_config = AIConfig.model_validate(ai)
             lines = [line async for line in main.agent_run_events(request)]
 
         events = [json.loads(line) for line in lines]
@@ -1005,7 +1005,7 @@ class AgentMainStreamTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(main, "resolve_request_config", side_effect=lambda value: value), \
              patch.object(main, "create_chat_provider", return_value=object()), \
              patch.object(main, "AgentRuntime", side_effect=runtime_factory):
-            request.ai_config = main.AIConfig(**ai)
+            request.ai_config = AIConfig.model_validate(ai)
             _ = [line async for line in main.agent_run_events(request)]
 
         self.assertEqual(captured["tools"], [

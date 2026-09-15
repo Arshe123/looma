@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import AsyncIterator
+from typing import AsyncIterator, TypeVar
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +22,6 @@ from config import with_global_ai_config, with_global_knowledge_config
 from providers.factory import create_chat_provider
 
 from rag.index_manager import (
-    build_managed_index,
     build_managed_index_events,
     build_status_snapshot,
     delete_file_index,
@@ -31,14 +30,12 @@ from rag.index_manager import (
     reindex_file,
 )
 from schemas import (
-    AIConfig,
     AgentRunRequest,
     ChatMessage,
     AgentSummarizeRequest,
     IndexRequest,
     IndexBuildRequest,
     IndexStatusRequest,
-    RagQueryRequest,
     DEFAULT_AGENT_TOOLS,
 )
 
@@ -57,12 +54,14 @@ def ndjson_event(event_type: str, **payload) -> str:
     return json.dumps({"type": event_type, **payload}, ensure_ascii=False) + "\n"
 
 
-def resolve_request_config(request: RagQueryRequest | IndexRequest | IndexBuildRequest | AgentRunRequest):
+RequestT = TypeVar("RequestT", bound=IndexRequest | IndexBuildRequest | AgentRunRequest)
+
+
+def resolve_request_config(request: RequestT) -> RequestT:
     request.ai_config = with_global_ai_config(request.ai_config)
     if hasattr(request, "knowledge"):
         request.knowledge = with_global_knowledge_config(getattr(request, "knowledge"))
     return request
-
 
 
 def get_index_status_result(request: IndexStatusRequest):
@@ -104,26 +103,9 @@ async def agent_summarize(request: AgentSummarizeRequest):
     return {"answer": answer}
 
 
-async def build_index_result(request: IndexRequest):
-    request = resolve_request_config(request)
-    return await asyncio.to_thread(build_managed_index, request, "full")
-
-
-@app.post("/rag/index")
-async def build_index(request: IndexRequest):
-    return await build_index_result(request)
-
-
 @app.post("/rag/index/status")
 def rag_index_status(request: IndexStatusRequest):
     return get_index_status_result(request)
-
-
-@app.post("/rag/index/build")
-async def rag_index_build(request: IndexBuildRequest):
-    request = resolve_request_config(request)
-    index_request = IndexRequest(workspace=request.workspace, knowledge=request.knowledge, ai_config=request.ai_config)
-    return await asyncio.to_thread(build_managed_index, index_request, request.mode)
 
 
 @app.post("/rag/index/build/stream")
@@ -169,26 +151,6 @@ async def rag_index_file_delete(request: IndexBuildRequest):
 async def rag_index_delete(request: IndexBuildRequest):
     request = resolve_request_config(request)
     return await asyncio.to_thread(delete_index_data, request)
-
-
-async def index_events(request: IndexRequest) -> AsyncIterator[str]:
-    try:
-        request = resolve_request_config(request)
-        async for event in build_managed_index_events(request, "full"):
-            event_type = event.pop("type")
-            yield ndjson_event(event_type, **event)
-    except HTTPException as e:
-        yield ndjson_event("error", stepId="validate-workspace", error=str(e.detail), message=str(e.detail))
-    except Exception as e:
-        yield ndjson_event("error", stepId="build-vectors", error=str(e), message=str(e))
-
-
-@app.post("/rag/index/stream")
-async def rag_index_stream(request: IndexRequest):
-    return StreamingResponse(
-        index_events(request),
-        media_type="application/x-ndjson; charset=utf-8",
-    )
 
 
 def _agent_ndjson(value: dict) -> str:
@@ -268,7 +230,6 @@ async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
 
 
 @app.post("/agent/run/stream")
-@app.post("/agent/runs/resume")
 async def agent_run_stream(request: AgentRunRequest):
     return StreamingResponse(
         agent_run_events(request),

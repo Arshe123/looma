@@ -224,16 +224,10 @@ export interface AISettings {
   }
 }
 
-type RagRequestSettings = AISettings & {
-  vectorStorePath?: string
-}
-
 interface AIService {
   health(): Promise<Result<{ status: string; service: string }>>
 
-  getIndexStatus(workspacePath: string, aiSettings: RagRequestSettings): Promise<Result<RagIndexStatus>>
-
-  getDetailedIndexStatus(workspacePath: string): Promise<Result<RagIndexStatus>>
+  getIndexStatus(workspacePath: string): Promise<Result<RagIndexStatus>>
 
   streamBuildManagedIndex(
     workspacePath: string,
@@ -249,13 +243,6 @@ interface AIService {
   deleteFileIndex(workspacePath: string, path: string): Promise<Result<RagIndexResult>>
 
   deleteAllIndex(workspacePath: string): Promise<Result<RagIndexResult>>
-
-  streamBuildVectorIndex(
-    workspacePath: string,
-    aiSettings: RagRequestSettings,
-    onEvent: (event: RagStreamEvent) => void,
-    signal?: AbortSignal,
-  ): Promise<Result<void>>
 
   summarizeAgentConversation(messages: RagChatMessage[], maxChars: number): Promise<Result<ChatAnswer>>
 
@@ -600,17 +587,13 @@ export const aiService: AIService = {
     }
   },
 
-  async getIndexStatus(workspacePath: string, _aiSettings: RagRequestSettings): Promise<Result<RagIndexStatus>> {
+  async getIndexStatus(workspacePath: string): Promise<Result<RagIndexStatus>> {
     const result = await postJson<RagIndexStatus>('/rag/index/status', {
       workspace_path: workspacePath,
     })
     if (!result.success) return result
     if (result.data?.error) return { success: false, error: result.data.error }
     return result
-  },
-
-  async getDetailedIndexStatus(workspacePath: string): Promise<Result<RagIndexStatus>> {
-    return aiService.getIndexStatus(workspacePath, {} as RagRequestSettings)
   },
 
   async streamBuildManagedIndex(
@@ -636,15 +619,6 @@ export const aiService: AIService = {
 
   async deleteAllIndex(workspacePath: string): Promise<Result<RagIndexResult>> {
     return deleteJson<RagIndexResult>('/rag/index', toIndexBuildBody(workspacePath, 'incremental'))
-  },
-
-  async streamBuildVectorIndex(
-    workspacePath: string,
-    aiSettings: RagRequestSettings,
-    onEvent: (event: RagStreamEvent) => void,
-    signal?: AbortSignal,
-  ): Promise<Result<void>> {
-    return streamNdjson<RagStreamEvent>('/rag/index/build/stream', toIndexBuildBody(workspacePath, 'incremental'), onEvent, signal)
   },
 
   async summarizeAgentConversation(messages: RagChatMessage[], maxChars: number): Promise<Result<ChatAnswer>> {

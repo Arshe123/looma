@@ -35,7 +35,7 @@ import {
   createFileTab,
   createSystemTab,
   createTabsFromOpenedFiles,
-  getFilePathsFromTabs,
+
   getFileTabId,
   getSystemTabId,
   getTabTitle,
@@ -140,7 +140,6 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
         title: action.title,
         description: action.description,
         buttonText: action.buttonText,
-        disabled: Boolean(action.disabled),
       }))
     return normalized.length > 0 ? normalized : undefined
   }
@@ -361,10 +360,6 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeWorkspaceId: null as string | null,
     activeFilePath: '' as string,
     activeFileRelativePath: '' as string,
-    activeFileContent: '' as string,
-    activeFileLoadedContent: '' as string,
-    activeFileIsSaving: false as boolean,
-    activeFileSaveError: '' as string,
     openedTextFileContents: {} as Record<string, OpenTextFileState>,
     nextTextFileLoadRequestId: 0 as number,
     tabs: [] as WorkspaceTab[],
@@ -377,6 +372,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     fileSidebarOpen: true,
     activeAuxiliaryPanel: null as 'outline' | 'ai' | null,
     aiAssistant: createDefaultAiAssistantState() as AiAssistantState,
+    aiAssistantLoadStatus: 'idle' as 'idle' | 'loading' | 'ready' | 'error',
+    aiAssistantLoadRequestId: 0,
     fileSessions: {} as Record<string, EditorSession>,
     outlineExpandedHeadingIds: {} as Record<string, string[]>,
     selectedPaths: [] as string[],
@@ -417,18 +414,29 @@ export const useWorkspaceStore = defineStore('workspace', {
     commandPaletteQuery: '' as string,
   }),
   getters: {
+    isAiAssistantStateBlocked(state): boolean {
+      return state.aiAssistantLoadStatus === 'loading' || state.aiAssistantLoadStatus === 'error'
+    },
+    activeTextFileState(state): OpenTextFileState | undefined {
+      if (!state.activeFilePath || !isEditableTextPath(state.activeFilePath)) return undefined
+      return state.openedTextFileContents[state.activeFileRelativePath]
+    },
+    activeFileContent(): string { return this.activeTextFileState?.content ?? '' },
+    activeFileLoadedContent(): string { return this.activeTextFileState?.loadedContent ?? '' },
+    activeFileIsSaving(): boolean { return this.activeTextFileState?.isSaving ?? false },
+    activeFileSaveError(): string { return this.activeTextFileState?.saveError ?? '' },
     activeWorkspace(state) {
       return state.workspaces.find((w) => w.id === state.activeWorkspaceId) || null
     },
     isSupportedActiveFile(state) {
       return isSupportedPath(state.activeFilePath)
     },
-    hasUnsavedChanges(state) {
+    hasUnsavedChanges(state): boolean {
       if (!state.activeFilePath) return false
       if (!this.isSupportedActiveFile) return false
       if (!isEditableTextPath(state.activeFilePath)) return false // Media files don't have unsaved changes
       if (state.openedTextFileContents[state.activeFileRelativePath]?.isPartial) return false
-      return state.activeFileContent !== state.activeFileLoadedContent
+      return this.activeFileContent !== this.activeFileLoadedContent
     },
     activeTab(state): WorkspaceTab | null {
       return state.tabs.find((tab) => tab.id === state.activeTabId) || null
@@ -662,7 +670,7 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     saveAiAssistantState() {
       const id = this.activeWorkspaceId
-      if (!id) return
+      if (!id || this.isAiAssistantStateBlocked) return
       window.electronAPI.workspaceAi.set(id, JSON.parse(JSON.stringify(this.aiAssistant))).catch(() => {})
     },
 
@@ -815,21 +823,6 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.saveAiAssistantState()
     },
 
-    setAiAssistantActionDisabled(type: AiAssistantMessageAction['type'], disabled: boolean) {
-      if (this.aiAssistant.isTemporaryConversation || !this.aiAssistant.activeConversationId) return
-      const conversation = this.ensureActiveAiAssistantConversation()
-      const needsUpdate = (action: AiAssistantMessageAction) => action.type === type && !!action.disabled !== disabled
-      if (!conversation.messages.some((message) => message.actions?.some(needsUpdate))) return
-      conversation.messages = conversation.messages.map((message) => {
-        if (!message.actions?.some(needsUpdate)) return message
-        return {
-          ...message,
-          actions: message.actions.map((action) => needsUpdate(action) ? { ...action, disabled } : action),
-        }
-      })
-      this.touchAiAssistantConversation(conversation)
-      this.saveAiAssistantState()
-    },
 
     removeAiAssistantMessagesByText(texts: string[]) {
       if (this.aiAssistant.isTemporaryConversation || !this.aiAssistant.activeConversationId) return
@@ -843,6 +836,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     setAiAssistantDraft(value: string) {
+      if (this.isAiAssistantStateBlocked) return
       if (this.aiAssistant.isTemporaryConversation || !this.aiAssistant.activeConversationId) {
         this.aiAssistant.isTemporaryConversation = true
         this.aiAssistant.activeConversationId = null
@@ -850,8 +844,18 @@ export const useWorkspaceStore = defineStore('workspace', {
         return
       }
       const conversation = this.ensureActiveAiAssistantConversation()
+      if (conversation.draft === value) return
       conversation.draft = value
-      this.saveAiAssistantState()
+      const workspaceId = this.activeWorkspaceId
+      if (!workspaceId) return
+      // Send immediately: no renderer debounce window on switch, send or close.
+      window.electronAPI.workspaceAi.setDraft(workspaceId, conversation.id, value)
+        .then(result => {
+          if (!result.success && this.activeWorkspaceId === workspaceId) this.setError(result.error || '保存 AI 草稿失败')
+        })
+        .catch(() => {
+          if (this.activeWorkspaceId === workspaceId) this.setError('保存 AI 草稿失败')
+        })
     },
 
     createAiAssistantConversation() {
@@ -1030,10 +1034,6 @@ export const useWorkspaceStore = defineStore('workspace', {
     resetActiveFileState() {
       this.activeFilePath = ''
       this.activeFileRelativePath = ''
-      this.activeFileContent = ''
-      this.activeFileLoadedContent = ''
-      this.activeFileIsSaving = false
-      this.activeFileSaveError = ''
     },
 
     syncLegacyTabState() {
@@ -1213,7 +1213,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (workspaceId && recoveryRevision) {
         window.electronAPI.draftRecovery?.remove(workspaceId, tab.relativePath, recoveryRevision).catch(() => {})
       }
-      this.mirrorActiveTextFileState(tab.relativePath)
+
     },
 
     cleanupTabState(tab: WorkspaceTab) {
@@ -1319,17 +1319,6 @@ export const useWorkspaceStore = defineStore('workspace', {
       const sep = pathSep(ws.path)
       const root = ws.path.endsWith(sep) ? ws.path.slice(0, -1) : ws.path
       return root + sep + rel.split('/').join(sep)
-    },
-
-    mirrorActiveTextFileState(relativePath: string) {
-      const rel = normalizeDir(relativePath)
-      if (rel !== this.activeFileRelativePath) return
-      const state = this.openedTextFileContents[rel]
-      if (!state) return
-      this.activeFileContent = state.content
-      this.activeFileLoadedContent = state.loadedContent
-      this.activeFileIsSaving = state.isSaving
-      this.activeFileSaveError = state.saveError
     },
 
     removeOpenedTextFileStates(relativePaths: string[]) {
@@ -1820,6 +1809,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     async switchWorkspaceInternal(id: string) {
+      this.aiAssistantLoadStatus = 'loading'
       this.activeWorkspaceId = id
       this.resetActiveFileState()
       const activeResult = await window.electronAPI.workspace.setActive(id)
@@ -1844,6 +1834,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     async loadWorkspaceMeta(id: string) {
+      this.aiAssistantLoadStatus = 'loading'
       this.previewTabId = ''
       const metaResult = await window.electronAPI.workspaceMeta.get(id)
       if (!metaResult.success || !metaResult.data) {
@@ -1912,16 +1903,26 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
 
     async loadAiAssistantState(id: string) {
-      const aiResult = await window.electronAPI.workspaceAi.get(id)
-      if (this.activeWorkspaceId !== id) return
-      if (!aiResult.success || !aiResult.data) {
-        this.resetAiAssistantState()
-        return
+      const requestId = ++this.aiAssistantLoadRequestId
+      this.aiAssistantLoadStatus = 'loading'
+      try {
+        const aiResult = await window.electronAPI.workspaceAi.get(id)
+        if (this.activeWorkspaceId !== id || this.aiAssistantLoadRequestId !== requestId) return
+        if (!aiResult.success || !aiResult.data) {
+          this.aiAssistantLoadStatus = 'error'
+          this.setError(aiResult.error || '加载 AI 会话失败，请重新打开工作空间后重试')
+          return
+        }
+        this.aiAssistant = normalizeAiAssistantState(aiResult.data)
+        this.aiAssistantLoadStatus = 'ready'
+        const { useAiAssistantStore } = await import('./ai-assistant')
+        if (this.activeWorkspaceId !== id || this.aiAssistantLoadRequestId !== requestId) return
+        await useAiAssistantStore().hydrateAgentHistory(id, this.aiAssistant.conversations)
+      } catch {
+        if (this.activeWorkspaceId !== id || this.aiAssistantLoadRequestId !== requestId) return
+        this.aiAssistantLoadStatus = 'error'
+        this.setError('加载 AI 会话失败，请重新打开工作空间后重试')
       }
-      this.aiAssistant = normalizeAiAssistantState(aiResult.data)
-      const { useAiAssistantStore } = await import('./ai-assistant')
-      if (this.activeWorkspaceId !== id) return
-      await useAiAssistantStore().hydrateAgentHistory(id, this.aiAssistant.conversations)
     },
 
     async saveWorkspaceMeta() {
@@ -2118,15 +2119,6 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeFileRelativePath = rel
       this.activeFilePath = this.resolveAbsolutePath(rel)
 
-      const existing = this.openedTextFileContents[rel]
-      if (existing) {
-        this.mirrorActiveTextFileState(rel)
-      } else {
-        this.activeFileContent = ''
-        this.activeFileLoadedContent = ''
-        this.activeFileIsSaving = false
-        this.activeFileSaveError = ''
-      }
       this.loadTextFileContent(rel).catch(() => {})
     },
 
@@ -2231,7 +2223,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         recoveryConflict: conflict,
         saveError: conflict ? '文件在 Looma 关闭期间被外部修改，已恢复未保存草稿；保存前请确认内容。' : '',
       }
-      this.mirrorActiveTextFileState(rel)
+
       if (this.isFileDirty(rel)) this.retainTab(getFileTabId(rel))
       if (conflict) this.setError(this.openedTextFileContents[rel].saveError)
     },
@@ -2291,9 +2283,6 @@ export const useWorkspaceStore = defineStore('workspace', {
         saveError: existing?.saveError ?? '',
         hasPendingEditorChanges: false,
       }
-      if (rel === this.activeFileRelativePath) {
-        this.activeFileContent = content
-      }
       this.scheduleDraftRecovery(rel)
     },
 
@@ -2315,23 +2304,15 @@ export const useWorkspaceStore = defineStore('workspace', {
       const absPath = this.resolveAbsolutePath(rel)
       const existing = this.openedTextFileContents[rel]
       if (existing?.isLoading || existing?.isPartial) {
-        this.mirrorActiveTextFileState(rel)
         return { success: true as const }
       }
       if (existing && existing.content !== existing.loadedContent) {
-        this.mirrorActiveTextFileState(rel)
         return { success: true as const }
       }
       if (existing && !existing.saveError) {
-        this.mirrorActiveTextFileState(rel)
         return { success: true as const }
       }
       if (!absPath || !isSupportedPath(absPath) || !isEditableTextPath(absPath)) {
-        if (rel === this.activeFileRelativePath) {
-          this.activeFileContent = ''
-          this.activeFileLoadedContent = ''
-          this.activeFileSaveError = ''
-        }
         return { success: true as const }
       }
 
@@ -2349,7 +2330,6 @@ export const useWorkspaceStore = defineStore('workspace', {
         loadRequestId,
         useChunkedPreview: false,
       }
-      this.mirrorActiveTextFileState(rel)
 
       if (!absPath.toLowerCase().endsWith('.md')) {
         const r = await window.electronAPI.file.readMarkdown(absPath)
@@ -2373,7 +2353,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           loadRequestId,
           useChunkedPreview: false,
         }
-        this.mirrorActiveTextFileState(rel)
+
         await this.restoreDraftRecovery(rel, r.data)
         return r
       }
@@ -2388,10 +2368,6 @@ export const useWorkspaceStore = defineStore('workspace', {
           failedState.isLoading = false
           failedState.isPartial = false
           failedState.saveError = r.error || 'Failed to load file'
-        }
-        if (rel === this.activeFileRelativePath) {
-          this.activeFileContent = ''
-          this.activeFileLoadedContent = ''
         }
         return r
       }
@@ -2409,7 +2385,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         loadRequestId,
         useChunkedPreview: r.data.totalBytes >= LARGE_NOTE_BYTES,
       }
-      this.mirrorActiveTextFileState(rel)
+
       if (!isPartial) await this.restoreDraftRecovery(rel, r.data.content)
       return r
     },
@@ -2450,7 +2426,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         current.loadedContent = current.content
         await this.restoreDraftRecovery(rel, current.content)
       }
-      this.mirrorActiveTextFileState(rel)
+
       return result
     },
 
@@ -2503,7 +2479,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           const conflictMessage = '该笔记已在另一个窗口修改，当前未保存内容已保留，请先处理冲突。'
           current.saveError = conflictMessage
           current.recoveryConflict = true
-          this.mirrorActiveTextFileState(rel)
+
           this.setError(conflictMessage)
         }
         return { success: true as const }
@@ -2524,7 +2500,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         useChunkedPreview: absPath.toLowerCase().endsWith('.md') && totalBytes >= LARGE_NOTE_BYTES,
         hasPendingEditorChanges: false,
       }
-      this.mirrorActiveTextFileState(rel)
+
       return result
     },
 
@@ -2580,7 +2556,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         isSaving: true,
         saveError: '',
       }
-      this.mirrorActiveTextFileState(rel)
+
       const workspaceId = this.activeWorkspaceId
       const externalRefreshKey = workspaceId ? draftRecoveryKey(workspaceId, rel) : ''
       const savingRevision = await this.persistDraftRecoveryNow(rel)
@@ -2604,7 +2580,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           saveError: r.error || 'Failed to save file',
           recoveryConflict: r.errorCode === 'FILE_CHANGED_ON_DISK' || latestState?.recoveryConflict,
         }
-        this.mirrorActiveTextFileState(rel)
+
         return r
       }
       const latestContent = latestState?.content ?? next
@@ -2618,7 +2594,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         recoveryRevision: stillDirty ? latestState?.recoveryRevision : undefined,
         recoveryConflict: stillDirty ? latestState?.recoveryConflict : false,
       }
-      this.mirrorActiveTextFileState(rel)
+
       if (workspaceId && savingRevision) {
         await window.electronAPI.draftRecovery?.remove(workspaceId, rel, savingRevision).catch(() => {})
       }

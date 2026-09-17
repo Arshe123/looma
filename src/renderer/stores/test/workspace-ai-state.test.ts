@@ -34,6 +34,19 @@ const installElectronApiStub = () => {
 }
 
 describe('workspace ai assistant temporary conversation state', () => {
+  it('persists only the edited draft immediately without serializing messages', () => {
+    setActivePinia(createPinia())
+    installElectronApiStub()
+    const store = useWorkspaceStore()
+    store.activeWorkspaceId = 'ws'
+    const setDraft = vi.fn().mockResolvedValue({ success: true })
+    ;(window.electronAPI.workspaceAi as any).setDraft = setDraft
+    const conversation = store.ensureActiveAiAssistantConversation()
+    Object.defineProperty(conversation.messages, 'toJSON', { value: () => { throw new Error('history serialized') } })
+    store.setAiAssistantDraft('typing')
+    expect(setDraft).toHaveBeenCalledWith('ws', conversation.id, 'typing')
+    expect(window.electronAPI.workspaceAi.set).not.toHaveBeenCalled()
+  })
   beforeEach(() => {
     setActivePinia(createPinia())
     installElectronApiStub()

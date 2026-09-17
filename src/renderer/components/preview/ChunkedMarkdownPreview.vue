@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import '@/renderer/styles/reading-area.css'
+import { resolveMarkdownImagePath } from '@/shared/utils/markdown-image-path'
 import '@/renderer/styles/note-title.css'
 import { computed, nextTick, onBeforeUnmount, onMounted, onActivated, onDeactivated, ref, watch } from 'vue'
 import { dispatchEditorFocus, getRenderedEditorFocus } from '@/shared/utils/editor-focus'
@@ -58,50 +59,17 @@ const progress = computed(() => {
   return Math.min(100, Math.round((new Blob([props.content]).size / props.totalBytes) * 100))
 })
 
-const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
 const imageCache = new Map<string, string | null>()
 const pendingImageReads = new Map<string, Promise<string | null>>()
 let imageResolveGeneration = 0
 let scrollSyncFrame: number | null = null
-
-const pathSeparator = (path: string) => path.includes('\\') ? '\\' : '/'
-const fileDirectory = (path: string) => {
-  const separator = pathSeparator(path)
-  const index = path.lastIndexOf(separator)
-  return index >= 0 ? path.slice(0, index) : ''
-}
-const normalizePath = (path: string, separator: string) => {
-  const drive = path.match(/^[a-zA-Z]:[\\/]/)?.[0] || ''
-  const rooted = !drive && /^[\\/]/.test(path)
-  const parts: string[] = []
-  for (const part of path.replace(/^[a-zA-Z]:[\\/]/, '').split(/[\\/]+/)) {
-    if (!part || part === '.') continue
-    if (part === '..') parts.pop()
-    else parts.push(part)
-  }
-  return `${drive ? drive.slice(0, 2) + separator : rooted ? separator : ''}${parts.join(separator)}`
-}
-const resolveImagePath = (source: string) => {
-  if (/^(https?:|data:|blob:)/i.test(source)) return ''
-  let decoded = source
-  try { decoded = decodeURIComponent(source) } catch {}
-  const clean = decoded.split(/[?#]/, 1)[0]
-  const extension = clean.split('.').pop()?.toLowerCase() || ''
-  if (!IMAGE_EXTENSIONS.has(extension)) return ''
-  if (/^[a-zA-Z]:[\\/]/.test(clean) || /^\\\\/.test(clean)) {
-    return normalizePath(clean, pathSeparator(clean))
-  }
-  const directory = fileDirectory(props.filePath)
-  const separator = pathSeparator(props.filePath)
-  return directory ? normalizePath(`${directory}${separator}${clean}`, separator) : ''
-}
 
 const resolveLocalImages = async () => {
   const generation = ++imageResolveGeneration
   await nextTick()
   const images = Array.from(containerRef.value?.querySelectorAll<HTMLImageElement>('img[src]') || [])
   await Promise.all(images.map(async (image) => {
-    const filePath = resolveImagePath(image.getAttribute('src') || '')
+    const filePath = resolveMarkdownImagePath(image.getAttribute('src') || '', props.filePath)
     if (!filePath) return
     let data = imageCache.get(filePath)
     if (data === undefined) {

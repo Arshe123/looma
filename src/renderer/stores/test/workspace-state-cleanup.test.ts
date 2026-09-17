@@ -7,24 +7,24 @@ describe('workspace runtime state cleanup', () => {
   beforeEach(() => { setActivePinia(createPinia()) })
   afterEach(() => { vi.unstubAllGlobals() })
 
-  it('does not replace or persist messages when index action availability is unchanged', () => {
+  it('keeps historical index actions but discards persisted availability', async () => {
     const store = useWorkspaceStore()
+    store.activeWorkspaceId = 'ws'
     const conversation = store.ensureActiveAiAssistantConversation()
     conversation.messages = [{ id: 1, role: 'assistant', text: '', createdAt: 1, actions: [
       { type: 'build-index', title: '', description: '', buttonText: '' },
     ] }]
-    const messages = conversation.messages
+    const saved = JSON.parse(JSON.stringify(store.aiAssistant))
+    saved.conversations[0].messages[0].actions[0].disabled = true
+    vi.stubGlobal('window', { electronAPI: { workspaceAi: {
+      get: vi.fn().mockResolvedValue({ success: true, data: saved }),
+    } } })
     const save = vi.spyOn(store, 'saveAiAssistantState').mockImplementation(() => {})
-    const touch = vi.spyOn(store, 'touchAiAssistantConversation')
-    store.setAiAssistantActionDisabled('build-index', false)
-    expect(conversation.messages).toBe(messages)
+    await store.loadAiAssistantState('ws')
+    expect(store.aiAssistant.conversations[0].messages[0].actions).toEqual([
+      { type: 'build-index', title: '', description: '', buttonText: '' },
+    ])
     expect(save).not.toHaveBeenCalled()
-    expect(touch).not.toHaveBeenCalled()
-    store.setAiAssistantActionDisabled('build-index', true)
-    expect(conversation.messages[0].actions?.[0].disabled).toBe(true)
-    expect(save).toHaveBeenCalledTimes(1)
-    store.setAiAssistantActionDisabled('build-index', true)
-    expect(save).toHaveBeenCalledTimes(1)
   })
 
   it('uses tabs as its runtime source and still writes legacy metadata', async () => {

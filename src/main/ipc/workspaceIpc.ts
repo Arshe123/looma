@@ -180,6 +180,10 @@ ipcMain.handle('workspaceAi:get', async (_, workspaceId: string) => {
   return await workspaceAiService.getState(workspaceId);
 });
 
+ipcMain.handle('workspaceAi:setDraft', async (_, workspaceId: string, conversationId: string, draft: string) => {
+  return await workspaceAiService.setDraft(workspaceId, conversationId, draft);
+});
+
 ipcMain.handle('workspaceAi:set', async (_, workspaceId: string, state: any) => {
   return await workspaceAiService.setState(workspaceId, state);
 });

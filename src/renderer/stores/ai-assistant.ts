@@ -219,6 +219,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     indexStreamsByWorkspaceId: {} as Record<string, AiIndexStreamState>,
     indexRequestIdToWorkspaceId: {} as Record<string, string>,
     indexResultsByWorkspaceId: {} as Record<string, AiIndexResultState>,
+    indexStatusRequestIdsByWorkspaceId: {} as Record<string, string>,
     subscribeIndexStreamEvents: null as null | (() => void),
     agentRunsByConversationId: {} as Record<string, AgentConversationRunState>,
     agentRequestIdToConversationId: {} as Record<string, string>,
@@ -230,6 +231,13 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     pendingFileReviewsByWorkspaceId: {} as Record<string, PendingFileReviewState[]>,
   }),
   getters: {
+    isBuildIndexDisabled: (state) => (workspaceId: string | null | undefined) => (
+      !workspaceId || Boolean(
+        state.indexStatusRequestIdsByWorkspaceId[workspaceId]
+        || state.indexStreamsByWorkspaceId[workspaceId]
+        || state.indexResultsByWorkspaceId[workspaceId]?.exists,
+      )
+    ),
     isConversationRunningAgent: (state) => (conversationId: string | null | undefined) => (
       Boolean(conversationId && (state.agentRunsByConversationId[conversationId] || state.agentStartingConversationIds[conversationId]))
     ),
@@ -436,7 +444,31 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     },
 
     setWorkspaceIndexResult(workspaceId: string, result: AiIndexResultState) {
+      delete this.indexStatusRequestIdsByWorkspaceId[workspaceId]
       this.indexResultsByWorkspaceId[workspaceId] = result
+    },
+
+    async refreshWorkspaceIndexStatus(workspaceId: string | null | undefined) {
+      if (!workspaceId) return
+      const requestId = this.createStreamRequestId()
+      this.indexStatusRequestIdsByWorkspaceId[workspaceId] = requestId
+      try {
+        const result = await window.electronAPI.rag.status(workspaceId)
+        if (this.indexStatusRequestIdsByWorkspaceId[workspaceId] !== requestId) return
+        if (!result.success) {
+          console.warn(result.error || '检查索引状态失败。')
+          return
+        }
+        this.setWorkspaceIndexResult(workspaceId, { exists: Boolean(result.data?.exists), documentCount: 0 })
+      } catch (error) {
+        if (this.indexStatusRequestIdsByWorkspaceId[workspaceId] === requestId) {
+          console.warn('检查索引状态失败。', error)
+        }
+      } finally {
+        if (this.indexStatusRequestIdsByWorkspaceId[workspaceId] === requestId) {
+          delete this.indexStatusRequestIdsByWorkspaceId[workspaceId]
+        }
+      }
     },
 
     async startWorkspaceIndex(options: { workspaceId: string; conversationId?: string }) {
@@ -494,7 +526,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
         const result = payload.result || payload
         const count = typeof result.document_count === 'number' ? result.document_count : 0
         const exists = Boolean(result.exists) && count > 0
-        this.indexResultsByWorkspaceId[workspaceId] = { exists, documentCount: count }
+        this.setWorkspaceIndexResult(workspaceId, { exists, documentCount: count })
         useWorkspaceStore().updateAiAssistantMessageTextInConversation(
           stream.conversationId,
           stream.messageId,
@@ -520,7 +552,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       stream.timeline = failAiTimelineStep(stream.timeline, stepId, runtimeError.message, Date.now(), runtimeError.technicalDetail)
       useWorkspaceStore().updateAiAssistantMessageTimelineInConversation(stream.conversationId, stream.messageId, stream.timeline, { persist: true })
       useWorkspaceStore().updateAiAssistantMessageTextInConversation(stream.conversationId, stream.messageId, `建立索引失败：${runtimeError.message}`)
-      this.indexResultsByWorkspaceId[workspaceId] = { exists: false, documentCount: 0 }
+      this.setWorkspaceIndexResult(workspaceId, { exists: false, documentCount: 0 })
       stream.status = 'error'
       stream.error = runtimeError.message
       delete this.indexRequestIdToWorkspaceId[stream.requestId]

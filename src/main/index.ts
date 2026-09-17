@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, screen } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { workspaceService } from './services/workspace/workspaceService';
+import { workspaceAiService } from './services/workspace/workspaceAiService';
 import { fileSystemService } from './services/file/fileSystemService';
 import { abortAllAgentRuns } from './ipc/agentIpc';
 import { setWindowTitleForWorkspace } from './ipc/workspaceIpc';
@@ -229,6 +230,7 @@ const cleanupBeforeQuit = async () => {
   abortAllAgentRuns();
 
   await prepareWindowsForQuit(BrowserWindow.getAllWindows());
+  await workspaceAiService.flush();
   await stopBundledRagService();
 
   const state = await workspaceService.getState();

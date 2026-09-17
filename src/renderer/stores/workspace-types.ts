@@ -58,7 +58,6 @@ export interface AiAssistantMessageAction {
   title: string
   description: string
   buttonText: string
-  disabled?: boolean
 }
 
 export type AiAssistantTimelineStepStatus = 'pending' | 'active' | 'completed' | 'error'

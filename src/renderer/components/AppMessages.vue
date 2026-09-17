@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { scaleFileSize } from '@/shared/utils/format-size'
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { useDownloadsStore, type DownloadTask } from '@/renderer/stores/downloads'
@@ -24,14 +25,8 @@ const getDownloadPercent = (task: DownloadTask) => {
 
 const formatBytes = (bytes: number) => {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  let value = bytes
-  let unitIndex = 0
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024
-    unitIndex += 1
-  }
-  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
+  const { value, unit } = scaleFileSize(bytes, 'GB')
+  return `${value >= 10 || unit === 'B' ? value.toFixed(0) : value.toFixed(1)} ${unit}`
 }
 </script>
 

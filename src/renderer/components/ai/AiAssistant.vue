@@ -17,8 +17,7 @@ const workspaceStore = useWorkspaceStore()
 const settingsStore = useSettingsStore()
 const aiAssistStore = useAiAssistantStore()
 const BUILD_INDEX_ACTION_TYPE: AiAssistantMessageAction['type'] = 'build-index'
-const checkedHasIndex = ref(false)
-const isCheckingIndex = ref(false)
+
 const messagesRef = ref<HTMLElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 const contextMenuRef = ref<HTMLElement | null>(null)
@@ -38,22 +37,26 @@ const messages = computed(() => activeConversation.value.messages)
 const isAgentRunning = computed(() => aiAssistStore.isConversationRunningAgent(activeConversationId.value))
 const isGenerating = computed(() => isAgentRunning.value)
 const isIndexing = computed(() => aiAssistStore.isWorkspaceIndexing(workspaceStore.activeWorkspaceId))
-const hasIndex = computed(() => aiAssistStore.getWorkspaceIndexResult(workspaceStore.activeWorkspaceId)?.exists ?? checkedHasIndex.value)
+const isBuildIndexDisabled = computed(() => aiAssistStore.isBuildIndexDisabled(workspaceStore.activeWorkspaceId))
 const question = computed({
   get: () => activeConversation.value.draft,
   set: (value: string) => workspaceStore.setAiAssistantDraft(value),
 })
 const canAsk = computed(() => (
   hasWorkspace.value
+  && !workspaceStore.isAiAssistantStateBlocked
   && !isGenerating.value
   && question.value.trim().length > 0
 ))
 const canAskWithText = computed(() => (
   hasWorkspace.value
+  && !workspaceStore.isAiAssistantStateBlocked
   && !isGenerating.value
 ))
 const inputPlaceholder = computed(() => {
   if (!hasWorkspace.value) return '请先打开工作空间'
+  if (workspaceStore.aiAssistantLoadStatus === 'loading') return '正在加载 AI 会话...'
+  if (workspaceStore.aiAssistantLoadStatus === 'error') return '会话加载失败，请重新打开工作空间后重试'
   if (isGenerating.value) return 'Agent 正在执行...'
   return '让 Agent 读取、检索并处理当前工作空间'
 })
@@ -260,47 +263,16 @@ const openIndexLibrary = () => {
   workspaceStore.openRagIndexPage()
 }
 
-const setBuildIndexActionsDisabled = (disabled: boolean) => {
-  workspaceStore.setAiAssistantActionDisabled(BUILD_INDEX_ACTION_TYPE, disabled)
-}
-
-const checkIndexStatus = async () => {
-  const workspaceId = workspaceStore.activeWorkspaceId
-  checkedHasIndex.value = false
-  if (!workspaceId) return
-
-  isCheckingIndex.value = true
-  try {
-    const result = await window.electronAPI.rag.status(workspaceId)
-    if (workspaceStore.activeWorkspaceId !== workspaceId) return
-    if (!result.success) {
-      setBuildIndexActionsDisabled(false)
-      console.warn(result.error || '检查索引状态失败。')
-      return
-    }
-
-    checkedHasIndex.value = Boolean(result.data?.exists)
-    aiAssistStore.setWorkspaceIndexResult(workspaceId, { exists: checkedHasIndex.value, documentCount: 0 })
-    if (hasIndex.value) {
-      setBuildIndexActionsDisabled(true)
-    } else {
-      setBuildIndexActionsDisabled(false)
-    }
-  } finally {
-    isCheckingIndex.value = false
-  }
-}
+const checkIndexStatus = () => aiAssistStore.refreshWorkspaceIndexStatus(workspaceStore.activeWorkspaceId)
 
 const indexWorkspace = async () => {
   const workspaceId = getActiveWorkspaceId()
-  if (!workspaceId || isIndexing.value || hasIndex.value) return
+  if (!workspaceId || isBuildIndexDisabled.value) return
 
-  setBuildIndexActionsDisabled(true)
   const conversationId = workspaceStore.ensureAiAssistantConversationForRequest()
   const result = await aiAssistStore.startWorkspaceIndex({ workspaceId, conversationId })
   if (!result?.success && result?.error) {
-    setBuildIndexActionsDisabled(false)
-    appendMessage('system', result.error)
+    workspaceStore.appendAiAssistantMessageToConversation(conversationId, 'system', result.error)
   }
   scrollToBottom()
 }
@@ -361,7 +333,7 @@ const runAction = (action: AiAssistantMessageAction) => {
 }
 
 const isActionDisabled = (action: AiAssistantMessageAction) =>
-  Boolean(action.disabled || hasIndex.value || isCheckingIndex.value || !hasWorkspace.value)
+  action.type === BUILD_INDEX_ACTION_TYPE ? isBuildIndexDisabled.value : true
 
 const isMessageStreaming = (message: AiAssistantMessage) => {
   const agentRun = aiAssistStore.getConversationAgentRun(activeConversationId.value)
@@ -617,11 +589,11 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
               </div>
               <button
                 class="mt-3 inline-flex h-9 w-full items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors"
-                :class="!isActionDisabled(action) && !(isIndexing && action.type === BUILD_INDEX_ACTION_TYPE)
+                :class="!isActionDisabled(action)
                   ? 'bg-accent text-white hover:bg-accent-hover cursor-pointer'
                   : 'bg-panel-soft text-text-subtle cursor-not-allowed'"
                 type="button"
-                :disabled="isActionDisabled(action) || (isIndexing && action.type === BUILD_INDEX_ACTION_TYPE)"
+                :disabled="isActionDisabled(action)"
                 @click="runAction(action)"
               >
                 {{ isIndexing && action.type === BUILD_INDEX_ACTION_TYPE ? '正在建立索引...' : action.buttonText }}
@@ -647,7 +619,7 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
           v-model="question"
           class="min-h-[58px] max-h-[168px] w-full resize-none overflow-y-hidden bg-transparent text-sm leading-6 text-text-main outline-none placeholder:text-text-subtle disabled:text-text-muted select-text"
           :placeholder="inputPlaceholder"
-          :disabled="!hasWorkspace || isGenerating"
+          :disabled="!hasWorkspace || isGenerating || workspaceStore.isAiAssistantStateBlocked"
           @keydown="handleComposerKeydown"
           @contextmenu="openComposerContextMenu"
         />

@@ -1,4 +1,5 @@
 import fs from 'fs/promises'
+import { AiDraftPersistence } from './ai-draft-persistence'
 import path from 'path'
 import type { Result } from '../../../shared/types/Result'
 import { workspaceService } from './workspaceService'
@@ -42,7 +43,6 @@ interface AiAssistantMessage {
     title: string
     description: string
     buttonText: string
-    disabled?: boolean
   }[]
   timeline?: AiAssistantTimelineStep[]
   taskId?: string
@@ -207,7 +207,6 @@ export const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
         title: item.title,
         description: item.description,
         buttonText: item.buttonText,
-        disabled: Boolean(item.disabled),
       }))
     return normalized.length > 0 ? normalized : undefined
   }
@@ -455,13 +454,12 @@ const readLegacyAiAssistant = async (workspaceId: string) => {
     const parsed = JSON.parse(raw) as any
     if (!parsed.aiAssistant) return null
 
-    const nextMeta = { ...parsed }
-    delete nextMeta.aiAssistant
-    await fs.writeFile(legacyMetaPath, JSON.stringify(nextMeta, null, 2), 'utf-8')
+    // Keep the legacy source as a recovery backup. Once a checkpoint exists it
+    // takes precedence; a failed migration must never destroy the only copy.
     return normalizeAiAssistantState(parsed.aiAssistant)
   } catch (err: any) {
     if (err.code !== 'ENOENT' && err.code !== 'ENOTDIR') {
-      console.warn('迁移 AI 助手状态失败。', err)
+      throw err
     }
     return null
   } finally {
@@ -469,68 +467,94 @@ const readLegacyAiAssistant = async (workspaceId: string) => {
   }
 }
 
+const persistence = new AiDraftPersistence()
+const pendingOperations = new Map<string, Promise<unknown>>()
+const enqueueOperation = <T>(id: string, operation: () => Promise<T>): Promise<T> => {
+  const pending = (pendingOperations.get(id) ?? Promise.resolve()).catch(() => {}).then(operation)
+  pendingOperations.set(id, pending)
+  void pending.finally(() => { if (pendingOperations.get(id) === pending) pendingOperations.delete(id) }).catch(() => {})
+  return pending
+}
+const enqueueWrite = (id: string, operation: () => Promise<void>): Promise<Result<void>> =>
+  enqueueOperation(id, async () => {
+    try { await operation(); return { success: true } }
+    catch (error: any) { return { success: false, error: `保存 AI 助手状态失败: ${error?.message ?? String(error)}` } }
+  })
+
+// Only call inside the workspace queue, including read-triggered migrations.
+const persistState = async (workspaceId: string, state: AiAssistantState) => {
+  await ensureAiStateDir(workspaceId)
+  const statePath = await getAiStatePath(workspaceId)
+  if (!statePath) throw new Error('工作空间路径不存在')
+  await persistence.set(statePath, state)
+}
+
 export const workspaceAiService = {
-  async getState(workspaceId: string): Promise<Result<AiAssistantState>> {
-    let unlock: (() => Promise<void>) | null = null
-    try {
-      const statePath = await getAiStatePath(workspaceId)
-      if (!statePath) return { success: true, data: createDefaultAiAssistantState() }
-
-      let raw: string | null = null
-      try {
-        unlock = await lockFile(statePath)
-        raw = await fs.readFile(statePath, 'utf-8')
-      } catch (err: any) {
-        if (err.code !== 'ENOENT' && err.code !== 'ENOTDIR') throw err
-      }
-
-      if (unlock) {
-        await unlock()
-        unlock = null
-      }
-
-      if (raw) {
-        const parsed = JSON.parse(raw)
-        const normalized = normalizeAiAssistantState(parsed)
-        const workspacePath = await getWorkspacePath(workspaceId)
-        if (!workspacePath) return { success: true, data: normalized }
-        const migration = await migrateLegacyAgentState(workspacePath, normalized)
-        if ((parsed as any)?.schemaVersion !== 2 || migration.migratedRunIds.length > 0) {
-          await workspaceAiService.setState(workspaceId, migration.state)
-        }
-        return { success: true, data: migration.state }
-      }
-
-      const migrated = await readLegacyAiAssistant(workspaceId)
-      const initialState = migrated ?? createDefaultAiAssistantState()
-      const workspacePath = await getWorkspacePath(workspaceId)
-      const migratedState = workspacePath
-        ? (await migrateLegacyAgentState(workspacePath, initialState)).state
-        : initialState
-      await workspaceAiService.setState(workspaceId, migratedState)
-      return { success: true, data: migratedState }
-    } catch (err) {
-      if (unlock) await unlock()
-      console.warn('读取 AI 助手状态失败。', err)
-      return { success: true, data: createDefaultAiAssistantState() }
+  async flush(): Promise<void> {
+    // Windows have already finished their close handshake before shutdown calls
+    // this. Drain again if an in-flight IPC queued another operation meanwhile.
+    while (pendingOperations.size > 0) {
+      await Promise.allSettled([...pendingOperations.values()])
     }
   },
+  async getState(workspaceId: string): Promise<Result<AiAssistantState>> {
+    return enqueueOperation(workspaceId, async () => {
+      let unlock: (() => Promise<void>) | null = null
+      try {
+        const statePath = await getAiStatePath(workspaceId)
+        if (!statePath) throw new Error('工作空间路径不存在')
 
-  async setState(workspaceId: string, state: AiAssistantState): Promise<Result<void>> {
-    let unlock: (() => Promise<void>) | null = null
-    try {
-      await ensureAiStateDir(workspaceId)
+        let raw: string | null = null
+        try {
+          unlock = await lockFile(statePath)
+          raw = JSON.stringify(await persistence.get(statePath))
+        } catch (err: any) {
+          if (err.code !== 'ENOENT' && err.code !== 'ENOTDIR') throw err
+        }
+
+        if (unlock) {
+          await unlock()
+          unlock = null
+        }
+
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          const normalized = normalizeAiAssistantState(parsed)
+          const workspacePath = await getWorkspacePath(workspaceId)
+          if (!workspacePath) return { success: true, data: normalized }
+          const migration = await migrateLegacyAgentState(workspacePath, normalized)
+          if ((parsed as any)?.schemaVersion !== 2 || migration.migratedRunIds.length > 0) {
+            await persistState(workspaceId, migration.state)
+          }
+          return { success: true, data: migration.state }
+        }
+
+        const migrated = await readLegacyAiAssistant(workspaceId)
+        const initialState = migrated ?? createDefaultAiAssistantState()
+        const workspacePath = await getWorkspacePath(workspaceId)
+        const migratedState = workspacePath
+          ? (await migrateLegacyAgentState(workspacePath, initialState)).state
+          : initialState
+        await persistState(workspaceId, migratedState)
+        return { success: true, data: migratedState }
+      } catch (err) {
+        if (unlock) await unlock()
+        return { success: false, error: `读取 AI 助手状态失败: ${err instanceof Error ? err.message : String(err)}` }
+      }
+    })
+  },
+
+  setState(workspaceId: string, state: AiAssistantState): Promise<Result<void>> {
+    const snapshot = normalizeAiAssistantState(state)
+    return enqueueWrite(workspaceId, () => persistState(workspaceId, snapshot))
+  },
+
+  setDraft(workspaceId: string, conversationId: string, draft: string): Promise<Result<void>> {
+    return enqueueWrite(workspaceId, async () => {
+      if (typeof conversationId !== 'string' || !conversationId || typeof draft !== 'string') throw new Error('草稿格式无效')
       const statePath = await getAiStatePath(workspaceId)
-      if (!statePath) return { success: false, error: '工作空间路径不存在' }
-
-      unlock = await lockFile(statePath)
-      await fs.writeFile(statePath, JSON.stringify(normalizeAiAssistantState(state), null, 2), 'utf-8')
-
-      if (unlock) await unlock()
-      return { success: true }
-    } catch (error: any) {
-      if (unlock) await unlock()
-      return { success: false, error: `保存 AI 助手状态失败: ${error?.message ?? String(error)}` }
-    }
+      if (!statePath) throw new Error('工作空间路径不存在')
+      await persistence.setDraft(statePath, conversationId, draft)
+    })
   },
 }

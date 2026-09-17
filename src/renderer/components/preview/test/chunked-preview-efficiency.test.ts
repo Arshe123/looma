@@ -3,6 +3,7 @@ import ts from 'typescript'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as vue from 'vue'
 import * as scrollSync from '@/shared/utils/editor-scroll-sync'
+import * as imagePath from '@/shared/utils/markdown-image-path'
 
 // Execute the real setup script with controlled lifecycle/DOM boundaries in Node.
 const setup = (sync = false) => {
@@ -16,7 +17,7 @@ const setup = (sync = false) => {
   const emit = vi.fn()
   const require = (id: string) => id === 'vue'
     ? { ...vue, onMounted: (fn: () => void) => mounted.push(fn), onBeforeUnmount: (fn: () => void) => unmount.push(fn), onActivated: vi.fn(), onDeactivated: vi.fn(), watch: vi.fn() }
-    : id.includes('editor-scroll-sync') ? scrollSync : {}
+    : id.includes('editor-scroll-sync') ? scrollSync : id.includes('markdown-image-path') ? imagePath : {}
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const api = new Function('require', 'defineProps', 'defineEmits', 'defineExpose', `const exports = {};\n${code}\nreturn { containerRef, handleScroll, getScrollState, resolveLocalImages };`)(require, () => props, () => emit, () => {})
   const query = vi.fn(() => [])

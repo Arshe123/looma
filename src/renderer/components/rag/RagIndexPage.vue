@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { scaleFileSize } from '@/shared/utils/format-size'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, Database, FileText, Loader2, RefreshCw, RotateCcw, Search, Settings, Trash2, XCircle } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
@@ -254,10 +255,8 @@ const formatFileName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop
 
 const formatFileSize = (size?: number) => {
   if (!Number.isFinite(size)) return '—'
-  const value = size as number
-  if (value < 1024) return `${value} B`
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
-  return `${(value / 1024 / 1024).toFixed(1)} MB`
+  const { value, unit } = scaleFileSize(size as number, 'MB')
+  return `${unit === 'B' ? value : value.toFixed(1)} ${unit}`
 }
 
 const formatTime = (value?: string | null) => {

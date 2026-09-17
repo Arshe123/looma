@@ -107,6 +107,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   workspaceAi: {
     get: (workspaceId: string) => ipcRenderer.invoke('workspaceAi:get', workspaceId),
+    setDraft: (workspaceId: string, conversationId: string, draft: string) => ipcRenderer.invoke('workspaceAi:setDraft', workspaceId, conversationId, draft),
     set: (workspaceId: string, state: unknown) => ipcRenderer.invoke('workspaceAi:set', workspaceId, state),
   },
   appSettings: {

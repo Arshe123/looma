@@ -61,7 +61,6 @@ interface AiAssistantMessageActionPayload {
   title: string;
   description: string;
   buttonText: string;
-  disabled?: boolean;
 }
 
 type AiAssistantTimelineStepStatusPayload = 'pending' | 'active' | 'completed' | 'error';
@@ -353,6 +352,7 @@ interface ElectronAPI {
   };
   workspaceAi: {
     get: (workspaceId: string) => Promise<Result<AiAssistantStatePayload>>;
+    setDraft: (workspaceId: string, conversationId: string, draft: string) => Promise<Result<void>>;
     set: (workspaceId: string, state: AiAssistantStatePayload) => Promise<Result<void>>;
   };
   appSettings: {

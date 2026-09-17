@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { scaleFileSize } from '@/shared/utils/format-size'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, Download, Loader, RefreshCw, Sparkles, X } from 'lucide-vue-next'
 import type { UpdateState } from '@/shared/types/app-update'
@@ -24,8 +25,8 @@ const releaseNotesHtml = computed(() => renderReleaseNotes(state.value.releaseNo
 
 const formatBytes = (bytes?: number) => {
   if (!bytes || bytes < 1) return ''
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  const { value, unit } = scaleFileSize(bytes, 'MB', 'KB')
+  return `${value.toFixed(1)} ${unit}`
 }
 
 const runCheck = async () => {

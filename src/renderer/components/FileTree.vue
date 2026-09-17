@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { scaleFileSize } from '@/shared/utils/format-size'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
 import { CalendarArrowDown, CalendarArrowUp, ChevronRight, FilePlus2, FolderPlus, LoaderCircle, RefreshCw, Trash2 } from 'lucide-vue-next'
@@ -149,11 +150,8 @@ const completeTemplateCreation = async (relativePath: string) => {
 
 const formatTrashSize = (item: TrashEntryInfo) => {
   if (item.isDirectory) return '—'
-  const size = item.size
-  if (size < 1024) return `${size} B`
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
-  if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`
-  return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`
+  const { value, unit } = scaleFileSize(item.size, 'GB')
+  return `${unit === 'B' ? value : value.toFixed(1)} ${unit}`
 }
 
 const formatTrashTime = (ms: number) =>

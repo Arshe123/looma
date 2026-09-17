@@ -1,0 +1,34 @@
+<!doctype html><html><body style="margin:0"><div id="app" style="height:600px"></div><script type="module">
+import { createApp, h, ref } from 'vue'
+import { createPinia } from 'pinia'
+import { EditorView } from '@codemirror/view'
+import MarkdownEditor from '/src/renderer/components/editor/MarkdownEditor.vue'
+import '/src/renderer/styles/style.css'
+window.electronAPI = { platform: 'darwin' }
+const content = ref(Array.from({length:100}, (_,i)=>`这是第 ${i} 段长笔记，用于验证分栏书写位置。`).join('\n\n'))
+createApp({setup:()=>()=>h(MarkdownEditor, {content:content.value,filePath:'',relativeFilePath:'',saveTrigger:0,isPartial:false,isLoading:false,isLoadingMore:false,totalBytes:0,useChunkedPreview:false,'onUpdate:content':v=>{content.value=v}})}).use(createPinia()).mount('#app')
+window.ready = () => !!document.querySelector('.tiptap')?.editor
+window.split = () => document.querySelector('[title="分割视图"]').click()
+window.panes = () => [document.querySelector('.cm-scroller'),document.querySelector('.tiptap-preview-container')]
+window.positions = () => panes().map(p=>p.scrollTop)
+window.focusMiddle = side => {
+ const cm = EditorView.findFromDOM(document.querySelector('.cm-editor'))
+ const rich = document.querySelector('.tiptap').editor
+ if(side==='source') {
+  const pos = cm.state.doc.line(91).to
+  cm.focus(); cm.dispatch({selection:{anchor:pos},effects:EditorView.scrollIntoView(pos,{y:'center'})})
+ } else {
+  let pos = 0
+  rich.state.doc.forEach((node,offset,index)=>{if(index===45)pos=offset+node.nodeSize-1})
+  rich.commands.setTextSelection(pos); rich.view.focus()
+  const pane=panes()[1]
+  pane.scrollTop+=rich.view.coordsAtPos(pos).top-pane.getBoundingClientRect().top-250
+ }
+}
+window.startTrace = () => {
+ window.trace=[]; window.tracing=true
+ const sample=()=>{if(!tracing)return;trace.push(positions());requestAnimationFrame(sample)}
+ sample()
+}
+window.finishTrace = () => {window.tracing=false; return {trace,content:content.value,source:EditorView.findFromDOM(document.querySelector('.cm-editor')).state.doc.toString(),rich:document.querySelector('.tiptap').editor.getMarkdown()}}
+</script></body></html>

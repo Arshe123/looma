@@ -2,7 +2,7 @@
 import '@/renderer/styles/reading-area.css'
 import { resolveMarkdownImagePath } from '@/shared/utils/markdown-image-path'
 import '@/renderer/styles/note-title.css'
-import { shallowRef, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick } from 'vue'
+import { shallowRef, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
 import { dispatchEditorFocus, getRenderedEditorFocus } from '@/shared/utils/editor-focus'
 import { findChildren } from '@tiptap/core'
 import { NodeSelection } from '@tiptap/pm/state'
@@ -968,7 +968,10 @@ watch(
     clearPendingAutoSave()
     editorSaveGate.clear()
 
-    const scrollState = getPreviewScrollState()
+    // A content refresh is not navigation. Restore exact pixels synchronously:
+    // source-line sampling includes a viewport inset and would drift on each edit.
+    const container = previewContainerRef.value
+    const scrollTop = container?.scrollTop ?? 0
     isUpdatingFromExternal = true
     clearPendingCodeHighlight()
     const { from, to } = editor.value.state.selection
@@ -982,12 +985,8 @@ watch(
       // Ignore
     }
     
-    nextTick(() => {
-      requestAnimationFrame(() => {
-        applyPreviewScrollState(scrollState)
-        isUpdatingFromExternal = false
-      })
-    })
+    if (container) container.scrollTop = scrollTop
+    isUpdatingFromExternal = false
   }
 )
 

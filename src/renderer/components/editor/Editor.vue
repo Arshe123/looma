@@ -17,6 +17,7 @@ import {
 } from '@/shared/utils/editor-scroll-sync';
 import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
 import { getWritingBottomMargin } from '@/shared/utils/editor-writing-scroll'
+import { getExternalTextChange } from '@/shared/utils/editor-content-sync'
 import { getDroppedFilePaths, isSupportedDroppedImagePath } from '@/shared/utils/external-file-drop'
 import { formatMarkdownImage } from '@/shared/utils/tiptap-image-insertion'
 import { importImageBatch } from '@/shared/utils/image-import-batch'
@@ -454,14 +455,15 @@ watch(
   ([, nextContent]) => {
     if (!editor) return;
     const current = editor.state.doc.toString();
-    if (current === nextContent) return;
+    const changes = getExternalTextChange(current, nextContent);
+    if (!changes) return;
     if (saveTimeout) {
       clearTimeout(saveTimeout);
       saveTimeout = null;
     }
     applyingExternalUpdate = true;
     editor.dispatch({
-      changes: { from: 0, to: editor.state.doc.length, insert: nextContent },
+      changes,
     });
     applyingExternalUpdate = false;
   },

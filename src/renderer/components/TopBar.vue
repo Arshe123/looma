@@ -2,11 +2,13 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Minus, Square, X, ChevronDown, FolderOpen, Plus, Command } from 'lucide-vue-next'
 import { useWorkspaceStore } from '../stores/workspace'
+import { useExternalDocumentsStore } from '../stores/externalDocuments'
 import { useSettingsStore } from '../stores/settings'
 import { isMacPlatform } from '../../shared/utils/window-chrome'
 import { formatAppShortcut } from '../../shared/utils/app-shortcuts'
 
 const workspaceStore = useWorkspaceStore()
+const externalDocuments = useExternalDocumentsStore()
 const settingsStore = useSettingsStore()
 const isMac = isMacPlatform((window as any).electronAPI?.platform ?? '')
 const platform = window.electronAPI.platform
@@ -45,18 +47,29 @@ const toggleMaximizeWindow = () => {
 }
 
 const closeWindow = async () => {
-  if (workspaceStore.isWorkspaceTransitioning) return
-  workspaceStore.setWorkspaceTransition(true, 'Looma 关闭中...')
-  const ok = await workspaceStore.ensureSavedBeforeWorkspaceChange()
-  if (!ok) {
-    workspaceStore.setWorkspaceTransition(false, '')
+  await window.electronAPI.window.beginClose()
+  if (workspaceStore.isWorkspaceTransitioning) {
+    await window.electronAPI.window.cancelClose()
     return
   }
   try {
+    if (!await externalDocuments.closeAll()) {
+      await window.electronAPI.window.cancelClose()
+      return
+    }
+    workspaceStore.setWorkspaceTransition(true, 'Looma 关闭中...')
+    if (!await workspaceStore.ensureSavedBeforeWorkspaceChange()) {
+      workspaceStore.setWorkspaceTransition(false, '')
+      await window.electronAPI.window.cancelClose()
+      return
+    }
     await workspaceStore.saveWorkspaceMeta()
-  } catch {}
-  // Intentionally don't clear transitioning flag so the app stays blocked until it closes
-  await (window as any).electronAPI?.window?.close?.()
+    await window.electronAPI.window.close()
+  } catch (error) {
+    console.error('关闭未完成，已保留编辑窗口', error)
+    workspaceStore.setWorkspaceTransition(false, '')
+    await window.electronAPI.window.cancelClose()
+  }
 }
 
 let cleanupPrepareClose: (() => void) | null = null

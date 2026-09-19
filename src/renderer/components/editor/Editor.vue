@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue';
+import { externalDocumentKey } from './documentSession'
+import { inject, ref, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue';
 import { EditorView, basicSetup } from 'codemirror';
 import { markdown } from '@codemirror/lang-markdown';
 import { codeFolding, indentUnit, syntaxTree } from '@codemirror/language';
@@ -44,6 +45,7 @@ const emit = defineEmits<{
 
 const editorContainer = ref<HTMLElement | null>(null);
 const workspaceStore = useWorkspaceStore();
+const isExternalDocument = inject(externalDocumentKey, false)
 const dropErrorMessage = ref('');
 const dropTechnicalDetail = ref('');
 let editor: EditorView | null = null;
@@ -241,7 +243,7 @@ const importDroppedImages = async (event: DragEvent, insertAt: number) => {
   event.preventDefault()
   dropErrorMessage.value = ''
   dropTechnicalDetail.value = ''
-  const workspaceId = workspaceStore.activeWorkspaceId
+  const workspaceId = isExternalDocument ? null : workspaceStore.activeWorkspaceId
   if (!editor || !workspaceId || !props.relativeFilePath) return
 
   const sourcePaths = getDroppedFilePaths(event.dataTransfer?.files)

@@ -2,7 +2,8 @@
 import '@/renderer/styles/reading-area.css'
 import { resolveMarkdownImagePath } from '@/shared/utils/markdown-image-path'
 import '@/renderer/styles/note-title.css'
-import { shallowRef, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
+import { externalDocumentKey } from '../editor/documentSession'
+import { inject, shallowRef, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
 import { dispatchEditorFocus, getRenderedEditorFocus } from '@/shared/utils/editor-focus'
 import { findChildren } from '@tiptap/core'
 import { NodeSelection } from '@tiptap/pm/state'
@@ -93,6 +94,7 @@ const props = defineProps<{
 }>()
 
 const workspaceStore = useWorkspaceStore()
+const isExternalDocument = inject(externalDocumentKey, false)
 
 const emit = defineEmits<{
   (e: 'update:content', value: string): void
@@ -295,7 +297,7 @@ const importImagePaths = async (sourcePaths: string[], insertAt: number) => {
   dropErrorMessage.value = ''
   dropTechnicalDetail.value = ''
   const currentEditor = editor.value
-  const workspaceId = workspaceStore.activeWorkspaceId
+  const workspaceId = isExternalDocument ? null : workspaceStore.activeWorkspaceId
   if (!currentEditor || currentEditor.isDestroyed || !workspaceId) return
 
   const { supported, unsupported } = partitionClipboardImagePaths(sourcePaths)
@@ -342,7 +344,7 @@ const importClipboardImageAt = async (insertAt: number) => {
   dropErrorMessage.value = ''
   dropTechnicalDetail.value = ''
   const currentEditor = editor.value
-  const workspaceId = workspaceStore.activeWorkspaceId
+  const workspaceId = isExternalDocument ? null : workspaceStore.activeWorkspaceId
   if (!currentEditor || currentEditor.isDestroyed || !workspaceId) return false
 
   workspaceStore.setBusy(true, '正在导入图片...')
@@ -625,6 +627,10 @@ const handleNoteRefClick = (event: MouseEvent) => {
       return
     }
     noteRefSourceEditorRef.value?.dismissForNavigation()
+    if (isExternalDocument) {
+      dropErrorMessage.value = '外部文件不使用工作空间笔记导航；请从系统打开目标文件。'
+      return
+    }
     dispatchOpenNoteRef(ref)
     return
   }
@@ -649,7 +655,7 @@ const handleNoteRefPointerDown = (event: PointerEvent) => {
 
 /** 检测输入 [[ 并打开笔记引用选择器（光标前两个字符为 [[，且不在代码块内）。 */
 const maybeOpenNoteRefPicker = (currentEditor: any) => {
-  if (noteRefPickerState.value.open) return
+  if (isExternalDocument || noteRefPickerState.value.open) return
   const { state } = currentEditor
   const { $from } = state.selection
   if ($from.parent.type.name.includes('code')) return

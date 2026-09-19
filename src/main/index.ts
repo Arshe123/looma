@@ -1,5 +1,7 @@
 import { app, BrowserWindow, Menu, screen } from 'electron';
 import path from 'path';
+import { createOpenWithController } from './ipc/externalDocumentsIpc';
+import { markdownArguments } from './services/app/openWithRouting';
 import { fileURLToPath } from 'url';
 import { workspaceService } from './services/workspace/workspaceService';
 import { workspaceAiService } from './services/workspace/workspaceAiService';
@@ -22,6 +24,7 @@ import './ipc/noteTemplateIpc';
 let mainWindow: BrowserWindow | null = null;
 let quitInProgress = false;
 let quitAllowed = false;
+let openedWorkspaceWindow = false;
 
 app.setAppUserModelId('com.looma')
 app.setName('Looma');
@@ -82,7 +85,11 @@ const buildAppMenu = (win: BrowserWindow) => {
   return Menu.buildFromTemplate(template);
 };
 
-function createWindow(initialWorkspaceId?: string) {
+function createWindow(initialWorkspaceId?: string, editorOnly = false) {
+  if (!editorOnly) {
+    openedWorkspaceWindow = true;
+    void startBundledRagService().catch(console.error);
+  }
   const defaultWidth = 1200;
   const defaultHeight = 800;
 
@@ -139,6 +146,7 @@ function createWindow(initialWorkspaceId?: string) {
   });
 
   mainWindow = win;
+  openWith.register(win);
   win.setIcon(path.join(__dirname, '../resources/icon.png'));
 
   // 拦截所有 window.open：http/https 交给系统默认浏览器，其余一律拒绝
@@ -181,34 +189,42 @@ function createWindow(initialWorkspaceId?: string) {
   if (process.env.VITE_DEV_SERVER_URL) {
     const url = new URL(process.env.VITE_DEV_SERVER_URL);
     if (initialWorkspaceId) url.searchParams.set('workspaceId', initialWorkspaceId);
+    if (editorOnly) url.searchParams.set('editorOnly', '1');
     win.loadURL(url.toString());
   } else {
     const query: Record<string, string> = {};
     if (initialWorkspaceId) query.workspaceId = initialWorkspaceId;
+    if (editorOnly) query.editorOnly = '1';
     win.loadFile(path.join(__dirname, '../dist/index.html'), { query });
   }
+  return win;
 }
+
+const openWith = createOpenWithController(() => createWindow(undefined, true));
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  openWith.enqueue([filePath]);
+});
+openWith.enqueue(markdownArguments(process.argv.slice(app.isPackaged ? 1 : 2), process.cwd()));
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv, cwd) => {
+    const files = markdownArguments(argv, cwd);
+    if (files.length) { openWith.enqueue(files); return; }
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     initializeAutoUpdateService(prepareAppForUpdate);
+    await openWith.start();
+    if (openWith.hasPending() || BrowserWindow.getAllWindows().length) return;
 
-    // The Python sidecar can take several seconds to cold-start. It is not
-    // required to render the workspace shell, so never put it on the window's
-    // critical startup path.
-    void startBundledRagService().catch((error) => {
-      console.error(`[python-service] ${error instanceof Error ? error.message : String(error)}`);
-    });
     workspaceService
       .getState()
       .then(async (r) => {
@@ -229,42 +245,49 @@ if (!gotLock) {
 const cleanupBeforeQuit = async () => {
   abortAllAgentRuns();
 
-  await prepareWindowsForQuit(BrowserWindow.getAllWindows());
+  if (!await prepareWindowsForQuit(BrowserWindow.getAllWindows())) return false;
   await workspaceAiService.flush();
   await stopBundledRagService();
 
+  if (!openedWorkspaceWindow) return true;
   const state = await workspaceService.getState();
   if (state.success && state.data) {
     for (const ws of state.data.workspaces) {
       await fileSystemService.emptyTrash(ws.id).catch(() => {});
     }
   }
+  return true;
 };
 
 const prepareAppForUpdate = async () => {
+  if (quitInProgress) throw new Error('正在关闭窗口，请稍后重试');
   quitInProgress = true;
   try {
-    await cleanupBeforeQuit();
-  } catch (error) {
-    console.error(`[update] ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    // Let electron-updater own the final quit so it can launch the installer.
+    if (!await cleanupBeforeQuit()) throw new Error('已取消安装更新');
     quitAllowed = true;
+  } catch (error) {
+    quitInProgress = false;
+    quitAllowed = false;
+    throw error;
   }
 };
 
 const finishAppQuit = async () => {
 
   try {
-    await cleanupBeforeQuit();
+    if (!await cleanupBeforeQuit()) {
+      quitInProgress = false;
+      return;
+    }
   } catch (error) {
+    quitInProgress = false;
     console.error(`[quit] ${error instanceof Error ? error.message : String(error)}`);
   } finally {
-    // The second app.quit() must not be intercepted. Any renderer that did not
-    // acknowledge the save request has already been closed by the coordinator's
-    // timeout fallback.
-    quitAllowed = true;
-    app.quit();
+    // Only a successful, acknowledged close may allow the second quit pass.
+    if (quitInProgress) {
+      quitAllowed = true;
+      app.quit();
+    }
   }
 };
 

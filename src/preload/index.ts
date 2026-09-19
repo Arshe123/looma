@@ -38,6 +38,18 @@ type OllamaModelPullProgressPayload = OllamaDownloadProgressPayload & {
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
+  externalDocuments: {
+    ready: (workspaceId: string | null, openedPaths: string[]) => ipcRenderer.invoke('externalDocuments:ready', workspaceId, openedPaths),
+    onOpen: (listener: (request: import('../shared/types/external-document').OpenDocumentRequest) => void) => {
+      const handler = (_: unknown, request: import('../shared/types/external-document').OpenDocumentRequest) => listener(request);
+      ipcRenderer.on('externalDocuments:open', handler);
+      return () => ipcRenderer.removeListener('externalDocuments:open', handler);
+    },
+    save: (id: string, content: string, expected: string) => ipcRenderer.invoke('externalDocuments:save', id, content, expected),
+    draft: (id: string, content: string, base: string) => ipcRenderer.invoke('externalDocuments:draft', id, content, base),
+    close: (id: string) => ipcRenderer.invoke('externalDocuments:close', id),
+    readCurrent: (id: string) => ipcRenderer.invoke('externalDocuments:readCurrent', id),
+  },
   file: {
     readMarkdown: (filePath: string) => ipcRenderer.invoke('file:readMarkdown', filePath),
     readTextChunk: (filePath: string, offset: number, length: number) =>
@@ -226,6 +238,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   window: {
     close: () => ipcRenderer.invoke('window:close'),
+    beginClose: () => ipcRenderer.invoke('window:beginClose'),
+    cancelClose: () => ipcRenderer.invoke('window:cancelClose'),
     minimize: () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
     openWorkspace: (workspaceId: string) => ipcRenderer.invoke('window:openWorkspace', workspaceId),

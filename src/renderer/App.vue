@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { AUXILIARY_WIDTH_STORAGE_KEY, clampAuxiliaryWidth, parseAuxiliaryWidth } from '@/renderer/utils/auxiliary-layout';
+import { useExternalDocumentsStore } from '@/renderer/stores/externalDocuments';
 import { useWorkspaceStore } from '@/renderer/stores/workspace';
 import AiAssistant from '@/renderer/components/ai/AiAssistant.vue';
 import OutlinePanel from '@/renderer/components/OutlinePanel.vue';
@@ -29,6 +30,18 @@ import {
 import { matchesAppShortcut } from '@/shared/utils/app-shortcuts';
 
 const workspaceStore = useWorkspaceStore();
+const externalDocuments = useExternalDocumentsStore();
+const editorOnly = new URLSearchParams(window.location.search).get('editorOnly') === '1';
+let initialized = false;
+let cleanupExternalOpen: (() => void) | undefined;
+const reportOpenDocuments = () => {
+  if (!initialized || workspaceStore.isWorkspaceTransitioning) return;
+  void window.electronAPI.externalDocuments.ready(workspaceStore.activeWorkspaceId, workspaceStore.tabs.flatMap(tab => tab.kind === 'file' ? [tab.relativePath] : [])).catch(console.error);
+};
+const cleanupWorkspaceActions = workspaceStore.$onAction(({ name }) => {
+  if (['activateTab', 'openFileTab', 'openPreviewFileTab', 'openSystemTab'].includes(name)) externalDocuments.activeId = null;
+});
+watch(() => [workspaceStore.activeWorkspaceId, workspaceStore.tabs, workspaceStore.isWorkspaceTransitioning], reportOpenDocuments, { deep: true });
 const settingsStore = useSettingsStore();
 watchFontPreset(() => settingsStore.fontPreset)
 const ollamaStore = useOllamaStore();
@@ -161,8 +174,15 @@ const startSidebarResize = (e: PointerEvent) => {
   window.addEventListener('pointercancel', stopSidebarResize)
 }
 
-onMounted(() => {
-  workspaceStore.init();
+onMounted(async () => {
+  cleanupExternalOpen = window.electronAPI.externalDocuments.onOpen(request => {
+    if (request.kind === 'external') externalDocuments.open(request.document);
+    else { externalDocuments.activeId = null; workspaceStore.openFileTab(request.relativePath); }
+  });
+  if (editorOnly) workspaceStore.applyTheme();
+  else await workspaceStore.init();
+  initialized = true;
+  reportOpenDocuments();
   settingsStore.load();
   ollamaStore.attachDownloadProgress();
   ollamaStore.attachPullModelProgress();
@@ -197,6 +217,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  cleanupExternalOpen?.();
+  cleanupWorkspaceActions();
   stopAuxiliaryResize()
   stopSidebarResize()
   window.removeEventListener('resize', onWindowResize)
@@ -214,14 +236,15 @@ onUnmounted(() => {
     <div class="h-screen w-screen flex flex-col overflow-hidden bg-bg text-text-main antialiased font-sans select-none">
       <TopBar />
       <div class="workspace-layout flex flex-1 min-h-0 overflow-hidden pr-3">
-        <Sidebar :width="sidebarWidth" />
+        <Sidebar v-if="!editorOnly" :width="sidebarWidth" />
         <div
           class="relative z-10 h-full w-2 shrink-0 cursor-col-resize bg-transparent hover:bg-accent-soft active:bg-accent"
           style="-webkit-app-region: no-drag"
+          v-if="!editorOnly"
           @pointerdown="startSidebarResize"
         />
         <MainContent />
-        <aside v-if="workspaceStore.activeAuxiliaryPanel" ref="auxiliaryPanelRef" :style="{ width: `${auxiliaryWidth}px` }" class="auxiliary-panel relative shrink-0 min-h-0 ml-2" aria-label="辅助面板">
+        <aside v-if="!editorOnly && !externalDocuments.activeId && workspaceStore.activeAuxiliaryPanel" ref="auxiliaryPanelRef" :style="{ width: `${auxiliaryWidth}px` }" class="auxiliary-panel relative shrink-0 min-h-0 ml-2" aria-label="辅助面板">
           <div
             class="absolute -left-2 top-0 bottom-0 w-2 cursor-col-resize hover:bg-accent-soft active:bg-accent"
             style="-webkit-app-region: no-drag; touch-action: none"
@@ -235,7 +258,8 @@ onUnmounted(() => {
         </aside>
       </div>
       <footer class="h-9 shrink-0 flex items-center gap-3 px-3">
-        <BreadcrumbNavigation />
+        <template v-if="!externalDocuments.activeId && !editorOnly"><BreadcrumbNavigation /></template>
+        <span v-else class="flex-1 text-xs text-text-muted truncate">{{ externalDocuments.documents.find(doc => doc.id === externalDocuments.activeId)?.filePath || '外部文件编辑器' }}</span>
         <div class="shrink-0"><ThemeSwitcher /></div>
       </footer>
     </div>

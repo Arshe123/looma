@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { defineAsyncComponent, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import { defineAsyncComponent, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, provide, ref, watch } from 'vue'
+import { externalDocumentKey, type DocumentSession } from './documentSession'
 import { Columns, Edit3, Eye } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { useSettingsStore } from '@/renderer/stores/settings'
@@ -16,6 +17,7 @@ const ChunkedMarkdownPreview = defineAsyncComponent(() => import('../preview/Chu
 const NoteLinkPreview = defineAsyncComponent(() => import('../preview/NoteLinkPreview.vue'))
 
 const props = defineProps<{
+  documentSession?: DocumentSession
   filePath: string
   relativeFilePath: string
   content: string
@@ -35,6 +37,12 @@ const emit = defineEmits<{
 }>()
 
 const workspaceStore = useWorkspaceStore()
+provide(externalDocumentKey, Boolean(props.documentSession))
+const getSession = () => props.documentSession?.getSession() ?? (props.documentSession ? undefined : workspaceStore.fileSessions[props.relativeFilePath])
+const saveSession = (session: Parameters<DocumentSession['saveSession']>[0], skipSaveMeta = false) => {
+  if (props.documentSession) props.documentSession.saveSession(session)
+  else workspaceStore.saveFileSession(props.relativeFilePath, session, skipSaveMeta)
+}
 const settingsStore = useSettingsStore()
 const viewMode = ref<'split' | 'editor' | 'preview'>('preview')
 const splitRatio = ref(0.5)
@@ -61,9 +69,9 @@ const ZOOM_INDICATOR_DURATION_MS = 900
 const clampSplitRatio = (ratio: number) => Math.min(Math.max(ratio, 0.2), 0.8)
 
 const saveMarkdownSession = (skipSaveMeta = false) => {
-  if (workspaceStore.isWorkspaceTransitioning) return
-  const existing = workspaceStore.fileSessions[props.relativeFilePath]?.markdown
-  workspaceStore.saveFileSession(props.relativeFilePath, {
+  if (!props.documentSession && workspaceStore.isWorkspaceTransitioning) return
+  const existing = getSession()?.markdown
+  saveSession({
     markdown: {
       viewMode: viewMode.value,
       splitRatio: splitRatio.value,
@@ -74,7 +82,7 @@ const saveMarkdownSession = (skipSaveMeta = false) => {
 }
 
 const getMarkdownSnapshot = () => {
-  const existing = workspaceStore.fileSessions[props.relativeFilePath]?.markdown
+  const existing = getSession()?.markdown
   return {
     viewMode: viewMode.value,
     splitRatio: splitRatio.value,
@@ -84,9 +92,9 @@ const getMarkdownSnapshot = () => {
 }
 
 const saveSnapshot = (skipSaveMeta = false) => {
-  if (workspaceStore.isWorkspaceTransitioning) return
+  if (!props.documentSession && workspaceStore.isWorkspaceTransitioning) return
   const cmSnap = editorRef.value?.getSnapshot()
-  workspaceStore.saveFileSession(props.relativeFilePath, {
+  saveSession({
     markdown: getMarkdownSnapshot(),
     ...(cmSnap ? { codemirror: cmSnap } : {}),
   }, skipSaveMeta)
@@ -94,7 +102,7 @@ const saveSnapshot = (skipSaveMeta = false) => {
 
 const restoreSnapshot = async (focusVisibleEditor = false) => {
   const generation = ++restoreGeneration
-  const session = workspaceStore.fileSessions[props.relativeFilePath]
+  const session = getSession()
   if (!session) return
   const editorScroll = session.markdown?.editorScroll
   const previewScroll = session.markdown?.previewScroll
@@ -256,7 +264,7 @@ const setViewMode = async (nextMode: 'split' | 'editor' | 'preview') => {
 }
 
 onMounted(async () => {
-  const session = workspaceStore.fileSessions[props.relativeFilePath]
+  const session = getSession()
   if (session) {
     if (session.markdown?.viewMode) viewMode.value = session.markdown.viewMode
     if (typeof session.markdown?.splitRatio === 'number') splitRatio.value = clampSplitRatio(session.markdown.splitRatio)
@@ -301,13 +309,17 @@ watch(
     const flushedContent = previewRef.value?.flushPendingMarkdownEmit?.()
     emit(
       'save',
-      flushedContent ?? workspaceStore.openedTextFileContents[props.relativeFilePath]?.content ?? props.content,
+      flushedContent ?? (props.documentSession ? props.content : workspaceStore.openedTextFileContents[props.relativeFilePath]?.content) ?? props.content,
       props.relativeFilePath,
     )
   },
 )
 
 defineExpose({
+  flushPendingContent() {
+    const content = previewRef.value?.flushPendingMarkdownEmit?.()
+    if (content !== undefined) emit('update:content', content, props.relativeFilePath)
+  },
   scrollToHeading(target: MarkdownOutlineItem) {
     if (viewMode.value !== 'editor') {
       if (props.useChunkedPreview) {
@@ -442,7 +454,7 @@ defineExpose({
       </button>
     </div>
 
-    <NoteLinkPreview
+    <NoteLinkPreview v-if="!documentSession"
       :file-path="props.filePath"
       :relative-file-path="props.relativeFilePath"
     />

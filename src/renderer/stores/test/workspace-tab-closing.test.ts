@@ -40,9 +40,12 @@ describe('workspace tab closing', () => {
   it('wires both actions into the tab context menu', () => {
     const editorTabs = readFileSync(resolve(process.cwd(), 'src/renderer/components/EditorTabs.vue'), 'utf8')
 
-    expect(editorTabs).toContain('workspaceStore.closeTabsToLeft(contextMenuTabId.value)')
+    expect(editorTabs).toContain("closeTabs('left')")
     expect(editorTabs).toContain('关闭左侧标签页')
-    expect(editorTabs).toContain('workspaceStore.closeOtherTabs(contextMenuTabId.value)')
+    expect(editorTabs).toContain("closeTabs('other')")
+    expect(editorTabs).toContain('closeDocumentTabs(')
+    expect(editorTabs).toContain('externalDocuments.close(doc.id)')
+    expect(editorTabs).toContain('@contextmenu="(e) => onContextMenu(e, doc)"')
     expect(editorTabs).toContain('关闭其他标签页')
   })
 })

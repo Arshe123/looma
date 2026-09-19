@@ -33,6 +33,11 @@ win:
   artifactName: "${productName}-${version}-Setup.${ext}"
 
 mac:
+  fileAssociations:
+    - ext: md
+      name: Markdown 文档
+      role: Editor
+      rank: Alternate
   target:
     - dmg
     - zip
@@ -41,6 +46,7 @@ mac:
   artifactName: "${productName}-${version}-${arch}.${ext}"
 
 nsis:
+  include: resources/open-with.nsh
   oneClick: false
   perMachine: false
   allowElevation: true

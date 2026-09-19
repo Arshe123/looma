@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { useWorkspaceStore, type WorkspaceTab } from '../stores/workspace'
-import { X } from 'lucide-vue-next'
+import { useExternalDocumentsStore } from '../stores/externalDocuments'
+import { X, FileSymlink } from 'lucide-vue-next'
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { FILE_TREE_REVEAL_ACTIVE_FILE_EVENT } from '@/shared/utils/file-tree-utils'
+import { closeDocumentTabs, type DocumentTabCloseMode } from '@/renderer/utils/document-tab-closing'
 import { getTabTitle } from '@/renderer/stores/workspace-tab-utils'
 
 const workspaceStore = useWorkspaceStore()
+const externalDocuments = useExternalDocumentsStore()
 
 const closeTab = async (e: Event | null, tabId: string) => {
   if (e) e.stopPropagation()
@@ -13,6 +16,7 @@ const closeTab = async (e: Event | null, tabId: string) => {
 }
 
 const selectTab = (tab: WorkspaceTab) => {
+  externalDocuments.activeId = null
   const wasActive = workspaceStore.activeTabId === tab.id
   if (!wasActive) {
     workspaceStore.activateTab(tab.id)
@@ -68,7 +72,7 @@ const closeMenu = () => {
   menuOpen.value = false
 }
 
-const onContextMenu = (event: MouseEvent, tab: WorkspaceTab) => {
+const onContextMenu = (event: MouseEvent, tab: { id: string }) => {
   event.preventDefault()
   contextMenuTabId.value = tab.id
   const pad = 8
@@ -81,39 +85,24 @@ const onContextMenu = (event: MouseEvent, tab: WorkspaceTab) => {
   menuOpen.value = true
 }
 
-const handleCloseTab = async () => {
-  if (!contextMenuTabId.value) return
-  await workspaceStore.closeTab(contextMenuTabId.value)
+const closeTabs = async (mode: DocumentTabCloseMode) => {
+  await closeDocumentTabs([
+    ...workspaceStore.tabs.map(tab => ({ id: tab.id, dirty: workspaceStore.isTabDirty(tab.id), close: () => workspaceStore.closeTab(tab.id) })),
+    ...externalDocuments.documents.map(doc => ({ id: doc.id, dirty: externalDocuments.dirty(doc.id), close: () => externalDocuments.close(doc.id) })),
+  ], contextMenuTabId.value, mode)
   closeMenu()
 }
+const handleCloseTab = () => closeTabs('one')
 
-const handleCloseLeftTabs = async () => {
-  if (!contextMenuTabId.value) return
-  await workspaceStore.closeTabsToLeft(contextMenuTabId.value)
-  closeMenu()
-}
+const handleCloseLeftTabs = () => closeTabs('left')
 
-const handleCloseRightTabs = async () => {
-  if (!contextMenuTabId.value) return
-  await workspaceStore.closeTabsToRight(contextMenuTabId.value)
-  closeMenu()
-}
+const handleCloseRightTabs = () => closeTabs('right')
 
-const handleCloseOtherTabs = async () => {
-  if (!contextMenuTabId.value) return
-  await workspaceStore.closeOtherTabs(contextMenuTabId.value)
-  closeMenu()
-}
+const handleCloseOtherTabs = () => closeTabs('other')
 
-const handleCloseSavedTabs = async () => {
-  await workspaceStore.closeSavedTabs()
-  closeMenu()
-}
+const handleCloseSavedTabs = () => closeTabs('saved')
 
-const handleCloseAllTabs = async () => {
-  await workspaceStore.closeAllTabs()
-  closeMenu()
-}
+const handleCloseAllTabs = () => closeTabs('all')
 
 const handleCopyPath = () => {
   const tab = contextMenuTab.value
@@ -167,7 +156,7 @@ onUnmounted(() => {
         :key="tab.id"
         class="group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full cursor-pointer relative shrink-0 transition-colors rounded-lg mr-1"
         :class="[
-          workspaceStore.activeTabId === tab.id
+          !externalDocuments.activeId && workspaceStore.activeTabId === tab.id
             ? 'bg-surface text-accent'
             : 'text-text-muted hover:bg-accent-soft'
         ]"
@@ -192,6 +181,17 @@ onUnmounted(() => {
         >
           <X :size="12" />
         </button>
+      </div>
+      <div v-for="doc in externalDocuments.documents" :key="doc.id" :title="doc.filePath"
+        class="external-document-tab group flex items-center gap-2 px-3 min-w-[150px] max-w-[240px] shrink-0 rounded-lg mr-1 border border-accent/30 cursor-pointer"
+        :class="externalDocuments.activeId === doc.id ? 'bg-accent-soft text-accent' : 'text-text-muted'"
+        @click="externalDocuments.activeId = doc.id"
+        @contextmenu="(e) => onContextMenu(e, doc)">
+        <FileSymlink :size="14" class="shrink-0" />
+        <span class="text-[10px] border border-current rounded px-1">外部</span>
+        <span class="text-xs truncate">{{ doc.filePath.split(/[\\/]/).pop() }}</span>
+        <span v-if="externalDocuments.dirty(doc.id)" class="w-2 h-2 shrink-0 rounded-full bg-text-subtle" aria-label="未保存" />
+        <button class="p-1 shrink-0 hover:bg-surface rounded" title="关闭外部文件" @click.stop="externalDocuments.close(doc.id)"><X :size="12" /></button>
       </div>
     </div>
     

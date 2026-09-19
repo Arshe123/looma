@@ -7,6 +7,9 @@ const getWindowFromEvent = (event: IpcMainInvokeEvent) => {
   return BrowserWindow.fromWebContents(event.sender) ?? null;
 };
 
+ipcMain.handle('window:beginClose', event => { getWindowFromEvent(event)?.emit('looma:close-pending' as any); });
+ipcMain.handle('window:cancelClose', event => { getWindowFromEvent(event)?.emit('looma:close-cancelled' as any); });
+
 // Window Management IPC
 ipcMain.handle('window:close', async (event) => {
   const win = getWindowFromEvent(event);

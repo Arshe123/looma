@@ -5,6 +5,8 @@ import { useWorkspaceStore, type FileWorkspaceTab } from '../stores/workspace'
 import { useSettingsStore } from '../stores/settings'
 import EditorLoadError from './editor/EditorLoadError.vue'
 import EditorTabs from './EditorTabs.vue'
+import ExternalDocuments from './ExternalDocuments.vue'
+import { useExternalDocumentsStore } from '../stores/externalDocuments'
 import SettingsPage from './SettingsPage.vue'
 import RagIndexPage from './rag/RagIndexPage.vue'
 import AiConversationHistoryPage from './ai/AiConversationHistoryPage.vue'
@@ -24,6 +26,7 @@ import {
 import { matchesAppShortcut } from '@/shared/utils/app-shortcuts'
 
 const workspaceStore = useWorkspaceStore()
+const externalDocuments = useExternalDocumentsStore()
 const settingsStore = useSettingsStore()
 const platform = window.electronAPI.platform
 let keyHandler: ((e: KeyboardEvent) => void) | null = null
@@ -253,7 +256,9 @@ onUnmounted(() => {
 
 <template>
   <div class="workspace-document h-full min-w-0 flex flex-col flex-1 overflow-hidden rounded-[15px] bg-surface">
-    <EditorTabs v-if="hasOpenTabs" />
+    <EditorTabs v-if="hasOpenTabs || externalDocuments.documents.length" />
+    <ExternalDocuments />
+    <div v-show="!externalDocuments.activeId" class="flex flex-col flex-1 min-h-0 overflow-hidden">
 
     <SettingsPage
       v-if="hasSettingsTab"
@@ -324,6 +329,7 @@ onUnmounted(() => {
       <FileText :size="64" class="mb-6 opacity-20" />
       <h3 class="text-xl font-medium mb-2">欢迎来到您的笔记中</h3>
       <p class="max-w-xs text-sm opacity-60">从列表中选择一个笔记或创建一个新的笔记以开始。</p>
+    </div>
     </div>
   </div>
 </template>

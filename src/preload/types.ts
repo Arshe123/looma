@@ -288,6 +288,7 @@ interface OllamaModelPullProgressPayload extends OllamaDownloadProgressPayload {
 }
 
 interface ElectronAPI {
+  externalDocuments: import('../shared/types/external-document').ExternalDocumentsAPI;
   platform: string;
   file: {
     readMarkdown: (filePath: string) => Promise<Result<string>>;
@@ -458,6 +459,8 @@ interface ElectronAPI {
     minimize: () => Promise<void>;
     toggleMaximize: () => Promise<void>;
     close: () => Promise<void>;
+    beginClose: () => Promise<void>;
+    cancelClose: () => Promise<void>;
     onPrepareClose: (callback: () => void) => () => void;
   };
 }

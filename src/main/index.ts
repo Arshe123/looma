@@ -200,7 +200,7 @@ function createWindow(initialWorkspaceId?: string, editorOnly = false) {
   return win;
 }
 
-const openWith = createOpenWithController(() => createWindow(undefined, true));
+const openWith = createOpenWithController(() => createWindow(undefined, true), id => createWindow(id));
 app.on('open-file', (event, filePath) => {
   event.preventDefault();
   openWith.enqueue([filePath]);

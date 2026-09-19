@@ -39,6 +39,13 @@ type OllamaModelPullProgressPayload = OllamaDownloadProgressPayload & {
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   externalDocuments: {
+    transfer: (workspaceId: string, id: string, content: string, baseContent: string) => ipcRenderer.invoke('externalDocuments:transfer', workspaceId, id, content, baseContent),
+    claim: (token: string, error?: string) => ipcRenderer.invoke('externalDocuments:claim', token, error),
+    onHandoff: (listener: (request: import('../shared/types/external-document').DocumentHandoff) => void) => {
+      const handler = (_: unknown, request: import('../shared/types/external-document').DocumentHandoff) => listener(request);
+      ipcRenderer.on('externalDocuments:handoff', handler);
+      return () => ipcRenderer.removeListener('externalDocuments:handoff', handler);
+    },
     ready: (workspaceId: string | null, openedPaths: string[]) => ipcRenderer.invoke('externalDocuments:ready', workspaceId, openedPaths),
     onOpen: (listener: (request: import('../shared/types/external-document').OpenDocumentRequest) => void) => {
       const handler = (_: unknown, request: import('../shared/types/external-document').OpenDocumentRequest) => listener(request);

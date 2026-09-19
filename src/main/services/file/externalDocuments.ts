@@ -86,6 +86,12 @@ export class ExternalDocuments {
       this.documents.delete(id)
     })
   }
+  transferOwner(id: string, from: number, to: number) {
+    this.authorized(id, from).owner = to
+  }
+  pathFor(id: string, owner: number) {
+    return this.authorized(id, owner).filePath
+  }
   releaseOwner(owner: number) {
     for (const [id, doc] of this.documents) if (doc.owner === owner) this.documents.delete(id)
   }

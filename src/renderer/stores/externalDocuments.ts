@@ -13,6 +13,7 @@ export interface ExternalEditorDocument extends ExternalDocumentData {
 export const useExternalDocumentsStore = defineStore('externalDocuments', () => {
   const documents = ref<ExternalEditorDocument[]>([])
   const activeId = ref<string | null>(null)
+  const transferring = ref(false)
   const flushers = new Map<string, () => void>()
   const queues = new Map<string, Promise<unknown>>()
   const closing = new Set<string>()
@@ -84,7 +85,7 @@ export const useExternalDocumentsStore = defineStore('externalDocuments', () => 
     })
   }
   async function close(id: string) {
-    if (closing.has(id)) return false
+    if (transferring.value || closing.has(id)) return false
     flushers.get(id)?.()
     await queues.get(id)
     const doc = get(id)
@@ -115,5 +116,29 @@ export const useExternalDocumentsStore = defineStore('externalDocuments', () => 
     for (const doc of [...documents.value]) if (!await close(doc.id)) return false
     return true
   }
-  return { documents, activeId, open, update, dirty, markPending, registerFlush, save, close, closeAll }
+  async function transferCurrent(workspaceId: string) {
+    const id = activeId.value
+    if (!id || transferring.value) return false
+    const doc = get(id)
+    if (!doc) return false
+    transferring.value = true
+    closing.add(id) // Suppress queued autosaves, never force-save during a handoff.
+    try {
+      flushers.get(id)?.()
+      await queues.get(id)
+      flushers.get(id)?.()
+      await queues.get(id)
+      if (doc.pending) throw new Error('编辑内容尚未准备完成')
+      await api().transfer(workspaceId, id, doc.content, doc.baseContent)
+      documents.value = documents.value.filter(item => item.id !== id)
+      flushers.delete(id)
+      queues.delete(id)
+      if (activeId.value === id) activeId.value = documents.value.at(-1)?.id || null
+      return true
+    } catch (error) {
+      doc.error = `打开工作空间未完成：${String(error)}`
+      return false
+    } finally { closing.delete(id); transferring.value = false }
+  }
+  return { documents, activeId, transferring, transferCurrent, open, update, dirty, markPending, registerFlush, save, close, closeAll }
 })

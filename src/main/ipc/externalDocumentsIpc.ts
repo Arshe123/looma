@@ -1,13 +1,25 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
+import type { ExternalDocumentData, DocumentHandoff } from '../../shared/types/external-document'
 import { ExternalDocuments } from '../services/file/externalDocuments'
 import { workspaceService } from '../services/workspace/workspaceService'
 import { chooseOpenTarget, workspaceRelativePath, type OpenWindowState } from '../services/app/openWithRouting'
 
-export function createOpenWithController(createEditorWindow: () => BrowserWindow) {
+export function createOpenWithController(createEditorWindow: () => BrowserWindow, createWorkspaceWindow: (id: string) => BrowserWindow) {
   const states = new Map<number, OpenWindowState>()
   const registered = new Set<number>()
+  const handoffs = new Map<string, { source: number; target: number; request: DocumentHandoff; document: ExternalDocumentData; resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>; sent: boolean }>()
+  function deliverHandoffs() {
+    for (const item of handoffs.values()) {
+      if (item.sent || !states.has(item.target)) continue
+      const win = BrowserWindow.getAllWindows().find(w => w.webContents.id === item.target)
+      if (!win || win.isDestroyed()) continue
+      item.sent = true
+      win.webContents.send('externalDocuments:handoff', item.request)
+    }
+  }
   const pending: string[] = []
   let service: ExternalDocuments | undefined
   let draining = false
@@ -21,6 +33,12 @@ export function createOpenWithController(createEditorWindow: () => BrowserWindow
       if (state) state.focusedAt = Date.now()
     })
     win.on('closed', () => {
+      for (const [token, item] of handoffs) {
+        if (item.source !== owner && item.target !== owner) continue
+        clearTimeout(item.timer)
+        handoffs.delete(token)
+        item.reject(new Error('交接窗口已关闭，原草稿已保留'))
+      }
       registered.delete(owner)
       states.delete(owner)
       documents().releaseOwner(owner)
@@ -38,7 +56,7 @@ export function createOpenWithController(createEditorWindow: () => BrowserWindow
         try {
           const canonical = await fs.realpath(file)
           const existingOwner = documents().ownerFor(canonical)
-          const target = existingOwner ? { owner: existingOwner } : chooseOpenTarget(canonical, [...states.values()])
+          const target = existingOwner ? chooseOpenTarget(canonical, [...states.values()].filter(state => state.id === existingOwner)) : chooseOpenTarget(canonical, [...states.values()])
           if (!target) { pending.unshift(file); break }
           const win = BrowserWindow.getAllWindows().find(win => win.webContents.id === target.owner)
           if (!win || win.isDestroyed()) { pending.unshift(file); break }
@@ -76,7 +94,47 @@ export function createOpenWithController(createEditorWindow: () => BrowserWindow
       }
     }
     states.set(owner, { id: owner, workspacePath, opened: paths, openedRelativePaths, focusedAt: states.get(owner)?.focusedAt ?? Date.now() })
+    deliverHandoffs()
     void drain()
+  })
+  ipcMain.handle('externalDocuments:transfer', async (event, workspaceId: string, id: string, content: string, baseContent: string) => {
+    const source = event.sender.id
+    if ([...handoffs.values()].some(item => item.source === source || item.target === source)) throw new Error('交接正在进行')
+    const filePath = documents().pathFor(id, source)
+    const exists = await workspaceService.checkExists(workspaceId)
+    if (!exists.success || !exists.data?.exists) throw new Error('工作空间不可用')
+    const state = await workspaceService.getState()
+    const workspace = state.data?.workspaces.find(ws => ws.id === workspaceId)
+    if (!workspace) throw new Error('工作空间不存在')
+    const root = await fs.realpath(workspace.path)
+    // This is a recovery write, not a save to the original file.
+    await documents().draft(id, source, content, baseContent)
+    const target = BrowserWindow.getAllWindows().find(win => win.webContents.id !== source && (
+      states.get(win.webContents.id)?.workspacePath === root || new URL(win.webContents.getURL() || 'about:blank').searchParams.get('workspaceId') === workspaceId
+    )) || createWorkspaceWindow(workspaceId)
+    const token = randomUUID()
+    const relativePath = workspaceRelativePath(filePath, root)
+    const request = { token, workspaceId, relativePath, document: { id, filePath, content, baseContent } }
+    if (target.isMinimized()) target.restore()
+    target.focus()
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { handoffs.delete(token); reject(new Error('工作空间未能及时接收文件；原文件仍在当前窗口')) }, 20000)
+      handoffs.set(token, { source, target: target.webContents.id, request, document: { id, filePath, content, baseContent }, resolve, reject, timer, sent: false })
+      deliverHandoffs()
+    })
+  })
+  ipcMain.handle('externalDocuments:claim', (event, token: string, error?: string) => {
+    const item = handoffs.get(token)
+    if (!item || item.target !== event.sender.id) throw new Error('交接已失效')
+    try {
+      if (error) throw new Error(error)
+      documents().transferOwner(item.document.id, item.source, item.target)
+      item.resolve()
+      return item.document
+    } catch (error) {
+      item.reject(error instanceof Error ? error : new Error(String(error)))
+      return null
+    } finally { clearTimeout(item.timer); handoffs.delete(token) }
   })
   ipcMain.handle('externalDocuments:save', (event, id: string, content: string, expected: string) => documents().save(id, event.sender.id, content, expected))
   ipcMain.handle('externalDocuments:draft', (event, id: string, content: string, base: string) => documents().draft(id, event.sender.id, content, base))

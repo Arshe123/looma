@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { useExternalDocumentsStore } from './externalDocuments'
 import { DEFAULT_THEME_PALETTE, getStoredThemePalette, normalizeThemePalette, THEME_PALETTE_STORAGE_KEY, type ThemePalette } from '../theme'
 import {
   DEFAULT_ACTIVE_SIDEBAR_PANEL,
@@ -1767,10 +1768,39 @@ export const useWorkspaceStore = defineStore('workspace', {
       await window.electronAPI.workspace.setActive(null)
     },
 
+    async adoptExternalDocument(relativePath: string, doc: import('@/shared/types/external-document').ExternalDocumentData, diskContent: string, claim: () => Promise<unknown> = async () => {}) {
+      const workspaceId = this.activeWorkspaceId
+      if (!workspaceId || this.isFileDirty(relativePath) || this.openedTextFileContents[relativePath]?.isSaving) throw new Error('目标标签存在未保存内容，已保留两个编辑现场')
+      const revision = createDraftRecoveryRevision()
+      const result = await window.electronAPI.draftRecovery.save({ workspaceId, relativePath, draftContent: doc.content, baseContent: doc.baseContent, revision })
+      if (!result.success) throw new Error(result.error || '工作空间恢复草稿保存失败')
+      try { await claim() } catch (error) {
+        await window.electronAPI.draftRecovery.remove(workspaceId, relativePath, revision).catch(() => {})
+        throw error
+      }
+      this.openedTextFileContents[relativePath] = {
+        content: doc.content, loadedContent: doc.baseContent,
+        isPartial: false, isLoading: false, isLoadingMore: false, isSaving: false,
+        nextOffset: 0, totalBytes: 0, useChunkedPreview: false,
+        loadRequestId: ++this.nextTextFileLoadRequestId,
+        hasPendingEditorChanges: false, recoveryRevision: revision,
+        recoveryConflict: diskContent !== doc.baseContent,
+        saveError: diskContent !== doc.baseContent ? '文件已被其他程序修改，已保留交接草稿；保存前请确认。' : '',
+      }
+      this.openFileTab(relativePath)
+      // Workspace recovery is durable before removing the external backup.
+      await window.electronAPI.externalDocuments.close(doc.id).catch(() => {})
+    },
+
     async openWorkspaceInNewWindow(id: string) {
-      if (!id) return
+      if (!id || useExternalDocumentsStore().transferring) return
       const canOpen = await this.ensureWorkspaceCanOpen(id)
       if (!canOpen) return
+      const external = useExternalDocumentsStore()
+      if (external.activeId && id !== this.activeWorkspaceId) {
+        await external.transferCurrent(id)
+        return
+      }
       await (window as any).electronAPI?.window?.openWorkspace?.(id)
     },
 

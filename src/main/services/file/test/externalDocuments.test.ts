@@ -5,6 +5,17 @@ import path from 'node:path'
 import { ExternalDocuments } from '../externalDocuments'
 
 const roots: string[] = []
+it('transfers ownership without deleting drafts or overwriting conflicting disk content', async () => {
+  const { file, service } = await fixture()
+  const doc = await service.open(file, 1)
+  await service.draft(doc.id, 1, '# Latest', doc.baseContent)
+  await fs.writeFile(file, '# Conflict')
+  service.transferOwner(doc.id, 1, 2)
+  expect(service.ownerFor(doc.filePath)).toBe(2)
+  await expect(service.save(doc.id, 1, 'bad', '# Conflict')).rejects.toThrow('授权')
+  expect((await service.open(file, 2)).content).toBe('# Latest')
+  expect(await fs.readFile(file, 'utf8')).toBe('# Conflict')
+})
 afterEach(async () => { await Promise.all(roots.map(root => fs.rm(root, { recursive: true, force: true }))) })
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'looma-external-test-'))

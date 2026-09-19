@@ -34,6 +34,7 @@ const externalDocuments = useExternalDocumentsStore();
 const editorOnly = new URLSearchParams(window.location.search).get('editorOnly') === '1';
 let initialized = false;
 let cleanupExternalOpen: (() => void) | undefined;
+let cleanupHandoff: (() => void) | undefined;
 const reportOpenDocuments = () => {
   if (!initialized || workspaceStore.isWorkspaceTransitioning) return;
   void window.electronAPI.externalDocuments.ready(workspaceStore.activeWorkspaceId, workspaceStore.tabs.flatMap(tab => tab.kind === 'file' ? [tab.relativePath] : [])).catch(console.error);
@@ -175,11 +176,42 @@ const startSidebarResize = (e: PointerEvent) => {
 }
 
 onMounted(async () => {
+  cleanupHandoff = window.electronAPI.externalDocuments.onHandoff(async request => {
+    const api = window.electronAPI.externalDocuments;
+    if (externalDocuments.transferring || workspaceStore.isWorkspaceTransitioning || workspaceStore.activeWorkspaceId !== request.workspaceId) {
+      await api.claim(request.token, '目标工作空间正在切换，请重试');
+      return;
+    }
+    externalDocuments.transferring = true;
+    try {
+      if (request.relativePath) {
+        const rel = request.relativePath;
+        const existing = workspaceStore.openedTextFileContents[rel];
+        if (existing?.isLoading || existing?.isLoadingMore || existing?.isSaving || workspaceStore.isFileDirty(rel)) throw new Error('目标标签正在编辑或加载，请完成后重试');
+        const result = await window.electronAPI.file.readMarkdown(request.document.filePath);
+        if (!result.success || typeof result.data !== 'string') throw new Error(result.error || '无法读取目标文件');
+        const recovery = await window.electronAPI.draftRecovery.get(request.workspaceId, rel, result.data);
+        if (!recovery.success || (recovery.data && recovery.data.status !== 'none')) throw new Error('目标文件有待恢复的草稿，请先处理后重试');
+        await workspaceStore.adoptExternalDocument(rel, request.document, result.data, async () => {
+          if (!await api.claim(request.token)) throw new Error('文件交接已取消');
+        });
+      } else {
+        const doc = await api.claim(request.token);
+        if (doc) externalDocuments.open(doc);
+      }
+    } catch (error) {
+      await api.claim(request.token, String(error)).catch(() => {});
+      workspaceStore.setError(String(error));
+    } finally { externalDocuments.transferring = false; }
+  });
   cleanupExternalOpen = window.electronAPI.externalDocuments.onOpen(request => {
     if (request.kind === 'external') externalDocuments.open(request.document);
     else { externalDocuments.activeId = null; workspaceStore.openFileTab(request.relativePath); }
   });
-  if (editorOnly) workspaceStore.applyTheme();
+  if (editorOnly) {
+    workspaceStore.applyTheme();
+    await workspaceStore.refreshWorkspaces();
+  }
   else await workspaceStore.init();
   initialized = true;
   reportOpenDocuments();
@@ -189,6 +221,7 @@ onMounted(async () => {
   window.addEventListener('resize', onWindowResize)
 
   keyHandler = (e: KeyboardEvent) => {
+    if (externalDocuments.transferring) return
     if (workspaceStore.inputDialogOpen || workspaceStore.confirmationDialogOpen) return
     if (matchesAppShortcut(e, settingsStore.appShortcuts.openWorkspace, platform)) {
       e.preventDefault()
@@ -217,6 +250,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  cleanupHandoff?.();
   cleanupExternalOpen?.();
   cleanupWorkspaceActions();
   stopAuxiliaryResize()
@@ -233,7 +267,7 @@ onUnmounted(() => {
 
 <template>
   <div spellcheck="false" autocorrect="off" autocapitalize="off">
-    <div class="h-screen w-screen flex flex-col overflow-hidden bg-bg text-text-main antialiased font-sans select-none">
+    <div :inert="externalDocuments.transferring || undefined" class="h-screen w-screen flex flex-col overflow-hidden bg-bg text-text-main antialiased font-sans select-none">
       <TopBar />
       <div class="workspace-layout flex flex-1 min-h-0 overflow-hidden pr-3">
         <Sidebar v-if="!editorOnly" :width="sidebarWidth" />
@@ -267,5 +301,6 @@ onUnmounted(() => {
     <ConfirmationDialog />
     <CommandPalette />
     <AppMessages />
+    <div v-if="externalDocuments.transferring" role="status" class="fixed inset-0 z-[100] flex items-center justify-center bg-panel/70 text-text-main">正在交接当前文件…</div>
   </div>
 </template>

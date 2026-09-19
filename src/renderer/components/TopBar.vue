@@ -29,8 +29,9 @@ const closeMenu = () => {
   menuOpen.value = false
 }
 
-const toggleMenu = () => {
+const toggleMenu = async () => {
   menuOpen.value = !menuOpen.value
+  if (menuOpen.value) await workspaceStore.refreshWorkspaces()
 }
 
 const onSwitchTo = async (id: string) => {
@@ -48,7 +49,7 @@ const toggleMaximizeWindow = () => {
 
 const closeWindow = async () => {
   await window.electronAPI.window.beginClose()
-  if (workspaceStore.isWorkspaceTransitioning) {
+  if (workspaceStore.isWorkspaceTransitioning || externalDocuments.transferring) {
     await window.electronAPI.window.cancelClose()
     return
   }

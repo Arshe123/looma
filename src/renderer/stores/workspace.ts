@@ -1798,7 +1798,13 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!canOpen) return
       const external = useExternalDocumentsStore()
       if (external.activeId && id !== this.activeWorkspaceId) {
-        await external.transferCurrent(id)
+        const transferred = await external.transferCurrent(id)
+        // Only retire an empty single-file window after the target accepted ownership.
+        // Other external tabs (including pending edits) must stay in their source window.
+        if (transferred && !this.activeWorkspaceId && external.documents.length === 0
+          && new URLSearchParams(window.location.search).get('editorOnly') === '1') {
+          await window.electronAPI.window.close()
+        }
         return
       }
       await (window as any).electronAPI?.window?.openWorkspace?.(id)

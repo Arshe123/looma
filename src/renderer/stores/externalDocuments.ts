@@ -9,6 +9,7 @@ export interface ExternalEditorDocument extends ExternalDocumentData {
   error: string
   recoveryError: string
   session?: EditorSession
+  outlineExpandedIds?: string[] // Runtime only; never workspace metadata or recovery content.
 }
 export const useExternalDocumentsStore = defineStore('externalDocuments', () => {
   const documents = ref<ExternalEditorDocument[]>([])

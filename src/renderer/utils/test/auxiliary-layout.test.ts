@@ -11,6 +11,10 @@ describe('辅助栏宽度', () => {
     expect(clampAuxiliaryWidth(100, 1440, 320)).toBe(280)
     expect(clampAuxiliaryWidth(480, 1440, 320)).toBe(480)
   })
+  it('reserves editor space for a resident outline even below the floating breakpoint', () => {
+    expect(clampAuxiliaryWidth(1200, 950, 0, true)).toBe(562)
+    expect(clampAuxiliaryWidth(360, 950, 0, true)).toBe(360)
+  })
   it('limits floating panels to the viewport without reserving the file tree', () => {
     expect(clampAuxiliaryWidth(1200, 1024, 320)).toBe(948)
     expect(clampAuxiliaryWidth(900, 320, 236)).toBe(244)

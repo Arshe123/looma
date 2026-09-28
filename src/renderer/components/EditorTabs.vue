@@ -2,7 +2,7 @@
 import { useWorkspaceStore, type WorkspaceTab } from '../stores/workspace'
 import { useExternalDocumentsStore } from '../stores/externalDocuments'
 import { X, FileSymlink } from 'lucide-vue-next'
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { FILE_TREE_REVEAL_ACTIVE_FILE_EVENT } from '@/shared/utils/file-tree-utils'
 import { closeDocumentTabs, type DocumentTabCloseMode } from '@/renderer/utils/document-tab-closing'
 import { getTabTitle } from '@/renderer/stores/workspace-tab-utils'
@@ -26,30 +26,53 @@ const selectTab = (tab: WorkspaceTab) => {
   }
 }
 
-let draggedIndex = -1
+// Renderer-local ordering: external identities must never enter workspace metadata.
+const visualOrder = ref<string[]>([])
+const availableTabs = computed(() => [
+  ...workspaceStore.tabs,
+  ...externalDocuments.documents.map(doc => ({ ...doc, kind: 'external' as const })),
+])
+watch(() => workspaceStore.activeWorkspaceId, () => { visualOrder.value = availableTabs.value.map(tab => tab.id) }, { flush: 'sync' })
+watch(availableTabs, tabs => {
+  const ids = new Set(tabs.map(tab => tab.id))
+  const nextOrder = [
+    ...visualOrder.value.filter(id => ids.has(id)),
+    ...tabs.filter(tab => !visualOrder.value.includes(tab.id)).map(tab => tab.id),
+  ]
+  // Restored/programmatically reordered workspace tabs remain authoritative for
+  // ordinary slots; only the interleaving and external order are renderer-local.
+  const ordinaryIds = new Set(workspaceStore.tabs.map(tab => tab.id))
+  let ordinaryIndex = 0
+  visualOrder.value = nextOrder.map(id => ordinaryIds.has(id) ? workspaceStore.tabs[ordinaryIndex++].id : id)
+}, { immediate: true, flush: 'sync' })
+const visualTabs = computed(() => {
+  const tabs = new Map(availableTabs.value.map(tab => [tab.id, tab]))
+  return visualOrder.value.flatMap(id => tabs.has(id) ? [tabs.get(id)!] : [])
+})
+let draggedId: string | null = null
 
 const onDragStart = (e: DragEvent, index: number) => {
-  draggedIndex = index
+  draggedId = visualTabs.value[index]?.id || null
   if (e.dataTransfer) {
     e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', draggedId || '')
   }
 }
 
 const onDragOver = (e: DragEvent, index: number) => {
   e.preventDefault()
-  if (draggedIndex === -1 || draggedIndex === index) return
-  
-  const items = [...workspaceStore.tabs]
-  const [removed] = items.splice(draggedIndex, 1)
+  const from = visualTabs.value.findIndex(tab => tab.id === draggedId)
+  if (from < 0 || from === index) return
+  const items = [...visualTabs.value]
+  const [removed] = items.splice(from, 1)
   items.splice(index, 0, removed)
-  
-  workspaceStore.setTabs(items, workspaceStore.activeTabId)
-  draggedIndex = index
+  visualOrder.value = items.map(tab => tab.id)
+  workspaceStore.setTabs(items.filter((tab): tab is WorkspaceTab => tab.kind !== 'external'), workspaceStore.activeTabId)
   workspaceStore.saveWorkspaceMeta().catch(() => {})
 }
 
 const onDragEnd = () => {
-  draggedIndex = -1
+  draggedId = null
 }
 
 const onWheel = (e: WheelEvent) => {
@@ -86,10 +109,9 @@ const onContextMenu = (event: MouseEvent, tab: { id: string }) => {
 }
 
 const closeTabs = async (mode: DocumentTabCloseMode) => {
-  await closeDocumentTabs([
-    ...workspaceStore.tabs.map(tab => ({ id: tab.id, dirty: workspaceStore.isTabDirty(tab.id), close: () => workspaceStore.closeTab(tab.id) })),
-    ...externalDocuments.documents.map(doc => ({ id: doc.id, dirty: externalDocuments.dirty(doc.id), close: () => externalDocuments.close(doc.id) })),
-  ], contextMenuTabId.value, mode)
+  await closeDocumentTabs(visualTabs.value.map(tab => tab.kind === 'external'
+    ? { id: tab.id, dirty: externalDocuments.dirty(tab.id), close: () => externalDocuments.close(tab.id) }
+    : { id: tab.id, dirty: workspaceStore.isTabDirty(tab.id), close: () => workspaceStore.closeTab(tab.id) }), contextMenuTabId.value, mode)
   closeMenu()
 }
 const handleCloseTab = () => closeTabs('one')
@@ -151,9 +173,23 @@ onUnmounted(() => {
       class="flex-1 flex overflow-x-auto overflow-y-hidden custom-scrollbar focus-scrollbar"
       @wheel="onWheel"
     >
-      <div
-        v-for="(tab, index) in workspaceStore.tabs"
-        :key="tab.id"
+      <template v-for="(tab, index) in visualTabs" :key="tab.id">
+      <div v-if="tab.kind === 'external'" :title="tab.filePath" :data-document-tab="tab.id"
+        class="external-document-tab group flex items-center gap-2 px-3 min-w-[150px] max-w-[240px] shrink-0 rounded-lg mr-1 border border-accent/30 cursor-pointer"
+        :class="externalDocuments.activeId === tab.id ? 'bg-accent-soft text-accent' : 'text-text-muted'"
+        draggable="true"
+        @dragstart="(e) => onDragStart(e, index)"
+        @dragover="(e) => onDragOver(e, index)"
+        @dragend="onDragEnd"
+        @click="externalDocuments.activeId = tab.id"
+        @contextmenu="(e) => onContextMenu(e, tab)">
+        <FileSymlink :size="14" class="shrink-0" />
+        <span class="text-[10px] border border-current rounded px-1">外部</span>
+        <span class="text-xs truncate">{{ tab.filePath.split(/[\\/]/).pop() }}</span>
+        <span v-if="externalDocuments.dirty(tab.id)" class="w-2 h-2 shrink-0 rounded-full bg-text-subtle" aria-label="未保存" />
+        <button class="p-1 shrink-0 hover:bg-surface rounded" title="关闭外部文件" @click.stop="externalDocuments.close(tab.id)"><X :size="12" /></button>
+      </div>
+      <div v-else :data-document-tab="tab.id"
         class="group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full cursor-pointer relative shrink-0 transition-colors rounded-lg mr-1"
         :class="[
           !externalDocuments.activeId && workspaceStore.activeTabId === tab.id
@@ -182,17 +218,7 @@ onUnmounted(() => {
           <X :size="12" />
         </button>
       </div>
-      <div v-for="doc in externalDocuments.documents" :key="doc.id" :title="doc.filePath"
-        class="external-document-tab group flex items-center gap-2 px-3 min-w-[150px] max-w-[240px] shrink-0 rounded-lg mr-1 border border-accent/30 cursor-pointer"
-        :class="externalDocuments.activeId === doc.id ? 'bg-accent-soft text-accent' : 'text-text-muted'"
-        @click="externalDocuments.activeId = doc.id"
-        @contextmenu="(e) => onContextMenu(e, doc)">
-        <FileSymlink :size="14" class="shrink-0" />
-        <span class="text-[10px] border border-current rounded px-1">外部</span>
-        <span class="text-xs truncate">{{ doc.filePath.split(/[\\/]/).pop() }}</span>
-        <span v-if="externalDocuments.dirty(doc.id)" class="w-2 h-2 shrink-0 rounded-full bg-text-subtle" aria-label="未保存" />
-        <button class="p-1 shrink-0 hover:bg-surface rounded" title="关闭外部文件" @click.stop="externalDocuments.close(doc.id)"><X :size="12" /></button>
-      </div>
+      </template>
     </div>
     
     <!-- Context Menu -->

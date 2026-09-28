@@ -2,11 +2,17 @@
 import { ChevronRight } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useWorkspaceStore } from '../stores/workspace'
+import { useExternalDocumentsStore } from '../stores/externalDocuments'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import type { OutlineFlatRow } from '@/shared/utils/outline-tree'
 import helpMarkdown from './help/help.md?raw'
 
 const workspaceStore = useWorkspaceStore()
+const externalDocuments = useExternalDocumentsStore()
+const activeExternal = computed(() => externalDocuments.documents.find(doc => doc.id === externalDocuments.activeId))
+const savedExpansion = computed(() => activeExternal.value
+  ? activeExternal.value.outlineExpandedIds
+  : workspaceStore.outlineExpandedHeadingIds[outlineSource.value.key])
 const expandedHeadingIds = ref(new Set<string>())
 const knownHeadingIds = ref(new Set<string>())
 const lastActivePath = ref('')
@@ -20,6 +26,10 @@ let contentRevision = 0
 let hasPersistedExpansion = false
 
 const outlineSource = computed(() => {
+  if (externalDocuments.activeId) {
+    const doc = activeExternal.value
+    return { key: externalDocuments.activeId, content: doc?.content || '', available: Boolean(doc) }
+  }
   const tab = workspaceStore.activeTab
   if (tab?.kind === 'system' && tab.page === 'help') {
     return { key: tab.id, content: helpMarkdown, available: true }
@@ -127,13 +137,8 @@ watch(
 
     const resetExpansion = sourceKey !== lastActivePath.value
     if (resetExpansion) {
-      hasPersistedExpansion = Object.prototype.hasOwnProperty.call(
-        workspaceStore.outlineExpandedHeadingIds,
-        sourceKey,
-      )
-      expandedHeadingIds.value = new Set(
-        hasPersistedExpansion ? workspaceStore.outlineExpandedHeadingIds[sourceKey] : [],
-      )
+      hasPersistedExpansion = savedExpansion.value !== undefined
+      expandedHeadingIds.value = new Set(savedExpansion.value || [])
       knownHeadingIds.value = new Set()
     }
     lastActivePath.value = sourceKey
@@ -158,7 +163,8 @@ const toggleHeading = (id: string) => {
     nextExpanded.add(id)
   }
   expandedHeadingIds.value = nextExpanded
-  workspaceStore.setOutlineExpandedHeadingIds(outlineSource.value.key, Array.from(nextExpanded))
+  if (activeExternal.value) activeExternal.value.outlineExpandedIds = Array.from(nextExpanded)
+  else workspaceStore.setOutlineExpandedHeadingIds(outlineSource.value.key, Array.from(nextExpanded))
   requestOutline(undefined, false)
 }
 

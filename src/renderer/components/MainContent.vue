@@ -103,6 +103,7 @@ const activeTextEditor = computed(() => {
 
 const editorRefs = ref<Record<string, any>>({})
 const helpPageRef = ref<InstanceType<typeof HelpPage> | null>(null)
+const externalDocumentsRef = ref<InstanceType<typeof ExternalDocuments> | null>(null)
 const currentEditorRef = computed(() => editorRefs.value[workspaceStore.activeFileRelativePath] || null)
 
 const setEditorRef = (relativePath: string, el: any) => {
@@ -125,6 +126,10 @@ const onEditorRetry = () => {
 
 const jumpToHeading = (event: Event) => {
   const detail = (event as CustomEvent<MarkdownOutlineItem>).detail
+  if (externalDocuments.activeId) {
+    externalDocumentsRef.value?.scrollToHeading(externalDocuments.activeId, detail)
+    return
+  }
   if (isActiveHelpTab.value) {
     helpPageRef.value?.scrollToHeading(detail)
     return
@@ -257,7 +262,7 @@ onUnmounted(() => {
 <template>
   <div class="workspace-document h-full min-w-0 flex flex-col flex-1 overflow-hidden rounded-[15px] bg-surface">
     <EditorTabs v-if="hasOpenTabs || externalDocuments.documents.length" />
-    <ExternalDocuments />
+    <ExternalDocuments ref="externalDocumentsRef" />
     <div v-show="!externalDocuments.activeId" class="flex flex-col flex-1 min-h-0 overflow-hidden">
 
     <SettingsPage

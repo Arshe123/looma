@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import MarkdownEditor from './editor/MarkdownEditor.vue'
 import { useExternalDocumentsStore, type ExternalEditorDocument } from '@/renderer/stores/externalDocuments'
 import type { DocumentSession } from './editor/documentSession'
+import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import { matchesAppShortcut } from '@/shared/utils/app-shortcuts'
 
@@ -43,6 +44,11 @@ function keydown(event: KeyboardEvent) {
     save(store.activeId)
   }
 }
+defineExpose({
+  scrollToHeading(id: string, item: MarkdownOutlineItem) {
+    if (store.activeId === id) editors.get(id)?.scrollToHeading(item)
+  },
+})
 onMounted(() => window.addEventListener('keydown', keydown, true))
 onUnmounted(() => window.removeEventListener('keydown', keydown, true))
 </script>

@@ -59,7 +59,7 @@ const preferredAuxiliaryWidth = ref(parseAuxiliaryWidth(localStorage.getItem(AUX
 const sidebarWidth = ref(readStoredSidebarWidth())
 const auxiliaryWidth = computed(() => clampAuxiliaryWidth(
   preferredAuxiliaryWidth.value, viewportWidth.value,
-  workspaceStore.fileSidebarOpen ? sidebarWidth.value : 56,
+  editorOnly ? 0 : workspaceStore.fileSidebarOpen ? sidebarWidth.value : 56, editorOnly,
 ))
 
 const clampSidebarWidth = (width: number) => {
@@ -90,7 +90,7 @@ const moveAuxiliaryResize = (event: PointerEvent) => {
   if (!auxiliaryDrag) return
   preferredAuxiliaryWidth.value = clampAuxiliaryWidth(
     auxiliaryDrag.width + auxiliaryDrag.x - event.clientX, viewportWidth.value,
-    workspaceStore.fileSidebarOpen ? sidebarWidth.value : 56,
+    editorOnly ? 0 : workspaceStore.fileSidebarOpen ? sidebarWidth.value : 56, editorOnly,
   )
 }
 const startAuxiliaryResize = (event: PointerEvent) => {
@@ -278,7 +278,7 @@ onUnmounted(() => {
           @pointerdown="startSidebarResize"
         />
         <MainContent />
-        <aside v-if="!editorOnly && !externalDocuments.activeId && workspaceStore.activeAuxiliaryPanel" ref="auxiliaryPanelRef" :style="{ width: `${auxiliaryWidth}px` }" class="auxiliary-panel relative shrink-0 min-h-0 ml-2" aria-label="辅助面板">
+        <aside v-if="editorOnly || (workspaceStore.activeAuxiliaryPanel && (!externalDocuments.activeId || workspaceStore.activeAuxiliaryPanel === 'outline'))" ref="auxiliaryPanelRef" :style="{ width: `${auxiliaryWidth}px` }" :class="{ 'editor-only-outline': editorOnly }" class="auxiliary-panel relative shrink-0 min-h-0 ml-2" aria-label="辅助面板">
           <div
             class="absolute -left-2 top-0 bottom-0 w-2 cursor-col-resize hover:bg-accent-soft active:bg-accent"
             style="-webkit-app-region: no-drag; touch-action: none"
@@ -286,7 +286,7 @@ onUnmounted(() => {
             @pointerdown="startAuxiliaryResize"
           />
           <div class="h-full overflow-hidden rounded-[15px] bg-panel">
-            <AiAssistant v-if="workspaceStore.activeAuxiliaryPanel === 'ai'" />
+            <AiAssistant v-if="!editorOnly && workspaceStore.activeAuxiliaryPanel === 'ai'" />
             <OutlinePanel v-else />
           </div>
         </aside>

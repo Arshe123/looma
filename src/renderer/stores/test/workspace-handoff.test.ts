@@ -68,6 +68,48 @@ it('routes workspace opens through current-document handoff', async () => {
   expect(move).toHaveBeenCalledWith('target')
   expect((window.electronAPI.window as any).openWorkspace).not.toHaveBeenCalled()
 })
+it.each(['success', 'rejected', 'timeout', 'destroyed', 'other-document', 'workspace-window'])(
+  'closes only an empty editor-only source after successful handoff: %s', async scenario => {
+    let resolve!: () => void
+    let reject!: (error: Error) => void
+    const close = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('window', {
+      location: { search: scenario === 'workspace-window' ? '?workspaceId=source' : '?editorOnly=1' },
+      electronAPI: {
+        workspace: { checkExists: vi.fn().mockResolvedValue({ success: true, data: { exists: true } }) },
+        window: { close },
+        externalDocuments: {
+          draft: vi.fn().mockResolvedValue(undefined),
+          transfer: vi.fn(() => new Promise<void>((ok, fail) => { resolve = ok; reject = fail })),
+        },
+      },
+    })
+    const external = useExternalDocumentsStore()
+    if (scenario === 'other-document') {
+      external.open({ id: 'other', filePath: '/other.md', content: 'unsaved other', baseContent: 'disk' })
+      external.markPending('other')
+    }
+    external.open({ id: 'current', filePath: '/current.md', content: 'disk', baseContent: 'disk' })
+    external.markPending('current')
+    external.registerFlush('current', () => external.update('current', 'pending rich text'))
+    const opening = useWorkspaceStore().openWorkspaceInNewWindow('target')
+    await vi.waitFor(() => expect(resolve).toBeTypeOf('function'))
+    expect(close).not.toHaveBeenCalled()
+    expect(external.documents.find(doc => doc.id === 'current')?.content).toBe('pending rich text')
+    if (['rejected', 'timeout', 'destroyed'].includes(scenario)) reject(new Error(scenario))
+    else resolve()
+    await opening
+    expect(close).toHaveBeenCalledTimes(scenario === 'success' ? 1 : 0)
+    if (['rejected', 'timeout', 'destroyed'].includes(scenario)) {
+      expect(external.activeId).toBe('current')
+      expect(external.documents[0].content).toBe('pending rich text')
+    }
+    if (scenario === 'other-document') {
+      expect(external.documents).toHaveLength(1)
+      expect(external.documents[0]).toMatchObject({ id: 'other', content: 'unsaved other', pending: true })
+    }
+  },
+)
 it('loads history without restoring a workspace in editor-only startup', async () => {
   const list = [{ id: 'target', name: 'Target', path: '/target', createdAt: 1 }]
   vi.stubGlobal('window', { electronAPI: { workspace: { list: vi.fn().mockResolvedValue({ success: true, data: list }) } } })

@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Bot, Folders, TableOfContents, Settings, UserRound } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
+import { useExternalDocumentsStore } from '@/renderer/stores/externalDocuments'
 import type { SidebarPanelId } from '@/renderer/stores/workspace'
 import { SIDEBAR_TOOLBAR_WIDTH } from '@/renderer/utils/sidebar-layout'
 
@@ -16,6 +17,7 @@ const props = defineProps<{
 }>()
 
 const workspaceStore = useWorkspaceStore()
+const externalDocuments = useExternalDocumentsStore()
 const userMenuOpen = ref(false)
 const userEntryRef = ref<HTMLButtonElement | null>(null)
 const updateModalOpen = ref(false)
@@ -24,6 +26,7 @@ const toolbarWidth = SIDEBAR_TOOLBAR_WIDTH
 const panelWidth = computed(() => Math.max(0, props.width - toolbarWidth))
 const isOpen = computed(() => workspaceStore.fileSidebarOpen)
 const isOutlineAvailable = computed(() => {
+  if (externalDocuments.activeId) return true
   const tab = workspaceStore.activeTab
   return (tab?.kind === 'file' && tab.relativePath.toLowerCase().endsWith('.md'))
     || (tab?.kind === 'system' && tab.page === 'help')

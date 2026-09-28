@@ -7,6 +7,9 @@ directories:
 
 asar: true
 
+# Reuse the Electron distribution already installed by the npm electron package.
+electronDist: node_modules/electron/dist
+
 publish:
   provider: github
   owner: Arshe123

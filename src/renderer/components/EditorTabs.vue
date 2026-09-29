@@ -175,8 +175,8 @@ onUnmounted(() => {
     >
       <template v-for="(tab, index) in visualTabs" :key="tab.id">
       <div v-if="tab.kind === 'external'" :title="tab.filePath" :data-document-tab="tab.id"
-        class="external-document-tab group flex items-center gap-2 px-3 min-w-[150px] max-w-[240px] shrink-0 rounded-lg mr-1 border border-accent/30 cursor-pointer"
-        :class="externalDocuments.activeId === tab.id ? 'bg-accent-soft text-accent' : 'text-text-muted'"
+        class="external-document-tab group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full cursor-pointer relative shrink-0 transition-colors rounded-lg mr-1"
+        :class="externalDocuments.activeId === tab.id ? 'bg-surface text-accent' : 'text-text-muted hover:bg-accent-soft'"
         draggable="true"
         @dragstart="(e) => onDragStart(e, index)"
         @dragover="(e) => onDragOver(e, index)"
@@ -185,9 +185,15 @@ onUnmounted(() => {
         @contextmenu="(e) => onContextMenu(e, tab)">
         <FileSymlink :size="14" class="shrink-0" />
         <span class="text-[10px] border border-current rounded px-1">外部</span>
-        <span class="text-xs truncate">{{ tab.filePath.split(/[\\/]/).pop() }}</span>
-        <span v-if="externalDocuments.dirty(tab.id)" class="w-2 h-2 shrink-0 rounded-full bg-text-subtle" aria-label="未保存" />
-        <button class="p-1 shrink-0 hover:bg-surface rounded" title="关闭外部文件" @click.stop="externalDocuments.close(tab.id)"><X :size="12" /></button>
+        <span class="text-xs truncate flex-1">{{ tab.filePath.split(/[\\/]/).pop() }}</span>
+        <span v-if="externalDocuments.dirty(tab.id)" class="w-2 h-2 rounded-full bg-text-subtle group-hover:hidden" aria-label="未保存" />
+        <button
+          class="w-5 h-5 flex items-center justify-center rounded hover:bg-accent-soft opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+          :class="{ 'opacity-100': externalDocuments.activeId === tab.id && !externalDocuments.dirty(tab.id) }"
+          title="关闭外部文件"
+          @click.stop="externalDocuments.close(tab.id)"
+          @dblclick.stop
+        ><X :size="12" /></button>
       </div>
       <div v-else :data-document-tab="tab.id"
         class="group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full cursor-pointer relative shrink-0 transition-colors rounded-lg mr-1"

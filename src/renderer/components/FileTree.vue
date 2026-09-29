@@ -138,9 +138,9 @@ const closeNoteTemplateDialog = () => {
   void nextTick(() => noteTemplateTrigger?.focus())
 }
 
-const createBlankFromTemplateDialog = async () => {
+const createBlankFromTemplateDialog = async (parentDirRelativePath: string) => {
   if (workspaceStore.activeWorkspaceId !== noteTemplateWorkspaceId.value) return
-  await startCreateFileInDir(noteTemplateParentDir.value)
+  await startCreateFileInDir(parentDirRelativePath)
 }
 
 const completeTemplateCreation = async (relativePath: string) => {

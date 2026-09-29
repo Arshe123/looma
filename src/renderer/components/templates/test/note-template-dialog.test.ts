@@ -26,11 +26,23 @@ describe('note template picker and dialog UI', () => {
     expect(dialog).toContain('noteTemplatesApi.list()')
     expect(dialog).toContain('noteTemplatesApi.instantiate({')
     expect(dialog).toContain('workspaceId: props.workspaceId')
-    expect(dialog).toContain('parentDirRelativePath: props.parentDirRelativePath')
+    expect(dialog).toContain('parentDirRelativePath: selectedParentDir.value')
     expect(dialog).toContain('if (pendingTemplateId.value) return')
     expect(dialog).toContain("emit('created', result.data.relativePath)")
-    expect(dialog).toContain("emit('blank')")
+    expect(dialog).toContain("emit('blank', selectedParentDir.value)")
     expect(dialog).toContain("emit('close')")
+  })
+
+  it('uses the chosen directory for both creation routes and keeps only the header manager', () => {
+    const dialog = readSource('src/renderer/components/templates/NoteTemplateDialog.vue')
+    const picker = readSource('src/renderer/components/templates/NoteTemplatePicker.vue')
+    const tree = readSource('src/renderer/components/FileTree.vue')
+    expect(dialog).toContain('v-model="selectedParentDir"')
+    expect(dialog).toContain('selectedParentDir.value = props.parentDirRelativePath')
+    expect(dialog).toContain('locationPickerRef.value?.close(true)')
+    expect(tree).toContain('await startCreateFileInDir(parentDirRelativePath)')
+    expect(picker).not.toContain('管理模板')
+    expect(dialog).toContain('@click="openManager"')
   })
 
   it('keeps the dialog open for readable load and instantiate errors', () => {
@@ -61,7 +73,7 @@ describe('note template picker and dialog UI', () => {
 
     expect(dialog).toContain("type View = 'picker' | 'manager'")
     expect(dialog).toContain('<NoteTemplateManager')
-    expect(dialog).toContain("view = 'manager'")
+    expect(dialog).toContain("view.value = 'manager'")
     expect(dialog).toMatch(/event\.key\s*[!=]==?\s*'Escape'/)
     expect(dialog).toContain('<Teleport to="body">')
   })

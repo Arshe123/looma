@@ -3,6 +3,7 @@ import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { Settings2, X } from 'lucide-vue-next'
 import NoteTemplateManager from './NoteTemplateManager.vue'
 import NoteTemplatePicker from './NoteTemplatePicker.vue'
+import NoteLocationPicker from './NoteLocationPicker.vue'
 import { getNoteTemplatesApi, type UiNoteTemplate, type UiNoteTemplateStore } from './note-template-ui-types'
 
 type View = 'picker' | 'manager'
@@ -15,11 +16,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  blank: []
+  blank: [parentDirRelativePath: string]
   created: [relativePath: string]
 }>()
 
 const view = ref<View>('picker')
+const selectedParentDir = ref(props.parentDirRelativePath)
+const locationPickerRef = ref<InstanceType<typeof NoteLocationPicker> | null>(null)
 const store = ref<UiNoteTemplateStore>({ schemaVersion: 1, revision: 0, templates: [] })
 const loading = ref(false)
 const loadError = ref('')
@@ -59,7 +62,7 @@ const requestClose = async () => {
 const chooseBlank = () => {
   if (pendingTemplateId.value) return
   emit('close')
-  emit('blank')
+  emit('blank', selectedParentDir.value)
 }
 
 const instantiate = async (template: UiNoteTemplate) => {
@@ -70,7 +73,7 @@ const instantiate = async (template: UiNoteTemplate) => {
   try {
     const result = await noteTemplatesApi.instantiate({
       workspaceId: props.workspaceId,
-      parentDirRelativePath: props.parentDirRelativePath,
+      parentDirRelativePath: selectedParentDir.value,
       templateId: template.id,
     })
     if (!result.success) {
@@ -99,6 +102,8 @@ const instantiate = async (template: UiNoteTemplate) => {
 }
 
 const openManager = () => {
+  if (pendingTemplateId.value) return
+  locationPickerRef.value?.close()
   actionError.value = ''
   view.value = 'manager'
 }
@@ -123,11 +128,13 @@ const handleKeydown = (event: KeyboardEvent) => {
   if (!props.open || event.key !== 'Escape') return
   event.preventDefault()
   event.stopPropagation()
+  if (locationPickerRef.value?.close(true)) return
   requestClose()
 }
 
 watch(() => props.open, async open => {
   if (!open) return
+  selectedParentDir.value = props.parentDirRelativePath
   view.value = 'picker'
   actionError.value = ''
   pendingTemplateId.value = ''
@@ -159,13 +166,12 @@ onBeforeUnmount(() => {
               </h2>
               <span v-if="view === 'manager'" class="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-semibold text-accent">全局</span>
             </div>
-            <p v-if="view === 'picker'" class="mt-1 truncate text-xs text-text-muted">
-              将创建到：{{ parentDirRelativePath || '工作空间根目录' }}
-            </p>
+            <NoteLocationPicker v-if="view === 'picker'" ref="locationPickerRef" v-model="selectedParentDir"
+              :workspace-id="workspaceId" :disabled="Boolean(pendingTemplateId)" />
             <p v-else class="mt-1 text-xs text-text-muted">模板在所有工作空间中共用。</p>
           </div>
           <div class="flex shrink-0 items-center gap-1">
-            <button v-if="view === 'picker'" type="button" class="inline-flex h-9 items-center gap-1.5 rounded-xl px-3 text-xs font-medium text-text-muted hover:bg-panel hover:text-text-main" :disabled="loading || Boolean(loadError)" @click="view = 'manager'">
+            <button v-if="view === 'picker'" type="button" class="inline-flex h-9 items-center gap-1.5 rounded-xl px-3 text-xs font-medium text-text-muted hover:bg-panel hover:text-text-main" :disabled="loading || Boolean(loadError) || Boolean(pendingTemplateId)" @click="openManager">
               <Settings2 :size="15" />管理模板
             </button>
             <button type="button" aria-label="关闭" class="flex h-9 w-9 items-center justify-center rounded-xl text-text-muted hover:bg-panel hover:text-text-main" @click="requestClose">
@@ -185,7 +191,6 @@ onBeforeUnmount(() => {
           @blank="chooseBlank"
           @select="instantiate"
           @invalid="handleInvalidTemplate"
-          @manage="openManager"
           @retry="loadTemplates"
         />
         <NoteTemplateManager

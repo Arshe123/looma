@@ -1,0 +1,15 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><title>笔记位置隔离验收</title></head><body><div id="app"></div><script type="module">
+import { createApp, h, reactive, nextTick } from 'vue'
+import Dialog from '/src/renderer/components/templates/NoteTemplateDialog.vue'
+import '/src/renderer/styles/style.css'
+const state = reactive({ open:true, initial:'项目', calls:[], blanks:[], closes:0, fail:false, pending:false })
+const dir = (name, relativePath=name) => ({name,relativePath,isDirectory:true})
+window.electronAPI = { fs:{listDir:async (workspace,path)=>{
+state.calls.push({workspace,path}); if(state.fail) return {success:false};
+return {success:true,data:({'.':[dir('项目'),dir('其他'),dir('.looma'),{name:'笔记.md',relativePath:'笔记.md',isDirectory:false}], '项目':[dir('子目录','项目/子目录')],'项目/子目录':[],'其他':[]})[path]||[]}
+}}, noteTemplates:{list:async()=>({success:true,data:{schemaVersion:1,revision:0,templates:[{id:'test',name:'测试模板',fileNameTemplate:'测试',contentTemplate:'',variables:[]}]}}),instantiate:async payload=>{state.calls.push(payload); if(state.pending) await new Promise(resolve=>window.finish=resolve); return {success:true,data:{relativePath:payload.parentDirRelativePath+'/测试.md'}}}} }
+createApp({render:()=>h(Dialog,{open:state.open,workspaceId:'固定工作空间',parentDirRelativePath:state.initial,onClose:()=>{state.open=false;state.closes++},onBlank:path=>state.blanks.push(path)})}).mount('#app')
+window.testState=state
+window.reopen=async()=>{state.open=false;await nextTick();state.open=true;await nextTick()}
+window.ready=true
+</script></body></html>

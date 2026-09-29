@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { AlertCircle, FilePlus2, LoaderCircle, Plus, RefreshCw, Settings2 } from 'lucide-vue-next'
+import { AlertCircle, FilePlus2, LoaderCircle, Plus, RefreshCw } from 'lucide-vue-next'
 import { normalizeMarkdownFilename, renderNoteTemplate } from '@/shared/utils/note-template'
 import type { UiNoteTemplate } from './note-template-ui-types'
 
@@ -16,7 +16,6 @@ const emit = defineEmits<{
   blank: []
   select: [template: UiNoteTemplate]
   invalid: [message: string]
-  manage: []
   retry: []
 }>()
 
@@ -166,9 +165,6 @@ defineExpose({ focusFirstCard })
 
     <footer class="flex shrink-0 items-center justify-between border-t border-border-soft bg-panel-soft/70 px-6 py-3 text-xs text-text-subtle">
       <span>{{ pendingTemplateId ? '创建进行中，请稍候…' : 'Esc 关闭 · 单击模板立即创建' }}</span>
-      <button type="button" class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-text-muted hover:bg-panel hover:text-text-main disabled:opacity-50" :disabled="loading || Boolean(error) || disabled" @click="emit('manage')">
-        <Settings2 :size="14" />管理模板
-      </button>
     </footer>
   </div>
 </template>

@@ -367,7 +367,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     previewTabId: '',
     activeTabId: '' as string,
     activeSystemPage: null as SystemPageId | null,
-    activeSettingsSection: 'editor' as SettingsSectionId,
+    activeSettingsSection: 'appearance' as SettingsSectionId,
     activeAgentDiff: null as AgentDiffViewState | null,
     activeSidebarPanel: DEFAULT_ACTIVE_SIDEBAR_PANEL as SidebarPanelId | null,
     fileSidebarOpen: true,
@@ -1118,7 +1118,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.saveWorkspaceMeta().catch(() => {})
     },
 
-    openSettingsPage(section: SettingsSectionId = 'editor') {
+    openSettingsPage(section: SettingsSectionId = 'appearance') {
       this.openSystemTab('settings', { section })
     },
 

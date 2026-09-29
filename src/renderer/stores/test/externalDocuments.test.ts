@@ -5,9 +5,50 @@ import { useExternalDocumentsStore } from '../externalDocuments'
 const doc = { id: 'canonical-id', filePath: '/tmp/note.md', content: '# Disk', baseContent: '# Disk' }
 beforeEach(() => {
   setActivePinia(createPinia())
-  vi.stubGlobal('window', { electronAPI: { externalDocuments: {
+  vi.stubGlobal('window', { location: { search: '?editorOnly=1' }, electronAPI: { window: { close: vi.fn().mockResolvedValue(undefined) }, externalDocuments: {
     draft: vi.fn().mockResolvedValue(undefined), save: vi.fn().mockResolvedValue(undefined), close: vi.fn().mockResolvedValue(undefined),
   }, app: { showMessageBox: vi.fn().mockResolvedValue({ response: 2 }) } } })
+})
+it('closes the editor-only window after its last tab closes successfully', async () => {
+  const store = useExternalDocumentsStore()
+  expect(window.electronAPI.window.close).not.toHaveBeenCalled()
+  store.open(doc)
+  store.open({ ...doc, id: 'second', filePath: '/tmp/second.md' })
+  expect(await store.close(doc.id)).toBe(true)
+  expect(window.electronAPI.window.close).not.toHaveBeenCalled()
+  expect(await store.close('second')).toBe(true)
+  expect(store.documents).toHaveLength(0)
+  expect(window.electronAPI.window.close).toHaveBeenCalledOnce()
+})
+it('keeps workspace windows open after their last external tab closes', async () => {
+  window.location.search = '?workspaceId=fixture'
+  const store = useExternalDocumentsStore()
+  store.open(doc)
+  expect(await store.close(doc.id)).toBe(true)
+  expect(window.electronAPI.window.close).not.toHaveBeenCalled()
+})
+it('leaves final window closure to the coordinator when closing the whole window', async () => {
+  const store = useExternalDocumentsStore()
+  store.open(doc)
+  expect(await store.closeAll()).toBe(true)
+  expect(store.documents).toHaveLength(0)
+  expect(window.electronAPI.window.close).not.toHaveBeenCalled()
+})
+it.each(['cancel', 'save-failure', 'close-failure'])('keeps the last tab and window on %s', async reason => {
+  const store = useExternalDocumentsStore()
+  store.open(doc)
+  if (reason === 'close-failure') {
+    vi.mocked(window.electronAPI.externalDocuments.close).mockRejectedValue(new Error('close failed'))
+  } else {
+    store.update(doc.id, '# Dirty')
+    if (reason === 'save-failure') {
+      vi.mocked(window.electronAPI.app.showMessageBox).mockResolvedValue({ response: 0 } as any)
+      vi.mocked(window.electronAPI.externalDocuments.save).mockRejectedValue(new Error('save failed'))
+    }
+  }
+  expect(await store.close(doc.id)).toBe(false)
+  expect(store.documents).toHaveLength(1)
+  expect(window.electronAPI.window.close).not.toHaveBeenCalled()
 })
 it('keeps new edits made during save dirty and rebases their crash draft', async () => {
   const store = useExternalDocumentsStore()

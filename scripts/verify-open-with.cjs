@@ -96,6 +96,15 @@ async function main() {
   assert.equal(await fs.readFile(file, 'utf8'), '# Changed externally')
   assert.equal(errors.length, 0, errors.join('\n'))
   console.log('PASS discard closes without overwriting disk, no normal-closed draft restoration, no renderer errors')
+  // Close the actual tab button, not the native window control.
+  app.emit('open-file', { preventDefault() {} }, second)
+  await until(() => BrowserWindow.getAllWindows().length === 1, 'new single-file window')
+  const lastTabWindow = BrowserWindow.getAllWindows()[0]
+  await until(async () => !lastTabWindow.webContents.isLoading()
+    && await lastTabWindow.webContents.executeJavaScript('!!document.querySelector(".external-document-tab button")'), 'last tab button')
+  await lastTabWindow.webContents.executeJavaScript('document.querySelector(".external-document-tab button").click()')
+  await until(() => lastTabWindow.isDestroyed(), 'last tab closes editor-only window')
+  console.log('PASS last external tab button closes the actual editor-only BrowserWindow')
   const wsWin = mainModule.createWindow('fixture')
   const wsRun = code => wsWin.webContents.executeJavaScript(code)
   await until(async () => !wsWin.webContents.isLoading() && await wsRun('!!window.electronAPI && !!document.querySelector("header")'), 'workspace window')

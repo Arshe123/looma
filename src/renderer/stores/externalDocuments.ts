@@ -85,7 +85,7 @@ export const useExternalDocumentsStore = defineStore('externalDocuments', () => 
       } finally { doc.saving = false }
     })
   }
-  async function close(id: string) {
+  async function close(id: string, closeEmptyWindow = true) {
     if (transferring.value || closing.has(id)) return false
     flushers.get(id)?.()
     await queues.get(id)
@@ -107,6 +107,10 @@ export const useExternalDocumentsStore = defineStore('externalDocuments', () => 
       flushers.delete(id)
       queues.delete(id)
       if (activeId.value === id) activeId.value = documents.value.at(-1)?.id || null
+      if (closeEmptyWindow && documents.value.length === 0
+        && new URLSearchParams(window.location.search).get('editorOnly') === '1') {
+        await window.electronAPI.window.close()
+      }
       return true
     } catch (error) {
       doc.error = String(error)
@@ -114,7 +118,8 @@ export const useExternalDocumentsStore = defineStore('externalDocuments', () => 
     } finally { closing.delete(id) }
   }
   async function closeAll() {
-    for (const doc of [...documents.value]) if (!await close(doc.id)) return false
+    // The window-close coordinator performs the final close after its own checks.
+    for (const doc of [...documents.value]) if (!await close(doc.id, false)) return false
     return true
   }
   async function transferCurrent(workspaceId: string) {

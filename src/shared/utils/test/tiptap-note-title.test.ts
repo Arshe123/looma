@@ -31,7 +31,7 @@ describe('non-document note title decoration', () => {
   })
   it('debounces document statistics only, keeps selection cheap and metadata out of history, cancels on destroy', () => {
     vi.useFakeTimers()
-    const count = vi.fn(() => 3).mockReturnValueOnce(2)
+    const count = vi.fn(() => ({ minutes: 1, words: 4 })).mockReturnValueOnce({ minutes: 1, words: 2 })
     const plugin = createNoteTitlePlugin(count)
     let state = EditorState.create({ doc: doc(), plugins: [history(), plugin] })
     const view = { get state() { return state }, dispatch: vi.fn(tr => { state = state.apply(tr) }) }
@@ -49,6 +49,7 @@ describe('non-document note title decoration', () => {
     vi.advanceTimersByTime(300)
     expect(count).toHaveBeenCalledTimes(2)
     expect(view.dispatch).toHaveBeenCalledTimes(1)
+    expect(NOTE_TITLE_KEY.getState(state)?.words).toBe(4)
     expect(view.dispatch.mock.calls[0][0].docChanged).toBe(false)
     expect(view.dispatch.mock.calls[0][0].getMeta('addToHistory')).toBe(false)
     expect(undoDepth(state)).toBe(depth)

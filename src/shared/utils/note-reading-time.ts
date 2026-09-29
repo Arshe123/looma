@@ -7,11 +7,13 @@ const visibleText = (text: string) => text
   .replace(/(?:https?:\/\/|mailto:)[^\s<>]+/gi, ' ')
 
 /** Reading is an estimate, not code/image comprehension time. */
-export const estimateReadingMinutes = (text: string): number => {
+export const countNoteText = (text: string): { minutes: number; words: number } => {
   const han = text.match(/\p{Script=Han}/gu)?.length ?? 0
   const words = text.replace(/\p{Script=Han}/gu, ' ').match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu)?.length ?? 0
-  return Math.ceil(han / 400 + words / 200)
+  return { minutes: Math.ceil(han / 400 + words / 200), words: han + words }
 }
+
+export const estimateReadingMinutes = (text: string): number => countNoteText(text).minutes
 
 const inlineText = (tokens: MarkdownIt.Token[]): string => tokens.map(token => {
   if (token.type === 'text' || token.type === 'code_inline') return token.content
@@ -19,9 +21,11 @@ const inlineText = (tokens: MarkdownIt.Token[]): string => tokens.map(token => {
   return ''
 }).join('')
 
-export const readMarkdownReadingMinutes = (tokens: MarkdownIt.Token[]) =>
-  estimateReadingMinutes(visibleText(tokens.filter(token => token.type === 'inline')
+export const readMarkdownNoteStats = (tokens: MarkdownIt.Token[]) =>
+  countNoteText(visibleText(tokens.filter(token => token.type === 'inline')
     .map(token => inlineText(token.children ?? [])).join('\n')))
+
+export const readMarkdownReadingMinutes = (tokens: MarkdownIt.Token[]) => readMarkdownNoteStats(tokens).minutes
 
 export const findMarkdownNoteTitle = (tokens: MarkdownIt.Token[]): number | null => {
   const first = tokens[0]
@@ -30,7 +34,7 @@ export const findMarkdownNoteTitle = (tokens: MarkdownIt.Token[]): number | null
     ? first.map?.[0] ?? null : null
 }
 
-export const readDocumentReadingMinutes = (doc: Node): number => {
+export const readDocumentNoteStats = (doc: Node) => {
   const parts: string[] = []
   doc.descendants(node => {
     if (node.type.name === 'codeBlock' || node.type.name === 'image') { parts.push(' '); return false }
@@ -38,8 +42,10 @@ export const readDocumentReadingMinutes = (doc: Node): number => {
     if (node.isText) parts.push(node.text ?? '')
     return true
   })
-  return estimateReadingMinutes(visibleText(parts.join('')))
+  return countNoteText(visibleText(parts.join('')))
 }
+
+export const readDocumentReadingMinutes = (doc: Node): number => readDocumentNoteStats(doc).minutes
 
 export const findDocumentNoteTitle = (doc: Node): { from: number; to: number } | null => {
   for (let index = 0, from = 0; index < doc.childCount; index++) {
@@ -57,3 +63,6 @@ export const findDocumentNoteTitle = (doc: Node): { from: number; to: number } |
 
 export const readingTimeLabel = (minutes: number | null) => minutes === null
   ? '阅读时间待全文加载' : `预计阅读 ${Math.max(1, minutes)} 分钟`
+
+export const noteStatsLabel = (minutes: number | null, words: number | null) =>
+  `${words === null ? '字数待全文加载' : `共 ${words} 字`} · ${readingTimeLabel(minutes)}`

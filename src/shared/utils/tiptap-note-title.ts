@@ -2,33 +2,34 @@ import { Extension } from '@tiptap/core'
 import type { Node } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { findDocumentNoteTitle, readDocumentReadingMinutes, readingTimeLabel } from './note-reading-time'
+import { findDocumentNoteTitle, readDocumentNoteStats, noteStatsLabel } from './note-reading-time'
 
-type TitleState = { minutes: number; decorations: DecorationSet }
+type NoteStats = ReturnType<typeof readDocumentNoteStats>
+type TitleState = NoteStats & { decorations: DecorationSet }
 export const NOTE_TITLE_KEY = new PluginKey<TitleState>('loomaNoteTitle')
 
-const decorate = (doc: Node, minutes: number): TitleState => {
+const decorate = (doc: Node, stats: NoteStats): TitleState => {
   const title = findDocumentNoteTitle(doc)
-  return { minutes, decorations: title ? DecorationSet.create(doc, [
+  return { ...stats, decorations: title ? DecorationSet.create(doc, [
     Decoration.node(title.from, title.to, { class: 'looma-note-title' }),
     Decoration.widget(title.to, () => {
       const meta = document.createElement('div')
       meta.className = 'looma-note-reading-time'
       meta.contentEditable = 'false'
-      meta.textContent = readingTimeLabel(minutes)
+      meta.textContent = noteStatsLabel(stats.minutes, stats.words)
       return meta
-    }, { key: `note-reading-time:${minutes}`, side: -1, ignoreSelection: true, stopEvent: () => true }),
+    }, { key: `note-reading-time:${stats.minutes}:${stats.words}`, side: -1, ignoreSelection: true, stopEvent: () => true }),
   ]) : DecorationSet.empty }
 }
 
-export const createNoteTitlePlugin = (count = readDocumentReadingMinutes) => new Plugin<TitleState>({
+export const createNoteTitlePlugin = (count = readDocumentNoteStats) => new Plugin<TitleState>({
   key: NOTE_TITLE_KEY,
   state: {
     init: (_, state) => decorate(state.doc, count(state.doc)),
     apply: (tr, value) => {
-      const minutes = tr.getMeta(NOTE_TITLE_KEY) as number | undefined
-      if (!tr.docChanged && minutes === undefined) return value
-      return decorate(tr.doc, minutes ?? value.minutes)
+      const stats = tr.getMeta(NOTE_TITLE_KEY) as NoteStats | undefined
+      if (!tr.docChanged && stats === undefined) return value
+      return decorate(tr.doc, stats ?? { minutes: value.minutes, words: value.words })
     },
   },
   props: { decorations: state => NOTE_TITLE_KEY.getState(state)!.decorations },
@@ -39,9 +40,10 @@ export const createNoteTitlePlugin = (count = readDocumentReadingMinutes) => new
         if (current.state.doc === previous.doc) return
         clearTimeout(timer)
         timer = setTimeout(() => {
-          const minutes = count(view.state.doc)
-          if (minutes !== NOTE_TITLE_KEY.getState(view.state)?.minutes) {
-            view.dispatch(view.state.tr.setMeta(NOTE_TITLE_KEY, minutes).setMeta('addToHistory', false))
+          const stats = count(view.state.doc)
+          const previous = NOTE_TITLE_KEY.getState(view.state)
+          if (stats.minutes !== previous?.minutes || stats.words !== previous?.words) {
+            view.dispatch(view.state.tr.setMeta(NOTE_TITLE_KEY, stats).setMeta('addToHistory', false))
           }
         }, 300)
       },

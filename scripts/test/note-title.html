@@ -34,7 +34,7 @@ window.snapshot = () => {
  const e=editor();e.commands.selectAll()
  return {markdown:serializeMarkdownAst(e),html:e.getHTML(),json:e.getJSON(),copy:getTiptapClipboardCopyText(e.state),source:serializeMarkdownAst({getJSON:()=>getTiptapSelectionDocument(e.state),markdown:e.markdown}),history:undoDepth(e.state)}
 }
-window.refreshMetadata = () => {const e=editor();e.view.dispatch(e.state.tr.setMeta(NOTE_TITLE_KEY,7).setMeta('addToHistory',false))}
+window.refreshMetadata = () => {const e=editor();e.view.dispatch(e.state.tr.setMeta(NOTE_TITLE_KEY,{minutes:7,words:99}).setMeta('addToHistory',false))}
 window.jump = index => component.value.scrollToHeading(parseMarkdownOutline(props.content)[index])
 window.appearance = async (font,theme,palette,zoom,width=1000) => {
  document.documentElement.dataset.fontPreset=font

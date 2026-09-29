@@ -15,6 +15,12 @@ const block = (type: string, text = '') => schema.node(type, null, text ? schema
 const md = new MarkdownIt()
 
 describe('reading estimate', () => {
+  it('counts Chinese characters and words, excluding whitespace and punctuation', () => {
+    expect(reading.countNoteText('中文𠀀 hello world 123，！')).toEqual({ minutes: 1, words: 6 })
+    expect(reading.countNoteText(' \n，。')).toEqual({ minutes: 0, words: 0 })
+    expect(reading.noteStatsLabel(1, 6)).toBe('共 6 字 · 预计阅读 1 分钟')
+    expect(reading.noteStatsLabel(null, null)).toBe('字数待全文加载 · 阅读时间待全文加载')
+  })
   it('counts Han characters and other Unicode words with a shared rounded rate', () => {
     expect(reading.estimateReadingMinutes('中'.repeat(400))).toBe(1)
     expect(reading.estimateReadingMinutes('𠀀'.repeat(401))).toBe(2)
@@ -30,6 +36,8 @@ describe('reading estimate', () => {
     expect(reading.readMarkdownReadingMinutes(tokens)).toBe(2)
     const doc = schema.node('doc', null, [block('heading', text), schema.node('paragraph', null, [schema.text('中中中'), schema.node('image', { alt: '中'.repeat(900) })]), block('codeBlock', '中'.repeat(900)), block('paragraph', '<!-- ignored --> <b></b> https://example.com')])
     expect(reading.readDocumentReadingMinutes(doc)).toBe(2)
+    expect(reading.readMarkdownNoteStats(tokens).words).toBe(402)
+    expect(reading.readDocumentNoteStats(doc).words).toBe(402)
     expect(reading.readMarkdownReadingMinutes(md.parse('a\n\nb\n\nc', {}))).toBe(1)
   })
   it('recognizes only the first nonempty top-level block, including setext titles', () => {

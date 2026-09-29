@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import { useOllamaStore } from '@/renderer/stores/ollama'
+import { useProviderModels } from '@/renderer/composables/useProviderModels'
 import {
   getDefaultChatProviderConfig,
   getDefaultEmbeddingProviderConfig,
@@ -38,9 +39,9 @@ type ProviderModelCatalog = Record<AiProvider, string[]>
 
 const defaultLlmModelsByProvider: ProviderModelCatalog = {
   ollama: ['qwen2.5:7b', 'qwen2.5:3b', 'llama3.1:8b', 'deepseek-r1:7b'],
-  openai: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'],
-  deepseek: ['deepseek-v4-pro', 'deepseek-v4-flash'],
-  qwen: ['qwen3.7-plus'],
+  openai: [],
+  deepseek: [],
+  qwen: [],
   custom: [],
 }
 
@@ -64,8 +65,6 @@ const modelMetadata: Record<string, { desc: string; size?: string }> = {
   'gpt-4o': { desc: 'OpenAI 通用旗舰模型，适合复杂理解和生成' },
   'gpt-4.1-mini': { desc: 'OpenAI 低延迟模型，适合工具调用和长上下文任务' },
   'gpt-4.1': { desc: 'OpenAI 高能力模型，适合复杂推理和文档处理' },
-  'deepseek-v4-flash': { desc: 'DeepSeek 通用对话模型' },
-  'deepseek-v4-pro': { desc: 'DeepSeek 推理模型，适合步骤化分析' },
   'qwen3.7plus': { desc: '通义千问均衡模型，适合中文知识工作' },
   'text-embedding-3-small': { desc: 'OpenAI 小型向量模型，成本低、适合常规检索' },
   'text-embedding-3-large': { desc: 'OpenAI 高质量向量模型，适合高精度语义检索' },
@@ -96,6 +95,21 @@ const openModelPicker = ref<ModelKind | null>(null)
 const aiSettings = computed(() => settingsStore.aiSettings)
 const llmBaseUrl = computed(() => aiSettings.value.chat.baseUrl || getDefaultChatProviderConfig(aiSettings.value.chat.provider).baseUrl || '')
 const embedBaseUrl = computed(() => aiSettings.value.embedding.baseUrl || getDefaultEmbeddingProviderConfig(aiSettings.value.embedding.provider).baseUrl || '')
+const supportsModelDiscovery = computed(() => aiSettings.value.chat.provider !== 'ollama')
+const {
+  models: discoveredModels,
+  loading: isDiscoveringModels,
+  loaded: hasDiscoveredModels,
+  error: discoveryError,
+  refresh: refreshDiscoveredModels,
+} = useProviderModels(() => {
+  if (!supportsModelDiscovery.value || !aiSettings.value.chat.apiKey?.trim()) return null
+  return {
+    protocol: 'openai-compatible',
+    baseUrl: llmBaseUrl.value,
+    apiKey: aiSettings.value.chat.apiKey,
+  }
+})
 const isLlmOllama = computed(() => aiSettings.value.chat.provider === 'ollama')
 const isEmbedOllama = computed(() => aiSettings.value.embedding.provider === 'ollama')
 const llmNeedsPull = computed(() => isLlmOllama.value && Boolean(aiSettings.value.chat.model && !ollamaModels.value.includes(aiSettings.value.chat.model)))
@@ -111,6 +125,7 @@ const getProviderLabel = (provider: AiProvider) => {
 }
 
 const getModelDescription = (model: string, provider: AiProvider) => {
+
   return modelMetadata[model]?.desc ?? (provider === 'ollama' ? '已安装的本地模型' : `${getProviderLabel(provider)} 模型`)
 }
 
@@ -136,10 +151,16 @@ const buildModelOptions = (defaults: string[], selectedModel: string, provider: 
 }
 
 const llmModelOptions = computed(() => buildModelOptions(
-  defaultLlmModelsByProvider[aiSettings.value.chat.provider],
+  supportsModelDiscovery.value
+    ? discoveredModels.value.map(model => model.id)
+    : defaultLlmModelsByProvider[aiSettings.value.chat.provider],
   aiSettings.value.chat.model,
   aiSettings.value.chat.provider,
-))
+).map(option => {
+  if (!supportsModelDiscovery.value) return option
+  const discovered = discoveredModels.value.find(item => item.id === option.name)
+  return { ...option, desc: discovered ? `${discovered.name}` : '当前配置的模型（尚未由接口确认）' }
+}))
 const embedModelOptions = computed(() => buildModelOptions(
   defaultEmbedModelsByProvider[aiSettings.value.embedding.provider],
   aiSettings.value.embedding.model,
@@ -629,6 +650,26 @@ watch(
               />
             </label>
           </div> -->
+
+          <div v-if="supportsModelDiscovery" class="grid gap-2" aria-live="polite">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <p class="text-xs leading-5 text-text-muted">
+                {{ isDiscoveringModels ? '正在获取模型列表…' : hasDiscoveredModels ? `找到 ${discoveredModels.length} 个模型` : '填写 API 密钥后自动获取模型列表，也可手动输入模型名称。' }}
+              </p>
+              <button
+                type="button"
+                class="inline-flex h-8 items-center gap-2 rounded-xl border border-border-soft px-3 text-xs text-text-main hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle"
+                :disabled="isDiscoveringModels || !aiSettings.chat.apiKey?.trim()"
+                @click="refreshDiscoveredModels"
+              >
+                <Loader2 v-if="isDiscoveringModels" :size="13" class="animate-spin" />
+                <RefreshCw v-else :size="13" />
+                刷新模型列表
+              </button>
+            </div>
+            <p v-if="discoveryError" role="alert" class="text-xs leading-5 text-danger">{{ discoveryError }}</p>
+            <p v-if="hasDiscoveredModels && !discoveredModels.length" class="text-xs text-text-muted">接口未返回可用模型，仍可保留当前配置或手动输入模型名称。</p>
+          </div>
 
           <ModelSelectCard
             title="Model"

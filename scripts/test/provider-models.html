@@ -1,0 +1,48 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body><div id="app"></div>
+<script type="module">
+import { createApp, nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
+import AiSettings from '/src/renderer/components/settings/AiSettings.vue'
+import { useSettingsStore } from '/src/renderer/stores/settings.ts'
+import '/src/renderer/styles/style.css'
+// Isolated fixture: never loads user settings, notes or real credentials.
+window.localRequests = []
+window.electronAPI = {
+  appSettings: { set: async () => ({ success: true }) },
+  ollama: {
+    checkInstalled: async () => ({ success: true, data: { installed: true } }),
+    listModels: async baseUrl => {
+      window.localRequests.push(baseUrl)
+      return { success: true, data: { models: ['fixture-local-model'] } }
+    },
+  },
+}
+const pinia = createPinia(); setActivePinia(pinia)
+const store = useSettingsStore()
+store.settings.ai.chat = { provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'fixture-key', model: 'saved-model', temperature: 0.7 }
+store.settings.ai.embedding.provider = 'custom'
+for (const provider of ['openai', 'qwen', 'custom']) {
+  Object.assign(store.settings.ai.chatProviderConfigs[provider], {
+    apiKey: `${provider}-fixture-key`,
+    model: `${provider}-saved-model`,
+    ...(provider === 'custom' ? { baseUrl: 'https://compatible.example.test/v1' } : {}),
+  })
+}
+window.requests = []
+window.mode = 'success'
+window.fetch = async (url, options) => {
+  window.requests.push({ url, method: options.method })
+  if (window.mode === 'error') return new Response('{}', { status: 401 })
+  if (window.mode === 'unsupported') return new Response('{}', { status: 404 })
+  if (window.mode === 'empty') return new Response('{"data":[]}')
+  if (store.aiSettings.chat.provider !== 'deepseek') {
+    return new Response(JSON.stringify({ data: [{ id: `fixture-${store.aiSettings.chat.provider}-model` }] }))
+  }
+  return new Response(JSON.stringify({ data: [{ id: 'fixture-new-model', name: '测试模型' }, { id: 'fixture-other-model' }] }))
+}
+window.store = store
+window.clickText = text => [...document.querySelectorAll('button')].find(b => b.textContent.includes(text))?.click()
+window.tick = nextTick
+createApp(AiSettings).use(pinia).mount('#app')
+window.ready = true
+</script></body></html>

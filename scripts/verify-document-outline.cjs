@@ -80,14 +80,54 @@ module.exports = async function verifyDocumentOutline({ win, root, app, until, w
   await run(`${outline}.querySelector('[title="Outline root live edit"] button').click()`)
   await until(async () => await run(`${outline}.innerText.includes('Jump destination')`), 'root expanded')
   const titles = () => run(`Array.from(document.querySelectorAll('[data-document-tab]')).map(el => el.title)`)
-  const drag = async (from, to) => {
-    await run(`(() => { const els = Array.from(document.querySelectorAll('[data-document-tab]')); const dt = new DataTransfer(); els[${from}].dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt })); els[${to}].dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt })); els[${from}].dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt })); })()`)
-    await wait(50)
+  const drag = async (from, to, animated = true) => {
+    await run(`(() => {
+      const els = Array.from(document.querySelectorAll('[data-document-tab]'));
+      const source = els[${from}], target = els[${to}], container = source.parentElement;
+      const dt = new DataTransfer(), rect = container.getBoundingClientRect();
+      const x = rect.left - container.scrollLeft + target.offsetLeft + target.offsetWidth / 2 + (${to} > ${from} ? 1 : -1);
+      const y = rect.top + rect.height / 2;
+      window.__tabDragProbe = { source, target, container, dt, x, y };
+      source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+      target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: y }));
+    })()`)
+    if (from !== to) {
+      const moving = await run(`new Promise(resolve => requestAnimationFrame(() => {
+        const tabs = Array.from(document.querySelectorAll('[data-document-tab]'));
+        resolve(tabs.some(el => el.getAnimations().some(animation => animation.transitionProperty === 'transform')));
+      }))`)
+      assert.equal(moving, animated, `${tag} reorder uses transform animation unless reduced motion is enabled`)
+    }
+    const stable = await run(`(async () => {
+      const { source, target, container, dt, x, y } = window.__tabDragProbe;
+      const order = () => Array.from(container.children).map(el => el.dataset.documentTab).join('|');
+      const expected = order();
+      let stable = true;
+      for (let frame = 0; frame < 20; frame++) {
+        await new Promise(requestAnimationFrame);
+        // Alternate actual hit testing with the displaced node, as native drag
+        // events may still target it while its FLIP transform is in flight.
+        const hit = frame % 2 ? document.elementFromPoint(x, y) || container : target;
+        hit.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: y }));
+        await Promise.resolve();
+        if (order() !== expected) stable = false;
+      }
+      source.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+      delete window.__tabDragProbe;
+      return stable;
+    })()`)
+    assert.equal(stable, true, 'stationary pointer never reverses ordering during or after animation')
+    assert.equal(await run(`Array.from(document.querySelectorAll('[data-document-tab]')).every(el => getComputedStyle(el).transform === 'none')`), true, 'tabs settle without residual transforms')
   }
   let before = await titles()
   await drag(before.indexOf(file), 0)
   let expected = [file, ...before.filter(t => t !== file)]
   assert.deepEqual(await titles(), expected, 'external dragged across ordinary/external tabs')
+  await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
+  await drag(0, 1, false)
+  await drag(1, 0, false)
+  assert.deepEqual(await titles(), expected, 'reduced motion preserves sorting')
+  await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] })
   if (workspace) {
     const normalIndex = expected.indexOf('inside.md')
     assert.ok(normalIndex > 0)

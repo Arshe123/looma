@@ -59,10 +59,23 @@ const onDragStart = (e: DragEvent, index: number) => {
   }
 }
 
-const onDragOver = (e: DragEvent, index: number) => {
+const onDragOver = (e: DragEvent) => {
   e.preventDefault()
   const from = visualTabs.value.findIndex(tab => tab.id === draggedId)
-  if (from < 0 || from === index) return
+  if (from < 0) return
+  const container = e.currentTarget as HTMLElement
+  const pointerX = e.clientX - container.getBoundingClientRect().left + container.scrollLeft
+  let index = from
+  // Layout coordinates exclude FLIP transforms, so moving tabs cannot reverse
+  // a reorder merely by passing under a stationary pointer.
+  for (const child of Array.from(container.children) as HTMLElement[]) {
+    const target = visualTabs.value.findIndex(tab => tab.id === child.dataset.documentTab)
+    if (target < 0 || target === from) continue
+    const midpoint = child.offsetLeft + child.offsetWidth / 2
+    if (target < from && pointerX < midpoint) index = Math.min(index, target)
+    if (target > from && pointerX > midpoint) index = Math.max(index, target)
+  }
+  if (from === index) return
   const items = [...visualTabs.value]
   const [removed] = items.splice(from, 1)
   items.splice(index, 0, removed)
@@ -169,9 +182,12 @@ onUnmounted(() => {
 
 <template>
   <header class="h-12 shrink-0 flex bg-panel z-10 w-full overflow-hidden select-none p-1.5">
-    <div 
-      class="flex-1 flex overflow-x-auto overflow-y-hidden custom-scrollbar focus-scrollbar"
+    <TransitionGroup
+      name="editor-tab"
+      tag="div"
+      class="relative flex-1 flex overflow-x-auto overflow-y-hidden custom-scrollbar focus-scrollbar"
       @wheel="onWheel"
+      @dragover="onDragOver"
     >
       <template v-for="(tab, index) in visualTabs" :key="tab.id">
       <div v-if="tab.kind === 'external'" :title="tab.filePath" :data-document-tab="tab.id"
@@ -179,7 +195,6 @@ onUnmounted(() => {
         :class="externalDocuments.activeId === tab.id ? 'bg-surface text-accent' : 'text-text-muted hover:bg-accent-soft'"
         draggable="true"
         @dragstart="(e) => onDragStart(e, index)"
-        @dragover="(e) => onDragOver(e, index)"
         @dragend="onDragEnd"
         @click="externalDocuments.activeId = tab.id"
         @contextmenu="(e) => onContextMenu(e, tab)">
@@ -204,7 +219,6 @@ onUnmounted(() => {
         ]"
         draggable="true"
         @dragstart="(e) => onDragStart(e, index)"
-        @dragover="(e) => onDragOver(e, index)"
         @dragend="onDragEnd"
         @click="selectTab(tab)"
         @dblclick="workspaceStore.retainTab(tab.id)"
@@ -225,7 +239,7 @@ onUnmounted(() => {
         </button>
       </div>
       </template>
-    </div>
+    </TransitionGroup>
     
     <!-- Context Menu -->
     <div
@@ -272,6 +286,16 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.editor-tab-move {
+  transition: transform 160ms ease-out, background-color 150ms, color 150ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-tab-move {
+    transition: none;
+  }
+}
+
 .italic {
   font-synthesis: style;
 }

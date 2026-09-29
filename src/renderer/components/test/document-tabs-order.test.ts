@@ -24,12 +24,29 @@ it('uses one visual order for bidirectional mixed dragging, persistence and canc
     if (id.includes('document-tab-closing')) return { closeDocumentTabs }
     return {}
   }, {}))!
+  const hover = (clientX: number, targetIndex: number) => {
+    const children = api.order().map((id: string, index: number) => ({ dataset: { documentTab: id }, offsetLeft: index * 120, offsetWidth: 120 }))
+    api.onDragOver({ preventDefault() {}, clientX, currentTarget: {
+      children, scrollLeft: 0, getBoundingClientRect: () => ({ left: 0 }),
+    } }, targetIndex)
+  }
   const drag = (from: number, to: number) => {
     api.onDragStart({}, from)
-    api.onDragOver({ preventDefault() {} }, to)
+    hover(to * 120 + 60 + (to > from ? 1 : -1), to)
     api.onDragEnd()
   }
   try {
+    api.onDragStart({}, 0)
+    hover(181, 1)
+    expect(api.order()).toEqual(['help', 'a', 'x', 'y'])
+    // The displaced tab is still under the stationary pointer during FLIP.
+    hover(181, 0)
+    hover(181, 0)
+    expect(api.order()).toEqual(['help', 'a', 'x', 'y'])
+    // Moving back across its layout midpoint must still allow reversal.
+    hover(59, 0)
+    expect(api.order()).toEqual(['a', 'help', 'x', 'y'])
+    api.onDragEnd()
     drag(2, 0)
     expect(api.order()).toEqual(['x', 'a', 'help', 'y'])
     drag(2, 0)

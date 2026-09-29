@@ -18,6 +18,13 @@ it('keeps external tab layout, state colors and controls consistent with ordinar
   expect(external).toContain('class="w-2 h-2 rounded-full bg-text-subtle group-hover:hidden"')
 })
 
+it('animates keyed mixed tabs with a short transform transition and respects reduced motion', () => {
+  expect(source).toMatch(/<TransitionGroup\s+name="editor-tab"\s+tag="div"/)
+  expect(source).toContain('v-for="(tab, index) in visualTabs" :key="tab.id"')
+  expect(source).toMatch(/\.editor-tab-move\s*\{[^}]*transform 160ms ease-out/)
+  expect(source).toMatch(/@media\s*\(prefers-reduced-motion: reduce\)\s*\{\s*\.editor-tab-move\s*\{\s*transition: none/)
+})
+
 it('retains the external icon, label, full path and unsaved indicator', () => {
   expect(external).toContain('<FileSymlink')
   expect(external).toContain('>外部</span>')

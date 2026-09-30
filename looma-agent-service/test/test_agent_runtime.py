@@ -130,7 +130,10 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         sent = provider.calls[0][0]
         self.assertEqual(sent[0].role, "system")
         self.assertIn("你是 Looma 工作空间助手", sent[0].content)
-        self.assertEqual([m.content for m in sent[1:]], ["旧消息", "开始"])
+        self.assertEqual([m.content for m in sent[1:-2]], ["旧消息"])
+        self.assertEqual(sent[-2].role, "system")
+        self.assertIn("本轮开始时的系统时间", sent[-2].content)
+        self.assertEqual(sent[-1], ChatMessage(role="user", content="开始"))
 
     async def test_tool_then_final_has_schema_ids_bounded_sanitized_observation_and_sources(self):
         secret = "TOP-SECRET-DETAIL"

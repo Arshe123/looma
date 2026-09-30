@@ -222,6 +222,15 @@ class AgentRuntime:
         messages = [
             ChatMessage(role="system", content=AGENT_SYSTEM_PROMPT),
             *history,
+            ChatMessage(
+                role="system",
+                content=(
+                    "本轮开始时的系统时间（本机时区，包含 UTC 偏移）："
+                    f"{datetime.now().astimezone().isoformat(timespec='seconds')}。\n"
+                    "理解“今天、昨天、明天”等相对日期时，以此时间为基准。"
+                    "这是本轮开始时间，不是实时更新的时钟。"
+                ),
+            ),
             ChatMessage(role="user", content=input),
         ]
         schemas = self.registry.tool_schemas(

@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -15,6 +16,35 @@ from test.test_agent_runtime import FakeProvider, FakeTool, build_runtime, colle
 
 
 class AgentPromptIntegrationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_time_refreshes_per_run_but_stays_fixed_across_tool_rounds(self):
+        provider = FakeProvider([
+            AgentToolCall(type="tool_call", thought_summary="查找", tool="workspace_search", arguments={"value": "a"}),
+            AgentFinalAnswer(type="final", answer="完成"),
+            AgentFinalAnswer(type="final", answer="完成"),
+        ])
+        runtime = build_runtime(provider, FakeTool())
+        history = [ChatMessage(role="system", content="对话摘要：保留")]
+        local_tz = timezone(timedelta(hours=8))
+        times = [
+            datetime(2026, 9, 30, 23, 59, 59, tzinfo=local_tz),
+            datetime(2026, 10, 1, 0, 0, 1, tzinfo=local_tz),
+        ]
+        with patch("agent.runtime.datetime") as clock:
+            clock.now.side_effect = times
+            for _ in times:
+                events = await collect(
+                    runtime, input="开始", history=history,
+                    config=AgentConfig(enabled_tools=["workspace_search"], max_iterations=1),
+                )
+                self.assertEqual(events[-1]["type"], "done")
+        self.assertEqual(len(provider.calls), 3)
+        for index, (messages, _) in enumerate(provider.calls):
+            time_messages = [m for m in messages if m.role == "system" and "本轮开始时的系统时间" in m.content]
+            self.assertEqual(len(time_messages), 1)
+            self.assertIn(times[0 if index < 2 else 1].astimezone().isoformat(timespec="seconds"), time_messages[0].content)
+        self.assertEqual(provider.calls[0][0][2], provider.calls[1][0][2])
+        self.assertEqual(history, [ChatMessage(role="system", content="对话摘要：保留")])
+
     async def test_rules_do_not_accumulate_across_tool_rounds_or_forced_final(self):
         history = [ChatMessage(role="system", content="对话摘要：查找资料")]
         provider = FakeProvider([

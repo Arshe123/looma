@@ -2126,6 +2126,11 @@ export const useWorkspaceStore = defineStore('workspace', {
       await this.saveWorkspaceMeta()
     },
 
+    async collapseAllDirs() {
+      this.expandedDirs = []
+      await this.saveWorkspaceMeta()
+    },
+
     async toggleDirExpanded(dirRelativePath: string) {
       const dir = normalizeDir(dirRelativePath)
       const set = new Set(this.expandedDirs.map(normalizeDir))

@@ -2,7 +2,7 @@
 import { scaleFileSize } from '@/shared/utils/format-size'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
-import { CalendarArrowDown, CalendarArrowUp, ChevronRight, FilePlus2, FolderPlus, LoaderCircle, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { CalendarArrowDown, CalendarArrowUp, ChevronRight, FilePlus2, FolderPlus, ListCollapse, LoaderCircle, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { useWorkspaceStore, type FsEntry } from '../stores/workspace'
 import { useSettingsStore } from '../stores/settings'
 import {
@@ -785,6 +785,14 @@ onUnmounted(() => {
           @click="toggleFileSort('created-desc')"
         >
           <CalendarArrowDown :size="14" />
+        </button>
+        <button
+          title="全部折叠"
+          aria-label="全部折叠"
+          class="w-6 h-6 inline-flex items-center justify-center rounded text-text-muted hover:bg-accent-soft hover:text-text-main"
+          @click="workspaceStore.collapseAllDirs()"
+        >
+          <ListCollapse :size="14" />
         </button>
         <button
           title="回收站"

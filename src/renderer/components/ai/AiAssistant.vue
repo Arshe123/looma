@@ -12,6 +12,7 @@ import AgentFileReviewFloat from './AgentFileReviewFloat.vue'
 import AgentRagSources from './AgentRagSources.vue'
 import type { AgentFileReviewDisplayData } from './agentConversationDisplay'
 import type { AgentRagSourceDisplayItem } from './agentRagSources'
+import { formatMessageTime } from './messageTime'
 
 const workspaceStore = useWorkspaceStore()
 const settingsStore = useSettingsStore()
@@ -22,6 +23,7 @@ const messagesRef = ref<HTMLElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 const contextMenuRef = ref<HTMLElement | null>(null)
 const copiedMessageId = ref<number | null>(null)
+const messageTimeNow = ref(Date.now())
 const aiContextMenu = ref({
   visible: false,
   top: 0,
@@ -301,7 +303,7 @@ const cancelCurrentGeneration = async () => {
   if (result && !result.success) appendMessage('system', result.error || '取消 Agent 运行失败。')
 }
 
-const copyAssistantMessage = async (message: AiAssistantMessage) => {
+const copyMessage = async (message: AiAssistantMessage) => {
   const text = message.text.trim()
   if (!text) return
 
@@ -462,8 +464,9 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
         <div
           v-for="message in messages"
           :key="message.id"
+          @mouseenter="messageTimeNow = Date.now()"
           :class="[
-            'flex',
+            'group/message flex',
             message.role === 'user'
               ? 'justify-end'
               : 'justify-center',
@@ -548,20 +551,6 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
                 正在生成
               </div>
 
-              <div
-                v-if="message.role === 'assistant' && !isMessageStreaming(message) && !(message.actions && message.actions.length)"
-                class="mt-4 flex flex-wrap items-center justify-center gap-2 pt-1"
-              >
-                <button
-                  class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-text-muted"
-                  type="button"
-                  :disabled="!message.text.trim()"
-                  @click="copyAssistantMessage(message)"
-                >
-                  <Copy :size="12" />
-                  {{ copiedMessageId === message.id ? '已复制' : '复制' }}
-                </button>
-              </div>
             </div>
 
             <div
@@ -598,6 +587,22 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
               >
                 {{ isIndexing && action.type === BUILD_INDEX_ACTION_TYPE ? '正在建立索引...' : action.buttonText }}
               </button>
+            </div>
+            <div
+              class="message-footer invisible mx-auto mt-2 flex min-h-6 max-w-[760px] flex-wrap items-center gap-2 px-1 text-[11px] text-text-muted group-hover/message:visible"
+              :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
+            >
+              <button
+                v-if="message.role !== 'system' && !isMessageStreaming(message)"
+                class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 transition-colors hover:bg-accent-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-text-muted"
+                type="button"
+                :disabled="!message.text.trim()"
+                @click="copyMessage(message)"
+              >
+                <Copy :size="12" />
+                {{ copiedMessageId === message.id ? '已复制' : '复制' }}
+              </button>
+              <span class="whitespace-nowrap">{{ formatMessageTime(message.createdAt, messageTimeNow) }}</span>
             </div>
           </div>
         </div>

@@ -21,11 +21,11 @@
   font-display: swap;
 }
 
-/* Medium is the supplied emphasis face, not a synthetic bold. */
+/* Declare the real weight so bold emphasis can synthesize a heavier face. */
 @font-face {
   font-family: 'LoomaWenkai';
   src: url('../assets/fonts/wenkai-medium.ttf') format('truetype');
-  font-weight: 500 900;
+  font-weight: 500;
   font-display: swap;
 }
 
@@ -57,6 +57,18 @@
 /* Specificity must exceed github-markdown-css, even when it loads lazily. */
 .markdown-body.markdown-body {
   font-family: var(--font-body);
+}
+
+/* Keep synthesis scoped to emphasis, not headings or application UI. */
+.markdown-body.markdown-body :is(strong, b),
+.ai-markdown :is(strong, b) {
+  font-weight: 700;
+  font-synthesis: weight style;
+}
+
+.markdown-body.markdown-body :is(em, i),
+.ai-markdown :is(em, i) {
+  font-style: oblique 16deg;
 }
 
 .markdown-body.markdown-body :is(pre, code, kbd, samp),

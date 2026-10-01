@@ -173,7 +173,18 @@ class AgentConfig(StrictAgentModel):
     allow_write: bool = False
 
 
+class AgentMemoryDocument(StrictAgentModel):
+    content: str = Field(max_length=16000)
+    revision: str = Field(min_length=1, max_length=128)
+
+
+class AgentMemorySnapshot(StrictAgentModel):
+    soul: AgentMemoryDocument
+    user: AgentMemoryDocument
+
+
 class AgentRunRequest(StrictAgentModel):
+    memory: Optional[AgentMemorySnapshot] = None
     input: str = Field(..., min_length=1)
     task_id: str = Field(..., min_length=1, max_length=128)
     run_id: str = Field(..., min_length=1, max_length=128)

@@ -13,6 +13,14 @@ from schemas import AgentConfig, AgentRunRequest, WorkspaceContext
 
 
 class AgentRequestContractTest(unittest.TestCase):
+    def test_memory_snapshot_request_is_bounded_and_strict(self):
+        memory = {"soul": {"content": "简洁", "revision": "a"}, "user": {"content": "中文", "revision": "b"}}
+        request = AgentRunRequest(task_id="t", run_id="r", input="hi", memory=memory)
+        self.assertEqual(request.memory.model_dump(), memory)
+        memory["soul"]["content"] = "x" * 16001
+        with self.assertRaises(ValidationError):
+            AgentRunRequest(task_id="t", run_id="r", input="hi", memory=memory)
+
     def test_canonical_agent_run_request_uses_global_ai_and_knowledge_defaults(self):
         request = AgentRunRequest(
             task_id="task_test",

@@ -38,6 +38,13 @@ afterEach(() => {
 })
 
 describe('Agent stream contract', () => {
+  it('transports the main-owned memory snapshot', async () => {
+    const memory = { soul: { content: '简洁', revision: 'a' }, user: { content: '中文', revision: 'b' } }
+    const fetchMock = vi.fn().mockResolvedValue(ndjsonResponse(validEvents))
+    vi.stubGlobal('fetch', fetchMock)
+    await aiService.streamAgent('/workspace', { input: 'hi', memory }, () => {})
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).memory).toEqual(memory)
+  })
   it('posts the exact approval-capable default body and forwards valid events', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ndjsonResponse(validEvents))
     vi.stubGlobal('fetch', fetchMock)

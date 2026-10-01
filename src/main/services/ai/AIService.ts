@@ -149,6 +149,7 @@ export interface AgentFileProposalPayload {
 }
 
 export interface AgentRunOptions {
+  memory?: import('../../../shared/types/agent-memory').AgentMemorySnapshot
   input: string
   history?: RagChatMessage[]
   taskId?: string
@@ -269,6 +270,7 @@ const clampInteger = (value: unknown, fallback: number, min: number, max: number
 }
 
 export interface NormalizedAgentRunOptions {
+  memory?: import('../../../shared/types/agent-memory').AgentMemorySnapshot
   input: string
   history: RagChatMessage[]
   taskId?: string
@@ -360,6 +362,7 @@ export const normalizeAgentRunOptions = (options: AgentRunOptions): NormalizedAg
     input,
     history,
     ...(taskId ? { taskId } : {}),
+    ...(options.memory ? { memory: options.memory } : {}),
     ...(runId ? { runId } : {}),
     ...(parentRunId ? { parentRunId } : {}),
     ...(recoveryReason ? { recoveryReason } : {}),
@@ -442,6 +445,7 @@ const toAgentRequestBody = (workspacePath: string, rawOptions: AgentRunOptions) 
     recovery_reason: options.recoveryReason,
     workspace: { workspace_path: workspacePath },
     history: options.history,
+    memory: options.memory,
     agent: {
       enabled_tools: options.enabledTools,
       max_iterations: options.maxIterations,

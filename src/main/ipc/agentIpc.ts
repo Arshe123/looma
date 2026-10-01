@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
-import { ipcMain, type WebContents } from 'electron'
+import { app, ipcMain, type WebContents } from 'electron'
+import { AgentMemoryError, AgentMemoryStore } from '../services/agent/AgentMemoryStore'
 import type { AgentEvent, AgentPendingFileReview, AgentSource, FilePatchArtifact, JsonValue } from '../../shared/types/agent-events'
 import type { AgentMessage } from '../../shared/types/agent-message'
 import type { AgentRun, AgentTask } from '../../shared/types/agent-state'
@@ -17,6 +18,15 @@ import { getWorkspacePathById } from './workspaceIpc'
 
 const MAX_ACTIVE_AGENT_RUNS_PER_SENDER = 4
 const MAX_ACTIVE_AGENT_RUNS_GLOBAL = 32
+
+ipcMain.handle('agentMemory:read', async (_event, kind: 'soul' | 'user') => {
+  try { return { success: true, data: await new AgentMemoryStore(app.getPath('userData')).read(kind) } }
+  catch { return { success: false, error: '记忆读取失败，请检查本机文件后重试。' } }
+})
+ipcMain.handle('agentMemory:save', async (_event, kind: 'soul' | 'user', content: string, revision: string) => {
+  try { return { success: true, data: await new AgentMemoryStore(app.getPath('userData')).save(kind, content, revision) } }
+  catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '记忆保存失败，请检查文件权限和磁盘空间，重新加载后重试。' } }
+})
 
 type ApprovalRequiredStreamEvent = Extract<AgentStreamEvent, { type: 'approval_required' }>
 
@@ -777,7 +787,9 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
   const startedAt = Date.now()
   const taskId = `task_${randomUUID().replace(/-/g, '')}`
   const runId = `run_${randomUUID().replace(/-/g, '')}`
-  const conversationId = `conversation_${taskId}`
+  const suppliedConversationId = (rawOptions as { conversationId?: unknown })?.conversationId
+  if (suppliedConversationId !== undefined && !validIdentifier(suppliedConversationId)) return { success: false, error: '对话标识无效。' }
+  const conversationId = typeof suppliedConversationId === 'string' ? suppliedConversationId : `conversation_${taskId}`
   const inputMessageId = messageId()
   const assistantMessageId = messageId()
   const run: ActiveAgentRun = {
@@ -821,6 +833,12 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
     return { success: false, error: 'Workspace not found' }
   }
   run.workspacePath = workspacePath
+  try {
+    options.memory = await new AgentMemoryStore(app.getPath('userData')).snapshot(workspaceId, conversationId)
+  } catch {
+    cleanupRun(key, run)
+    return { success: false, error: '长期记忆快照读取或保存失败，请检查设置和本机文件后重试。' }
+  }
   try {
     const ledgerRoot = path.join(workspacePath, '.looma', 'agent-ledger')
     run.ledger = new AgentLedgerStore(ledgerRoot)
@@ -948,6 +966,7 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
       runId,
       parentRunId,
       recoveryReason: 'manual_retry',
+      memory: await new AgentMemoryStore(app.getPath('userData')).snapshot(workspaceId, parentRun.conversationId, true),
     })
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unable to rebuild Agent continuation context' }

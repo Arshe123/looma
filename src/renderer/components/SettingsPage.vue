@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { Code2, Cpu, Palette } from 'lucide-vue-next'
 import { useWorkspaceStore, type SettingsSectionId } from '../stores/workspace'
 import AiSettings from './settings/AiSettings.vue'
+import MemorySettings from './settings/MemorySettings.vue'
 import AppearanceSettings from './settings/AppearanceSettings.vue'
 import EditorSettings from './settings/EditorSettings.vue'
 import SettingsSectionNav from './settings/SettingsSectionNav.vue'
@@ -29,6 +30,7 @@ const settingSections = [
     description: '配置本机 Ollama 模型与嵌入模型。',
     icon: Cpu,
   },
+  { id: 'memory', title: '长期记忆', description: '查看和编辑人格与用户画像。', icon: Cpu },
 ] as const
 
 const currentSection = computed(() => {
@@ -68,6 +70,7 @@ watch(activeSection, (section) => {
             <AppearanceSettings v-if="isAppearanceSection" />
             <EditorSettings v-else-if="isEditorSection" />
             <AiSettings v-else-if="isAiSection" />
+            <MemorySettings v-else-if="activeSection === 'memory'" />
           </div>
         </section>
       </div>

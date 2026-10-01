@@ -242,6 +242,7 @@ type RagStreamEventPayload =
 
 type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch';
 interface AgentRunOptionsPayload {
+  conversationId?: string;
   input: string;
   history?: RagChatMessagePayload[];
 }
@@ -288,6 +289,10 @@ interface OllamaModelPullProgressPayload extends OllamaDownloadProgressPayload {
 }
 
 interface ElectronAPI {
+  agentMemory: {
+    read: (kind: import('../shared/types/agent-memory').AgentMemoryKind) => Promise<Result<import('../shared/types/agent-memory').AgentMemoryDocument>>;
+    save: (kind: import('../shared/types/agent-memory').AgentMemoryKind, content: string, revision: string) => Promise<Result<import('../shared/types/agent-memory').AgentMemoryDocument>>;
+  };
   externalDocuments: import('../shared/types/external-document').ExternalDocumentsAPI;
   platform: string;
   file: {

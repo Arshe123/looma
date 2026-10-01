@@ -200,6 +200,7 @@ async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
         async for runtime_event in runtime.run(
             input=request.input,
             history=request.history,
+            memory=request.memory.model_dump() if request.memory is not None else None,
             config=request.agent,
             run_id=run_id,
         ):

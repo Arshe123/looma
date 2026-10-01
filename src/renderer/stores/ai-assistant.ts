@@ -643,6 +643,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
 
       try {
         const result = await (window as any).electronAPI.agent.runStream.start(requestId, options.workspaceId, {
+          conversationId,
           input: text,
           history,
         })

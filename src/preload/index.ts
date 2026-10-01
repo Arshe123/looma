@@ -129,6 +129,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setDraft: (workspaceId: string, conversationId: string, draft: string) => ipcRenderer.invoke('workspaceAi:setDraft', workspaceId, conversationId, draft),
     set: (workspaceId: string, state: unknown) => ipcRenderer.invoke('workspaceAi:set', workspaceId, state),
   },
+  agentMemory: {
+    read: (kind: 'soul' | 'user') => ipcRenderer.invoke('agentMemory:read', kind),
+    save: (kind: 'soul' | 'user', content: string, revision: string) => ipcRenderer.invoke('agentMemory:save', kind, content, revision),
+  },
   appSettings: {
     get: () => ipcRenderer.invoke('appSettings:get'),
     set: (settings: unknown) => ipcRenderer.invoke('appSettings:set', settings),

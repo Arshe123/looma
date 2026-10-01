@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({
-  app: { getPath: () => os.tmpdir() },
+  app: { getPath: () => path.join(state.workspacePath, 'app-data') },
   shell: { showItemInFolder: vi.fn() },
   ipcMain: {
     handle: (channel: string, handler: (...args: any[]) => any) => state.handlers.set(channel, handler),
@@ -46,6 +46,59 @@ const sender = (id: number) => ({
 })
 
 describe('Agent approval IPC trusted boundary', () => {
+  it('reports memory filesystem failures in Chinese without exposing local paths', async () => {
+    await fs.mkdir(path.join(state.workspacePath, 'app-data', 'user.md'), { recursive: true })
+    const result = await state.handlers.get('agentMemory:save')!({}, 'user', '偏好中文', 'old')
+    expect(result).toEqual({ success: false, error: '记忆保存失败，请检查文件权限和磁盘空间，重新加载后重试。' })
+  })
+  it('does not start a model when memory cannot be read', async () => {
+    await fs.mkdir(path.join(state.workspacePath, 'app-data', 'soul.md'), { recursive: true })
+    const result = await state.handlers.get('agent:runStream:start')!({ sender: sender(101) }, 'bad-memory', 'workspace-1', { input: 'hi' })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('记忆')
+    expect(state.streamAgent).not.toHaveBeenCalled()
+  })
+  it('reads and saves both settings through IPC and rejects invalid or stale writes', async () => {
+    const read = state.handlers.get('agentMemory:read')!
+    const save = state.handlers.get('agentMemory:save')!
+    for (const kind of ['soul', 'user']) {
+      const initial = await read({}, kind)
+      const saved = await save({}, kind, `content-${kind}`, initial.data.revision)
+      expect(saved.success).toBe(true)
+      expect(await read({}, kind)).toEqual(saved)
+      expect((await save({}, kind, 'stale', initial.data.revision)).success).toBe(false)
+    }
+    expect((await read({}, '../escape')).success).toBe(false)
+    expect((await save({}, '../escape', 'bad', '')).success).toBe(false)
+  })
+  it('restores the original memory on failed-run continuation', async () => {
+    const owner = sender(101)
+    const start = state.handlers.get('agent:runStream:start')!
+    const read = state.handlers.get('agentMemory:read')!
+    const save = state.handlers.get('agentMemory:save')!
+    const initial = await read({}, 'user')
+    const first = await save({}, 'user', 'original', initial.data.revision)
+    const started = await start({ sender: owner }, 'first', 'workspace-1', { input: 'hello', conversationId: 'chat' })
+    await state.streamEvent!({ type: 'error', runId: started.data.runId, error: { code: 'test', message: 'test failure', retryable: true } })
+    abortAllAgentRuns()
+    await save({}, 'user', 'updated', first.data.revision)
+    const resumed = await state.handlers.get('agent:runStream:resume')!({ sender: owner }, 'resume', 'workspace-1', started.data.runId)
+    expect(resumed.success).toBe(true)
+    expect(state.streamAgent.mock.calls[1][1].memory.user.content).toBe('original')
+  })
+  it('pins main-owned memory per renderer conversation and ignores injected memory', async () => {
+    const owner = sender(101)
+    const start = state.handlers.get('agent:runStream:start')!
+    await fs.mkdir(path.join(state.workspacePath, 'app-data'), { recursive: true })
+    await fs.writeFile(path.join(state.workspacePath, 'app-data', 'user.md'), 'original')
+    await start({ sender: owner }, 'memory-1', 'workspace-1', { input: 'hello', conversationId: 'chat-1', memory: { user: 'forged' } })
+    expect(state.streamAgent.mock.calls[0][1].memory.user.content).toBe('original')
+    await fs.writeFile(path.join(state.workspacePath, 'app-data', 'user.md'), 'updated')
+    await start({ sender: owner }, 'memory-2', 'workspace-1', { input: 'hello', conversationId: 'chat-1' })
+    await start({ sender: owner }, 'memory-3', 'workspace-1', { input: 'hello', conversationId: 'chat-2' })
+    expect(state.streamAgent.mock.calls[1][1].memory.user.content).toBe('original')
+    expect(state.streamAgent.mock.calls[2][1].memory.user.content).toBe('updated')
+  })
   beforeEach(async () => {
     state.workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'looma-agent-ipc-'))
     await fs.mkdir(path.join(state.workspacePath, 'notes'))

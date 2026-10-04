@@ -6,6 +6,7 @@ import { MAX_MEMORY_CHARS, type AgentMemoryKind, type AgentMemoryDocument, type 
 const revision = (content: string) => createHash('sha256').update(content).digest('hex')
 const queues = new Map<string, Promise<unknown>>()
 export class AgentMemoryError extends Error {}
+export class AgentMemoryConflictError extends AgentMemoryError {}
 function validateContent(content: unknown): asserts content is string {
   if (typeof content !== 'string' || content.length > MAX_MEMORY_CHARS || content.includes('\0')) throw new AgentMemoryError('记忆内容无效或过长。')
 }
@@ -53,7 +54,7 @@ export class AgentMemoryStore {
   async save(kind: AgentMemoryKind, content: string, expectedRevision: string): Promise<AgentMemoryDocument> {
     return this.locked(async () => {
       const current = await this.read(kind)
-      if (current.revision !== expectedRevision) throw new AgentMemoryError('内容已在其他窗口更新，请重新加载后再保存。')
+      if (current.revision !== expectedRevision) throw new AgentMemoryConflictError('内容已在其他窗口更新，请重新加载后再保存。')
       validateContent(content)
       await this.atomicWrite(this.file(kind), content)
       return { content, revision: revision(content) }

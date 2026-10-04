@@ -33,7 +33,7 @@ class AgentRequestContractTest(unittest.TestCase):
         self.assertIsNone(request.knowledge)
         self.assertEqual(
             request.agent.enabled_tools,
-            ["rag_search", "workspace_list", "workspace_search", "file_read", "file_patch"],
+            ["rag_search", "workspace_list", "workspace_search", "file_read", "file_patch", "user_profile_read", "user_profile_update"],
         )
         self.assertEqual(request.agent.max_iterations, 90)
         self.assertEqual(request.agent.tool_timeout_seconds, 30)

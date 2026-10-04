@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from agent.events import error_event, event, utc_iso_z
 from agent.models import AgentError
 from agent.runtime import AgentRuntime
+from agent.tools.user_profile import UserProfileReadTool, UserProfileUpdateTool
 from agent.tools import (
     AgentToolContext,
     FilePatchTool,
@@ -160,7 +161,7 @@ def _agent_ndjson(value: dict) -> str:
 async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
     """Build and stream one bounded Agent run without leaking setup exceptions."""
     run_id = request.run_id
-    read_tools = set(DEFAULT_AGENT_TOOLS)
+    read_tools = set(DEFAULT_AGENT_TOOLS) - {"user_profile_read", "user_profile_update"}
     run_started_sent = False
 
     try:
@@ -185,6 +186,8 @@ async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
         registry.register(WorkspaceSearchTool())
         registry.register(FileReadTool())
         registry.register(FilePatchTool())
+        registry.register(UserProfileReadTool())
+        registry.register(UserProfileUpdateTool())
         runtime = AgentRuntime(
             provider=provider,
             registry=registry,
@@ -195,6 +198,7 @@ async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
                 run_id=run_id,
                 ai_config=request.ai_config,
                 knowledge=request.knowledge,
+                user_profile_bridge=request.user_profile_bridge.model_dump() if request.user_profile_bridge else None,
             ),
         )
         async for runtime_event in runtime.run(

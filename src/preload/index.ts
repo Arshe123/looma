@@ -14,7 +14,7 @@ type RagChatMessagePayload = {
   content: string;
   name?: string;
 };
-type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read';
+type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch' | 'user_profile_read' | 'user_profile_update';
 type AgentRunOptionsPayload = {
   input: string;
   history?: RagChatMessagePayload[];

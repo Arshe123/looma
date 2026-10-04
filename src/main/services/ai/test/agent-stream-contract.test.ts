@@ -38,6 +38,11 @@ afterEach(() => {
 })
 
 describe('Agent stream contract', () => {
+  it('enables and validates user profile tools through stream and history contracts', () => {
+    expect(normalizeAgentRunOptions({ input: 'hi' }).enabledTools).toContain('user_profile_update')
+    expect(isAgentStreamEvent({ ...validEvents[2], tool: 'user_profile_read' })).toBe(true)
+    expect(isAgentStreamEvent({ ...validEvents[3], result: { ...(validEvents[3] as any).result, tool: 'user_profile_update' } })).toBe(true)
+  })
   it('transports the main-owned memory snapshot', async () => {
     const memory = { soul: { content: '简洁', revision: 'a' }, user: { content: '中文', revision: 'b' } }
     const fetchMock = vi.fn().mockResolvedValue(ndjsonResponse(validEvents))
@@ -67,7 +72,7 @@ describe('Agent stream contract', () => {
       workspace: { workspace_path: 'D:/work/demo' },
       history: [],
       agent: {
-        enabled_tools: ['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch'],
+        enabled_tools: ['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch', 'user_profile_read', 'user_profile_update'],
         max_iterations: 90,
         tool_timeout_seconds: 30,
         allow_write: true,

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from schemas import AIConfig, KnowledgeConfig, ToolName
 
 
-ToolRiskLevel = Literal["read", "write", "network", "terminal"]
+ToolRiskLevel = Literal["read", "write", "network", "terminal", "profile"]
 
 
 class ToolExecutionError(ValueError):
@@ -36,6 +36,7 @@ class AgentToolContext:
     run_id: str | None = None
     ai_config: AIConfig | None = None
     knowledge: KnowledgeConfig | None = None
+    user_profile_bridge: dict[str, str] | None = None
 
 
 class AgentTool(ABC):

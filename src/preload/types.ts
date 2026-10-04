@@ -240,7 +240,7 @@ type RagStreamEventPayload =
   | { requestId: string; type: 'done'; result?: RagIndexPayload; status?: string; document_count?: number; file_count?: number; exists?: boolean; persist_dir?: string }
   | { requestId: string; type: 'error'; error: string; stepId?: string };
 
-type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch';
+type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch' | 'user_profile_read' | 'user_profile_update';
 interface AgentRunOptionsPayload {
   conversationId?: string;
   input: string;

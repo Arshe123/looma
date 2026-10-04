@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { openUserProfileBridge } from '../agent/UserProfileBridge'
+import type { AgentMemoryStore } from '../agent/AgentMemoryStore'
 import type { Result } from '../../../shared/types/Result'
 
 const getRagBaseUrl = () => process.env.RAG_SERVICE_URL || 'http://127.0.0.1:8765'
@@ -136,7 +138,7 @@ export interface RagChatMessage {
   tool_call_id?: string
 }
 
-export type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch'
+export type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch' | 'user_profile_read' | 'user_profile_update'
 
 export interface AgentFileProposalPayload {
   requiresApproval: true
@@ -149,6 +151,8 @@ export interface AgentFileProposalPayload {
 }
 
 export interface AgentRunOptions {
+  /** Main-only capability; never accepted from renderer options. */
+  userProfileStore?: AgentMemoryStore
   memory?: import('../../../shared/types/agent-memory').AgentMemorySnapshot
   input: string
   history?: RagChatMessage[]
@@ -256,7 +260,7 @@ interface AIService {
 
 }
 
-const AGENT_TOOLS: readonly AgentToolName[] = ['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch']
+const AGENT_TOOLS: readonly AgentToolName[] = ['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch', 'user_profile_read', 'user_profile_update']
 const AGENT_TOOL_SET = new Set<string>(AGENT_TOOLS)
 const MAX_AGENT_INPUT_CHARS = 32_000
 const MAX_AGENT_HISTORY_MESSAGES = 200
@@ -635,17 +639,23 @@ export const aiService: AIService = {
     onEvent: (event: AgentStreamEvent) => unknown | Promise<unknown>,
     signal?: AbortSignal,
   ): Promise<Result<void>> {
-    return streamNdjson<unknown>(
-      '/agent/run/stream',
-      toAgentRequestBody(workspacePath, options),
-      async (event) => {
-        if (isAgentStreamEvent(event)) {
-          await onEvent(event)
-          return
-        }
-        console.warn('Ignored invalid Agent stream event')
-      },
-      signal,
-    )
+    const body = toAgentRequestBody(workspacePath, options)
+    const bridge = options.userProfileStore
+      ? await openUserProfileBridge(options.userProfileStore, body.run_id, signal, body.agent.enabled_tools)
+      : undefined
+    try {
+      return await streamNdjson<unknown>(
+        '/agent/run/stream',
+        { ...body, ...(bridge ? { user_profile_bridge: bridge.config } : {}) },
+        async (event) => {
+          if (isAgentStreamEvent(event)) {
+            await onEvent(event)
+            return
+          }
+          console.warn('Ignored invalid Agent stream event')
+        },
+        signal,
+      )
+    } finally { await bridge?.close() }
   },
 }

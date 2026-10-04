@@ -135,6 +135,8 @@ class IndexBuildRequest(BaseModel):
     ai_config: Optional[AIConfig] = None
 
 ToolName = Literal[
+    "user_profile_read",
+    "user_profile_update",
     "rag_search",
     "workspace_list",
     "workspace_search",
@@ -150,6 +152,8 @@ DEFAULT_AGENT_TOOLS: tuple[ToolName, ...] = (
     "workspace_search",
     "file_read",
     "file_patch",
+    "user_profile_read",
+    "user_profile_update",
 )
 
 
@@ -183,7 +187,13 @@ class AgentMemorySnapshot(StrictAgentModel):
     user: AgentMemoryDocument
 
 
+class UserProfileBridgeConfig(StrictAgentModel):
+    url: str = Field(pattern=r"^http://127\.0\.0\.1:[0-9]{1,5}/user-profile$")
+    token: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class AgentRunRequest(StrictAgentModel):
+    user_profile_bridge: Optional[UserProfileBridgeConfig] = None
     memory: Optional[AgentMemorySnapshot] = None
     input: str = Field(..., min_length=1)
     task_id: str = Field(..., min_length=1, max_length=128)

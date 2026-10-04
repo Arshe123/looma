@@ -888,7 +888,7 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
 
   void aiService.streamAgent(
     workspacePath,
-    { ...options, taskId, runId },
+    { ...options, taskId, runId, userProfileStore: new AgentMemoryStore(app.getPath('userData')) },
     payload => sendEvent(key, run, requestId, payload),
     controller.signal,
   ).then(async (result) => {
@@ -1042,7 +1042,7 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
 
   void aiService.streamAgent(
     workspacePath,
-    options,
+    { ...options, userProfileStore: new AgentMemoryStore(app.getPath('userData')) },
     payload => sendEvent(key, run, requestId, payload),
     controller.signal,
   ).then(async (result) => {

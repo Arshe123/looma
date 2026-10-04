@@ -58,7 +58,7 @@ type AiIndexResultState = {
   documentCount: number
 }
 
-type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch'
+type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch' | 'user_profile_read' | 'user_profile_update'
 
 export type AgentRecoveryState = {
   recoverable: boolean

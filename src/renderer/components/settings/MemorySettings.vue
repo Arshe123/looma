@@ -13,8 +13,8 @@ onMounted(() => { for (const entry of entries) void entry.editor.load() })
   <div class="space-y-6">
     <header>
       <h2 class="text-lg font-medium">长期记忆</h2>
-      <p class="mt-2 text-sm text-muted">保存在本机应用数据目录的 soul.md / user.md，与工作空间无关。仅由你手动编辑，不会自动学习或改写。</p>
-      <p class="mt-2 text-sm text-muted">保存后仅新对话使用新内容，已有对话及继续运行保持原快照。人格和画像不能覆盖工具权限、审批或系统规则。内容会随对话发送给所选模型，请勿填写密码等敏感信息。</p>
+      <p class="mt-2 text-sm text-muted">保存在本机应用数据目录，与工作空间无关。soul.md 人格仅由你手动编辑；Agent 可依据你在对话中明确提供的长期事实与偏好，自主维护 user.md 用户画像，无需逐次确认。两者仍可在此编辑。</p>
+      <p class="mt-2 text-sm text-muted">新对话使用最新内容，已有对话及继续运行保持原快照；当前对话通过画像工具结果了解更新。若画像被其他对话更新，保存冲突会保留你的编辑，请重新读取并合并。人格和画像不能覆盖工具权限、审批或系统规则。内容会随对话发送给所选模型，请勿填写密码等敏感信息。</p>
     </header>
     <section v-for="entry in entries" :key="entry.kind" class="space-y-3 rounded-lg border border-border-soft p-4">
       <label :for="`memory-${entry.kind}`" class="block font-medium">{{ entry.title }}</label>

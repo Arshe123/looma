@@ -261,6 +261,7 @@ interface AgentRunHistoryPayload {
   recovery: { recoverable: boolean; checkpointAvailable: boolean; reason: string };
 }
 type AgentStreamEventData =
+  | { requestId: string; type: 'memory_updated'; runId: string }
   | { requestId: string; type: 'run_started'; runId: string; startedAt: string }
   | { requestId: string; type: 'timeline'; runId: string; step: number; stepId: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; summary: string }
   | { requestId: string; type: 'tool_call'; runId: string; step: number; stepId: string; callId: string; tool: AgentToolNamePayload; arguments: Record<string, unknown>; thought_summary: string }

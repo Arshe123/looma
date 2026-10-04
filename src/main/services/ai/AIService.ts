@@ -187,6 +187,8 @@ export interface AgentToolResultPayload {
 }
 
 export type AgentStreamEvent =
+  // Main-only receipt: deliberately not accepted by isAgentStreamEvent.
+  | { type: 'memory_updated'; runId: string; change: import('../../../shared/types/agent-events').MemoryUpdatedPayload }
   | { type: 'run_started'; runId: string; startedAt: string }
   | { type: 'timeline'; runId: string; step: number; stepId: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; summary: string }
   | { type: 'tool_call'; runId: string; step: number; stepId: string; callId: string; tool: AgentToolName; arguments: Record<string, unknown>; thought_summary: string }
@@ -641,7 +643,8 @@ export const aiService: AIService = {
   ): Promise<Result<void>> {
     const body = toAgentRequestBody(workspacePath, options)
     const bridge = options.userProfileStore
-      ? await openUserProfileBridge(options.userProfileStore, body.run_id, signal, body.agent.enabled_tools)
+      ? await openUserProfileBridge(options.userProfileStore, body.run_id, signal, body.agent.enabled_tools,
+        async change => onEvent({ type: 'memory_updated', runId: body.run_id, change }))
       : undefined
     try {
       return await streamNdjson<unknown>(
@@ -649,6 +652,9 @@ export const aiService: AIService = {
         { ...body, ...(bridge ? { user_profile_bridge: bridge.config } : {}) },
         async (event) => {
           if (isAgentStreamEvent(event)) {
+            // A timed-out tool may still be completing its main-owned save.
+            // Revoke new writes and drain its receipt before ending the turn.
+            if (event.type === 'done' || event.type === 'error') await bridge?.close()
             await onEvent(event)
             return
           }

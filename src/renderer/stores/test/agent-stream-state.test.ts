@@ -76,6 +76,54 @@ describe('agent stream state', () => {
     settings.settings.ai.chat.model = 'gpt-4o-mini'
   })
 
+  it.each(['run_completed', 'run_failed', 'run_cancelled', 'run_interrupted'])('projects actual memory changes only for the owning terminal turn: %s', async terminal => {
+    const conversationId = createConversation()
+    const run = await startAgent(conversationId)
+    const store = useAiAssistantStore()
+    const runId = run.runId!
+    const receipt = canonicalEvent(runId, 2, 'artifact', 'memory_updated', {
+      kind: 'user', beforeRevision: 'old', afterRevision: 'new', changes: [{ type: 'added', text: '偏好中文' }],
+    })
+    const key = `${conversationId}:${run.assistantMessageId}`
+    store.agentEventsByMessageKey[key] = [receipt]
+    expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId, runId)).toEqual([])
+    const finish = canonicalEvent(runId, 4, terminal === 'run_interrupted' ? 'recovery' : 'execution', terminal, { reason: 'cancelled', message: 'failed' })
+    const second = canonicalEvent(runId, 3, 'artifact', 'memory_updated', {
+      ...receipt.payload, beforeRevision: 'new', afterRevision: 'latest', changes: [{ type: 'removed', text: '旧习惯' }],
+    })
+    store.agentEventsByMessageKey[key] = [second, finish, receipt, receipt]
+    expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId, runId)).toEqual([
+      { id: receipt.id, changes: receipt.payload.changes }, { id: second.id, changes: second.payload.changes },
+    ])
+    expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId, 'child-run')).toEqual([])
+    expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId + 1, runId)).toEqual([])
+    ;(window as any).electronAPI.agent.getRun.mockResolvedValue({ success: true, data: {
+      run: { id: runId, taskId: run.taskId }, events: [receipt, second, finish], sources: [], recovery: {},
+    } })
+    store.syncAgentProjection(run)
+    store.agentEventsByMessageKey = {}
+    const message = useWorkspaceStore().aiAssistant.conversations.find(c => c.id === conversationId)!.messages.find(m => m.id === run.assistantMessageId)!
+    await store.hydrateAgentHistory('workspace-1', [{ id: conversationId, messages: [message] }])
+    expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId, runId)).toHaveLength(2)
+  })
+
+  it('keeps late saved memory on a cancelled parent even after a child turn starts', async () => {
+    const conversationId = createConversation()
+    const parent = await startAgent(conversationId)
+    const store = useAiAssistantStore()
+    const runId = parent.runId!
+    store.handleAgentStreamEvent({ requestId: parent.requestId, type: 'done', runId, status: 'cancelled',
+      agentEvents: [canonicalEvent(runId, 1, 'execution', 'run_cancelled', { reason: 'cancelled' })] })
+    agentApi.start.mockResolvedValueOnce({ success: true, data: { taskId: 'task-1', runId: 'child-run' } })
+    const child = await startAgent(conversationId, '继续')
+    const receipt = canonicalEvent(runId, 2, 'artifact', 'memory_updated', {
+      kind: 'user', beforeRevision: 'old', afterRevision: 'new', changes: [{ type: 'added', text: '已保存' }],
+    })
+    store.handleAgentStreamEvent({ requestId: parent.requestId, type: 'memory_updated', runId, agentEvents: [receipt] })
+    expect(store.getMessageMemoryUpdates(conversationId, parent.assistantMessageId, runId)).toEqual([{ id: receipt.id, changes: receipt.payload.changes }])
+    expect(store.getMessageMemoryUpdates(conversationId, child.assistantMessageId, child.runId)).toEqual([])
+  })
+
   it('creates request IDs accepted by the Agent IPC boundary', () => {
     const requestId = useAiAssistantStore().createStreamRequestId()
 

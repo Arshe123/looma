@@ -239,6 +239,11 @@ const persistStreamEvent = async (run: ActiveAgentRun, requestId: string, payloa
 
   if (payload.runId !== run.runId) throw new Error('Agent stream run ID mismatch')
   switch (payload.type) {
+    case 'memory_updated': {
+      const receipt = withEventBase(run, 'artifact', 'memory_updated', payload.change)
+      await retryTransientLedgerWrite(() => ledger.commit({ kind: 'event_commit', events: [receipt] }))
+      break
+    }
     case 'run_started': {
       const agentEvent = withEventBase(run, 'execution', 'agent_started', {
         requestId,
@@ -483,7 +488,9 @@ const sendEvent = async (
   requestId: string,
   payload: AgentStreamEvent,
 ) => {
-  if (activeAgentRuns.get(key) !== run || run.controller.signal.aborted || run.sender.isDestroyed()) return
+  // A save already in flight may finish after cancellation or window close.
+  // Its confirmed side effect still belongs in the original run's ledger.
+  if (payload.type !== 'memory_updated' && (activeAgentRuns.get(key) !== run || run.controller.signal.aborted || run.sender.isDestroyed())) return
   const firstSequence = run.nextEventSequence
   await persistStreamEvent(run, requestId, payload)
   if (payload.type === 'approval_required') return
@@ -505,7 +512,7 @@ const sendEvent = async (
     ? ledgerView.sources.filter((source) => source.runId === run.runId && retrievalIds.has(source.retrievalId))
     : []
   if (payload.type === 'approval_resolved') run.approvals.delete(payload.approvalId)
-  run.sender.send('agent:runStream:event', { ...payload, agentEvents, agentSources, requestId })
+  if (!run.sender.isDestroyed()) run.sender.send('agent:runStream:event', { ...payload, agentEvents, agentSources, requestId })
 }
 
 const collectPendingFileReviews = (

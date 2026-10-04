@@ -2,9 +2,11 @@ import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { AgentMemoryConflictError, AgentMemoryError, AgentMemoryStore } from './AgentMemoryStore'
 import { MAX_MEMORY_CHARS } from '../../../shared/types/agent-memory'
+import type { MemoryUpdatedPayload } from '../../../shared/types/agent-events'
+import { diffMemoryLines } from '../../../shared/utils/agent-memory-changes'
 
 /** Run-local capability, never a workspace path or model-visible tool argument. */
-export async function openUserProfileBridge(store: AgentMemoryStore, runId: string, signal?: AbortSignal, enabledTools: readonly string[] = ['user_profile_read', 'user_profile_update']) {
+export async function openUserProfileBridge(store: AgentMemoryStore, runId: string, signal?: AbortSignal, enabledTools: readonly string[] = ['user_profile_read', 'user_profile_update'], onUpdated?: (change: MemoryUpdatedPayload) => Promise<unknown>) {
   const token = randomBytes(32).toString('hex')
   let closed = false
   let readRevision: string | undefined
@@ -65,6 +67,12 @@ export async function openUserProfileBridge(store: AgentMemoryStore, runId: stri
           reply(409, { success: false, code: 'user_profile_conflict', error: '用户画像已更新，请重新读取并合并后重试。' }); return
         }
         const data = await store.save('user', input.content, input.expectedRevision)
+        if (data.revision !== current.revision) {
+          // A main-owned, confirmed CAS receipt, independent of model/tool claims.
+          // Finish recording even if cancellation arrives during the disk write.
+          await onUpdated?.({ kind: 'user', beforeRevision: current.revision, afterRevision: data.revision,
+            changes: diffMemoryLines(current.content, data.content) })
+        }
         reply(200, { success: true, data })
       } catch (error) {
         reply(400, { success: false, code: error instanceof AgentMemoryConflictError ? 'user_profile_conflict' : 'user_profile_storage_failed',

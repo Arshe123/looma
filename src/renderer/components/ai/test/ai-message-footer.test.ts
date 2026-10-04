@@ -27,6 +27,7 @@ vi.mock('@/renderer/stores/ai-assistant', () => ({
     isBuildIndexDisabled: () => false,
     getConversationAgentRun: () => null,
     getMessageAgentDisplayEvents: () => [],
+    getMessageMemoryUpdates: () => [{ id: 'receipt-1', changes: [{ type: 'added', text: '<script>恶意</script>\n偏好中文' }, { type: 'removed', text: '旧偏好' }] }],
   }),
 }))
 vi.mock('../AgentConversationFlow.vue', () => ({ default: { render: () => null } }))
@@ -37,6 +38,19 @@ vi.mock('../AiMarkdown.vue', () => ({ default: { render: () => null } }))
 afterEach(() => { vi.useRealTimers() })
 
 describe('聊天消息底栏', () => {
+  it('adds one collapsed accessible memory notice outside the answer with safely escaped changes', async () => {
+    const html = await renderToString(createSSRApp(AiAssistant))
+    expect(html.match(/记忆已更新/g)).toHaveLength(1)
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).toContain('aria-controls="memory-changes-2"')
+    expect(html).toContain('lucide-brain')
+    expect(html).toContain('偏好中文')
+    expect(html).not.toContain('旧偏好')
+    expect(html).not.toContain('新增')
+    expect(html).not.toContain('移除')
+    expect(html).toContain('&lt;script&gt;恶意&lt;/script&gt;')
+    expect(html).not.toContain('<script>恶意</script>')
+  })
   it('在气泡外为每条消息显示格式化时间，用户复制靠右，Agent 复制靠左，底栏仅悬停可见', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-29T18:00:00'))

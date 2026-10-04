@@ -9,6 +9,7 @@ import {
   failAiTimelineStep,
   formatAiRuntimeError,
 } from '../components/ai/aiTimeline'
+import { foldAgentState, orderAgentEvents } from '../../shared/utils/agent-event-projections'
 import { isArtifactBackedFilePatchBridgeInterruption, projectAgentDisplayEvents, projectAgentRunView } from './agent-event-view'
 import {
   flattenAgentHistoryForSummary,
@@ -86,6 +87,7 @@ export type PendingFileReviewState = AgentPendingFileReview & {
 }
 
 type AgentStreamEventData =
+  | { requestId: string; type: 'memory_updated'; runId: string }
   | { requestId: string; type: 'run_started'; runId: string; startedAt: string }
   | { requestId: string; type: 'timeline'; runId: string; step: number; stepId: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; summary: string }
   | { requestId: string; type: 'tool_call'; runId: string; step: number; stepId: string; callId: string; tool: AgentToolName; arguments: Record<string, unknown>; thought_summary: string }
@@ -274,6 +276,19 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       if (cached) return cached
       return { recoverable: true, checkpointAvailable: false, reason: '将从已确认的事件和消息继续。' }
     },
+    getMessageMemoryUpdates: (state) => (conversationId: string | null | undefined, messageId: number, runId?: string) => {
+      if (!conversationId || !runId) return []
+      const events = (state.agentEventsByMessageKey[getAgentDisplayMessageKey(conversationId, messageId)] || [])
+        .filter(event => event.runId === runId)
+      if (!['completed', 'failed', 'cancelled'].includes(foldAgentState(events).status)) return []
+      const seen = new Set<string>()
+      return orderAgentEvents(events).flatMap(event => {
+        if (event.type !== 'memory_updated' || seen.has(event.id) || !event.payload.changes.length
+          || event.payload.beforeRevision === event.payload.afterRevision) return []
+        seen.add(event.id)
+        return [{ id: event.id, changes: event.payload.changes }]
+      })
+    },
     getMessageAgentDisplayEvents: (state) => (conversationId: string | null | undefined, messageId: number | undefined) => {
       if (!conversationId || messageId === undefined) return []
       const key = getAgentDisplayMessageKey(conversationId, messageId)
@@ -306,7 +321,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       return this.pendingFileReviewsByWorkspaceId[workspaceId]
     },
 
-    appendCanonicalAgentFacts(run: AgentConversationRunState, payload: AgentStreamEventPayload) {
+    appendCanonicalAgentFacts(run: Pick<AgentConversationRunState, 'conversationId' | 'assistantMessageId' | 'runId'>, payload: AgentStreamEventPayload) {
       const key = getAgentDisplayMessageKey(run.conversationId, run.assistantMessageId)
       const existingEvents = this.agentEventsByMessageKey[key] || []
       const knownEventIds = new Set(existingEvents.map((event) => event.id))
@@ -744,6 +759,27 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     },
 
     handleAgentStreamEvent(payload: AgentStreamEventPayload) {
+      if (payload.type === 'memory_updated') {
+        // Main may finish an already-started save after the request was cancelled.
+        // Route by its original run, never the newest turn in the conversation.
+        const owner = Object.values(this.agentRunsByConversationId).find(run => (
+          run.requestId === payload.requestId && (!run.runId || run.runId === payload.runId)
+        ))
+        if (owner) {
+          owner.runId = payload.runId
+          this.appendCanonicalAgentFacts(owner, payload)
+          this.syncAgentProjection(owner)
+        } else {
+          for (const conversation of useWorkspaceStore().aiAssistant.conversations) {
+            const message = conversation.messages.find(item => item.role === 'assistant' && item.runId === payload.runId)
+            if (message) {
+              this.appendCanonicalAgentFacts({ conversationId: conversation.id, assistantMessageId: message.id, runId: payload.runId }, payload)
+              break
+            }
+          }
+        }
+        return
+      }
       const conversationId = this.agentRequestIdToConversationId[payload.requestId]
       if (!conversationId) return
       const run = this.agentRunsByConversationId[conversationId]

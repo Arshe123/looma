@@ -12,7 +12,8 @@ it('persists through the main store and requires a fresh read before a versioned
   cleanup.push(() => fs.rm(root, { recursive: true, force: true }))
   const store = new AgentMemoryStore(root)
   const snapshot = await store.snapshot('w', 'old')
-  const bridge = await openUserProfileBridge(store, 'run_a')
+  const updated = vi.fn()
+  const bridge = await openUserProfileBridge(store, 'run_a', undefined, undefined, updated)
   cleanup.push(bridge.close)
   const call = async (tool: string, args = {}, token = bridge.config.token, runId = 'run_a') => {
     const response = await fetch(bridge.config.url, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ runId, tool, arguments: args }) })
@@ -23,8 +24,13 @@ it('persists through the main store and requires a fresh read before a versioned
   expect((await call('user_profile_update', { content: '中文', expectedRevision: snapshot.user.revision })).body.success).toBe(false)
   const read = (await call('user_profile_read')).body.data
   expect(read).toEqual(snapshot.user)
+  expect(updated).not.toHaveBeenCalled()
   const update = await call('user_profile_update', { content: '中文', expectedRevision: read.revision })
   expect(update.body.success).toBe(true)
+  expect(updated).toHaveBeenCalledWith({ kind: 'user', beforeRevision: read.revision, afterRevision: update.body.data.revision, changes: [{ type: 'added', text: '中文' }] })
+  await call('user_profile_read')
+  expect((await call('user_profile_update', { content: '中文', expectedRevision: update.body.data.revision })).body.success).toBe(true)
+  expect(updated).toHaveBeenCalledTimes(1)
   expect(await new AgentMemoryStore(root).read('user')).toEqual(update.body.data)
   expect(await store.snapshot('w', 'old')).toEqual(snapshot)
   expect((await store.snapshot('w', 'new')).user.content).toBe('中文')
@@ -35,6 +41,7 @@ it('persists through the main store and requires a fresh read before a versioned
   expect((await call('user_profile_update', { kind: 'soul', content: 'bad', expectedRevision: read.revision })).body.success).toBe(false)
   expect((await call('file_patch', { path: '../soul.md' })).body.success).toBe(false)
   expect(await store.read('soul')).toEqual(snapshot.soul)
+  expect(updated).toHaveBeenCalledTimes(1)
 })
 
 it('allows only one competing run to commit the same revision', async () => {
@@ -116,6 +123,44 @@ it('does not begin saving when authorization is revoked during the preflight rea
   expect(await new AgentMemoryStore(root).read('user')).toEqual(initial)
 })
 
+it('records a save that finishes after cancellation and records later clearing as a deletion', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-receipt-cancel-'))
+  cleanup.push(() => fs.rm(root, { recursive: true, force: true }))
+  const store = new AgentMemoryStore(root)
+  const controller = new AbortController()
+  const updated = vi.fn()
+  const bridge = await openUserProfileBridge(store, 'run_a', controller.signal, undefined, updated)
+  cleanup.push(bridge.close)
+  const call = async (tool: string, args = {}) => (await fetch(bridge.config.url, { method: 'POST', headers: { Authorization: `Bearer ${bridge.config.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: 'run_a', tool, arguments: args }) })).json()
+  const read = await call('user_profile_read')
+  const save = store.save.bind(store)
+  let release!: () => void
+  let entered!: () => void
+  const waiting = new Promise<void>(resolve => { entered = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  vi.spyOn(store, 'save').mockImplementationOnce(async (...args) => {
+    const saved = await save(...args)
+    entered(); await gate
+    return saved
+  })
+  const pending = call('user_profile_update', { content: '中文\n🙂', expectedRevision: read.data.revision }).catch(() => undefined)
+  await waiting
+  controller.abort()
+  release()
+  await pending
+  await bridge.close()
+  expect(updated).toHaveBeenCalledTimes(1)
+  expect(updated.mock.calls[0][0].changes).toEqual([{ type: 'added', text: '中文\n🙂' }])
+  expect((await new AgentMemoryStore(root).read('user')).content).toBe('中文\n🙂')
+  const next = await openUserProfileBridge(store, 'run_b', undefined, undefined, updated)
+  cleanup.push(next.close)
+  const nextCall = async (tool: string, args = {}) => (await fetch(next.config.url, { method: 'POST', headers: { Authorization: `Bearer ${next.config.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: 'run_b', tool, arguments: args }) })).json()
+  const latest = await nextCall('user_profile_read')
+  expect((await nextCall('user_profile_update', { content: '', expectedRevision: latest.data.revision })).success).toBe(true)
+  expect(updated).toHaveBeenCalledTimes(2)
+  expect(updated.mock.calls[1][0].changes).toEqual([{ type: 'removed', text: '中文\n🙂' }])
+})
+
 it('reports failed persistence without replacing the committed profile or leaking paths', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-failure-'))
   cleanup.push(() => fs.rm(root, { recursive: true, force: true }))
@@ -123,12 +168,14 @@ it('reports failed persistence without replacing the committed profile or leakin
   const initial = await store.read('user')
   const saved = await store.save('user', '保留', initial.revision)
   const failing = new AgentMemoryStore(root, { rename: async () => { throw new Error(`secret path ${root}`) } })
-  const bridge = await openUserProfileBridge(failing, 'run_a')
+  const updated = vi.fn()
+  const bridge = await openUserProfileBridge(failing, 'run_a', undefined, undefined, updated)
   cleanup.push(bridge.close)
   const call = async (tool: string, args = {}) => (await fetch(bridge.config.url, { method: 'POST', headers: { Authorization: `Bearer ${bridge.config.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: 'run_a', tool, arguments: args }) })).json()
   await call('user_profile_read')
   const failure = await call('user_profile_update', { content: 'new', expectedRevision: saved.revision })
   expect(failure.success).toBe(false)
+  expect(updated).not.toHaveBeenCalled()
   expect(failure.code).toBe('user_profile_storage_failed')
   expect(JSON.stringify(failure)).not.toContain(root)
   expect(await store.read('user')).toEqual(saved)

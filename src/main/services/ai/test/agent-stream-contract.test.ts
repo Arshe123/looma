@@ -6,6 +6,12 @@ import {
   type AgentStreamEvent,
 } from '../AIService'
 
+it('rejects runtime-provided memory receipts, even when they claim a successful save', () => {
+  expect(isAgentStreamEvent({ type: 'memory_updated', runId: 'run_1', change: {
+    kind: 'user', beforeRevision: 'a'.repeat(64), afterRevision: 'b'.repeat(64), changes: [{ type: 'added', text: 'fabricated' }],
+  } })).toBe(false)
+})
+
 const encoder = new TextEncoder()
 
 const ndjsonResponse = (lines: unknown[], init: ResponseInit = {}) => new Response(

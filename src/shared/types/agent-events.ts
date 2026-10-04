@@ -167,7 +167,15 @@ export interface FilePatchFailedPayload {
   message: string
 }
 
+export interface MemoryUpdatedPayload {
+  kind: 'user'
+  beforeRevision: string
+  afterRevision: string
+  changes: Array<{ type: 'added' | 'removed'; text: string }>
+}
+
 export type ArtifactEvent = AgentEventBase & (
+  | { family: 'artifact'; type: 'memory_updated'; payload: MemoryUpdatedPayload }
   | { family: 'artifact'; type: 'artifact_created'; payload: ArtifactCreatedPayload }
   | { family: 'artifact'; type: 'approval_required'; payload: ApprovalRequiredPayload }
   | { family: 'artifact'; type: 'approval_resolved'; payload: ApprovalResolvedPayload }

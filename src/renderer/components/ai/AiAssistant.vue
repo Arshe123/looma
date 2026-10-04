@@ -6,6 +6,7 @@ import { useSettingsStore } from '@/renderer/stores/settings'
 import { useAiAssistantStore } from '@/renderer/stores/ai-assistant'
 import { normalizeAiAssistantSourcePath } from '@/renderer/stores/workspace-ai-utils'
 import type { AiAssistantMessage, AiAssistantMessageAction } from '@/renderer/stores/workspace'
+import AgentMemoryUpdateNotice from './AgentMemoryUpdateNotice.vue'
 import AiMarkdown from './AiMarkdown.vue'
 import AgentConversationFlow from './AgentConversationFlow.vue'
 import AgentFileReviewFloat from './AgentFileReviewFloat.vue'
@@ -588,6 +589,12 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
                 {{ isIndexing && action.type === BUILD_INDEX_ACTION_TYPE ? '正在建立索引...' : action.buttonText }}
               </button>
             </div>
+            <AgentMemoryUpdateNotice
+              v-if="message.role === 'assistant'"
+              :message-id="message.id"
+              :completed="!isMessageStreaming(message)"
+              :updates="aiAssistStore.getMessageMemoryUpdates(activeConversationId, message.id, message.runId)"
+            />
             <div
               class="message-footer invisible mx-auto mt-2 flex min-h-6 max-w-[760px] flex-wrap items-center gap-2 px-1 text-[11px] text-text-muted group-hover/message:visible"
               :class="message.role === 'user' ? 'justify-end' : 'justify-start'"

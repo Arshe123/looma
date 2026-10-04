@@ -46,6 +46,24 @@ const sender = (id: number) => ({
 })
 
 describe('Agent approval IPC trusted boundary', () => {
+  it.each(['completed', 'failed', 'cancelled'])('persists memory receipts on the owning %s run and restores history', async terminal => {
+    const owner = sender(101)
+    const started = await state.handlers.get('agent:runStream:start')!({ sender: owner }, 'memory-receipt', 'workspace-1', { input: 'hi', conversationId: 'chat' })
+    const emit = state.streamEvent!
+    const runId = started.data.runId
+    if (terminal === 'cancelled') await state.handlers.get('agent:runStream:cancel')!({ sender: owner }, 'memory-receipt')
+    const change = { kind: 'user', beforeRevision: sha(''), afterRevision: sha('中文'), changes: [{ type: 'added', text: '中文' }] }
+    await emit({ type: 'memory_updated', runId, change })
+    if (terminal === 'completed') await emit({ type: 'done', runId, status: 'completed', answer: '完成' })
+    if (terminal === 'failed') await emit({ type: 'error', runId, error: { code: 'test', message: 'failed', retryable: true } })
+    const { AgentLedgerStore } = await import('../../services/agent/AgentLedgerStore')
+    const restored = await new AgentLedgerStore(path.join(state.workspacePath, '.looma', 'agent-ledger')).materialize()
+    expect(restored.events.filter(event => event.type === 'memory_updated')).toEqual([
+      expect.objectContaining({ runId, family: 'artifact', payload: change }),
+    ])
+    expect(owner.send.mock.calls.some(([, data]) => data.agentEvents?.some((event: any) => event.type === 'memory_updated'))).toBe(true)
+  })
+
   it('reports memory filesystem failures in Chinese without exposing local paths', async () => {
     await fs.mkdir(path.join(state.workspacePath, 'app-data', 'user.md'), { recursive: true })
     const result = await state.handlers.get('agentMemory:save')!({}, 'user', '偏好中文', 'old')

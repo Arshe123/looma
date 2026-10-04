@@ -28,6 +28,7 @@ class UserProfileTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[-1]['result']['modelContext']['structuredData']['content'], 'new')
 
     def test_prompt_authorizes_only_durable_user_profile_updates(self):
+        self.assertIn('仅当 user_profile_update 工具可用且设置允许时', AGENT_SYSTEM_PROMPT)
         self.assertIn('user_profile_read', AGENT_SYSTEM_PROMPT)
         self.assertIn('user_profile_update', AGENT_SYSTEM_PROMPT)
         for rule in ('不得自行修改 soul.md', '任务进度', '秘密', '明确提供', '工具结果'):

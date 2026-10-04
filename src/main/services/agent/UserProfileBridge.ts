@@ -1,14 +1,15 @@
 import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
-import { AgentMemoryConflictError, AgentMemoryError, AgentMemoryStore } from './AgentMemoryStore'
+import { AgentMemoryAuthorizationError, AgentMemoryConflictError, AgentMemoryError, AgentMemoryStore } from './AgentMemoryStore'
 import { MAX_MEMORY_CHARS } from '../../../shared/types/agent-memory'
 import type { MemoryUpdatedPayload } from '../../../shared/types/agent-events'
 import { diffMemoryLines } from '../../../shared/utils/agent-memory-changes'
 
 /** Run-local capability, never a workspace path or model-visible tool argument. */
-export async function openUserProfileBridge(store: AgentMemoryStore, runId: string, signal?: AbortSignal, enabledTools: readonly string[] = ['user_profile_read', 'user_profile_update'], onUpdated?: (change: MemoryUpdatedPayload) => Promise<unknown>) {
+export async function openUserProfileBridge(store: AgentMemoryStore, runId: string, signal?: AbortSignal, enabledTools: readonly string[] = ['user_profile_read', 'user_profile_update'], onUpdated?: (change: MemoryUpdatedPayload) => Promise<unknown>, canUpdate: () => boolean = () => false) {
   const token = randomBytes(32).toString('hex')
   let closed = false
+  const authorized = () => !closed && !signal?.aborted && canUpdate()
   let readRevision: string | undefined
   let queue: Promise<unknown> = Promise.resolve()
   const server = createServer((request, response) => {
@@ -56,17 +57,18 @@ export async function openUserProfileBridge(store: AgentMemoryStore, runId: stri
         if (readRevision !== input.expectedRevision) {
           reply(409, { success: false, code: 'user_profile_read_required', error: '请先读取最新用户画像，再保留无关内容进行更新。' }); return
         }
+        if (!authorized()) throw new AgentMemoryAuthorizationError('自动维护用户画像已关闭或运行授权已失效。')
         readRevision = undefined
         const current = await store.read('user')
         // Cancellation may arrive while the preflight disk read is pending.
         // Do not begin a new save after the run capability has been revoked.
-        if (closed || signal?.aborted) {
+        if (!authorized()) {
           reply(403, { success: false, code: 'user_profile_denied', error: '用户画像运行授权已失效。' }); return
         }
         if (current.revision !== input.expectedRevision) {
           reply(409, { success: false, code: 'user_profile_conflict', error: '用户画像已更新，请重新读取并合并后重试。' }); return
         }
-        const data = await store.save('user', input.content, input.expectedRevision)
+        const data = await store.save('user', input.content, input.expectedRevision, authorized)
         if (data.revision !== current.revision) {
           // A main-owned, confirmed CAS receipt, independent of model/tool claims.
           // Finish recording even if cancellation arrives during the disk write.
@@ -75,6 +77,9 @@ export async function openUserProfileBridge(store: AgentMemoryStore, runId: stri
         }
         reply(200, { success: true, data })
       } catch (error) {
+        if (error instanceof AgentMemoryAuthorizationError) {
+          reply(403, { success: false, code: 'user_profile_denied', error: error.message }); return
+        }
         reply(400, { success: false, code: error instanceof AgentMemoryConflictError ? 'user_profile_conflict' : 'user_profile_storage_failed',
           error: error instanceof AgentMemoryConflictError ? error.message : '用户画像读写失败，无法确认保存；请重新读取后重试。' })
       }

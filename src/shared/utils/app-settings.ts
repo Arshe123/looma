@@ -35,6 +35,9 @@ export type ChunkingStrategy = 'fixed' | 'markdown' | 'semantic' | 'parent_child
 export type ConversationContextStrategy = 'sliding_window' | 'summary'
 
 export interface AppSettings {
+  memory: {
+    autoMaintainUserProfile: boolean
+  }
   appearance: {
     fontPreset: FontPreset
   }
@@ -191,6 +194,7 @@ const createDefaultAppSettings = (): AppSettings => {
 
   return {
     appearance: { fontPreset: DEFAULT_FONT_PRESET },
+    memory: { autoMaintainUserProfile: true },
     inlineMenu: {
       items: defaultInlineMenuItems(),
       version: INLINE_MENU_VERSION,
@@ -395,6 +399,9 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
   return {
     appearance: {
       fontPreset: normalizeFontPreset(asRecord((value as { appearance?: unknown }).appearance).fontPreset),
+    },
+    memory: {
+      autoMaintainUserProfile: normalizeBoolean(asRecord((value as { memory?: unknown }).memory).autoMaintainUserProfile, true),
     },
     inlineMenu: {
       items: normalizedInlineMenuItems,

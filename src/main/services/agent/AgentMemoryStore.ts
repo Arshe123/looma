@@ -7,6 +7,7 @@ const revision = (content: string) => createHash('sha256').update(content).diges
 const queues = new Map<string, Promise<unknown>>()
 export class AgentMemoryError extends Error {}
 export class AgentMemoryConflictError extends AgentMemoryError {}
+export class AgentMemoryAuthorizationError extends AgentMemoryError {}
 function validateContent(content: unknown): asserts content is string {
   if (typeof content !== 'string' || content.length > MAX_MEMORY_CHARS || content.includes('\0')) throw new AgentMemoryError('记忆内容无效或过长。')
 }
@@ -51,9 +52,12 @@ export class AgentMemoryStore {
     validateContent(content)
     return { content, revision: revision(content) }
   }
-  async save(kind: AgentMemoryKind, content: string, expectedRevision: string): Promise<AgentMemoryDocument> {
+  async save(kind: AgentMemoryKind, content: string, expectedRevision: string, authorize?: () => boolean): Promise<AgentMemoryDocument> {
     return this.locked(async () => {
       const current = await this.read(kind)
+      // Recheck inside the shared queue, after the asynchronous CAS read. From
+      // here the atomic save has started; later revocation cannot roll it back.
+      if (authorize && !authorize()) throw new AgentMemoryAuthorizationError('自动维护用户画像已关闭或运行授权已失效。')
       if (current.revision !== expectedRevision) throw new AgentMemoryConflictError('内容已在其他窗口更新，请重新加载后再保存。')
       validateContent(content)
       await this.atomicWrite(this.file(kind), content)

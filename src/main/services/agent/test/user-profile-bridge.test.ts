@@ -13,7 +13,7 @@ it('persists through the main store and requires a fresh read before a versioned
   const store = new AgentMemoryStore(root)
   const snapshot = await store.snapshot('w', 'old')
   const updated = vi.fn()
-  const bridge = await openUserProfileBridge(store, 'run_a', undefined, undefined, updated)
+  const bridge = await openUserProfileBridge(store, 'run_a', undefined, undefined, updated, () => true)
   cleanup.push(bridge.close)
   const call = async (tool: string, args = {}, token = bridge.config.token, runId = 'run_a') => {
     const response = await fetch(bridge.config.url, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ runId, tool, arguments: args }) })
@@ -47,7 +47,7 @@ it('persists through the main store and requires a fresh read before a versioned
 it('allows only one competing run to commit the same revision', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-race-'))
   cleanup.push(() => fs.rm(root, { recursive: true, force: true }))
-  const bridges = await Promise.all(['run_a', 'run_b'].map(runId => openUserProfileBridge(new AgentMemoryStore(root), runId)))
+  const bridges = await Promise.all(['run_a', 'run_b'].map(runId => openUserProfileBridge(new AgentMemoryStore(root), runId, undefined, undefined, undefined, () => true)))
   cleanup.push(...bridges.map(bridge => bridge.close))
   const call = async (index: number, tool: string, args = {}) => (await fetch(bridges[index].config.url, {
     method: 'POST', headers: { Authorization: `Bearer ${bridges[index].config.token}`, 'Content-Type': 'application/json' },
@@ -103,7 +103,7 @@ it('does not begin saving when authorization is revoked during the preflight rea
   const store = new AgentMemoryStore(root)
   const initial = await store.read('user')
   const controller = new AbortController()
-  const bridge = await openUserProfileBridge(store, 'run_a', controller.signal)
+  const bridge = await openUserProfileBridge(store, 'run_a', controller.signal, undefined, undefined, () => true)
   cleanup.push(bridge.close)
   const call = async (tool: string, args = {}) => fetch(bridge.config.url, { method: 'POST', headers: { Authorization: `Bearer ${bridge.config.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: 'run_a', tool, arguments: args }) })
   await call('user_profile_read')
@@ -129,7 +129,7 @@ it('records a save that finishes after cancellation and records later clearing a
   const store = new AgentMemoryStore(root)
   const controller = new AbortController()
   const updated = vi.fn()
-  const bridge = await openUserProfileBridge(store, 'run_a', controller.signal, undefined, updated)
+  const bridge = await openUserProfileBridge(store, 'run_a', controller.signal, undefined, updated, () => true)
   cleanup.push(bridge.close)
   const call = async (tool: string, args = {}) => (await fetch(bridge.config.url, { method: 'POST', headers: { Authorization: `Bearer ${bridge.config.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: 'run_a', tool, arguments: args }) })).json()
   const read = await call('user_profile_read')
@@ -152,7 +152,7 @@ it('records a save that finishes after cancellation and records later clearing a
   expect(updated).toHaveBeenCalledTimes(1)
   expect(updated.mock.calls[0][0].changes).toEqual([{ type: 'added', text: '中文\n🙂' }])
   expect((await new AgentMemoryStore(root).read('user')).content).toBe('中文\n🙂')
-  const next = await openUserProfileBridge(store, 'run_b', undefined, undefined, updated)
+  const next = await openUserProfileBridge(store, 'run_b', undefined, undefined, updated, () => true)
   cleanup.push(next.close)
   const nextCall = async (tool: string, args = {}) => (await fetch(next.config.url, { method: 'POST', headers: { Authorization: `Bearer ${next.config.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: 'run_b', tool, arguments: args }) })).json()
   const latest = await nextCall('user_profile_read')
@@ -169,7 +169,7 @@ it('reports failed persistence without replacing the committed profile or leakin
   const saved = await store.save('user', '保留', initial.revision)
   const failing = new AgentMemoryStore(root, { rename: async () => { throw new Error(`secret path ${root}`) } })
   const updated = vi.fn()
-  const bridge = await openUserProfileBridge(failing, 'run_a', undefined, undefined, updated)
+  const bridge = await openUserProfileBridge(failing, 'run_a', undefined, undefined, updated, () => true)
   cleanup.push(bridge.close)
   const call = async (tool: string, args = {}) => (await fetch(bridge.config.url, { method: 'POST', headers: { Authorization: `Bearer ${bridge.config.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: 'run_a', tool, arguments: args }) })).json()
   await call('user_profile_read')

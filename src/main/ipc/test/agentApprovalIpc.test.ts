@@ -3,12 +3,15 @@ import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import { createHash } from 'crypto'
+import { createAppSettingsService } from '../../services/app/appSettingsService'
+import { normalizeAppSettings } from '../../../shared/utils/app-settings'
 
 const state = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => any>(),
   workspacePath: '',
   streamEvent: null as null | ((event: any) => Promise<void>),
   streamAgent: vi.fn(),
+  settings: null as ReturnType<typeof createAppSettingsService> | null,
 }))
 
 vi.mock('electron', () => ({
@@ -22,6 +25,10 @@ vi.mock('electron', () => ({
 vi.mock('../workspaceIpc', () => ({
   getWorkspacePathById: vi.fn(async () => state.workspacePath),
 }))
+vi.mock('../appSettingsIpc', () => ({ appSettingsService: {
+  getSettings: () => state.settings!.getSettings(),
+  canAutoMaintainUserProfile: () => state.settings!.canAutoMaintainUserProfile(),
+} }))
 
 vi.mock('../../services/ai/AIService', () => ({
   aiService: {
@@ -46,6 +53,24 @@ const sender = (id: number) => ({
 })
 
 describe('Agent approval IPC trusted boundary', () => {
+  it('supplies live main authorization on start and resume, ignoring renderer flags and callbacks', async () => {
+    const owner = sender(101)
+    await state.settings!.setSettings(normalizeAppSettings({ memory: { autoMaintainUserProfile: false } }))
+    const started = await state.handlers.get('agent:runStream:start')!({ sender: owner }, 'toggle', 'workspace-1', {
+      input: 'hello', conversationId: 'chat', canUpdateUserProfile: () => true, autoMaintainUserProfile: true, enabledTools: ['user_profile_update'],
+    })
+    expect(started.success).toBe(true)
+    const options = state.streamAgent.mock.calls[0][1]
+    expect(options.canUpdateUserProfile()).toBe(false)
+    await state.settings!.setSettings(normalizeAppSettings({}))
+    expect(options.canUpdateUserProfile()).toBe(true)
+    await state.streamEvent!({ type: 'error', runId: started.data.runId, error: { code: 'test', message: 'failure', retryable: true } })
+    abortAllAgentRuns()
+    await state.settings!.setSettings(normalizeAppSettings({ memory: { autoMaintainUserProfile: false } }))
+    const resumed = await state.handlers.get('agent:runStream:resume')!({ sender: owner }, 'resume', 'workspace-1', started.data.runId)
+    expect(resumed.success).toBe(true)
+    expect(state.streamAgent.mock.calls[1][1].canUpdateUserProfile()).toBe(false)
+  })
   it.each(['completed', 'failed', 'cancelled'])('persists memory receipts on the owning %s run and restores history', async terminal => {
     const owner = sender(101)
     const started = await state.handlers.get('agent:runStream:start')!({ sender: owner }, 'memory-receipt', 'workspace-1', { input: 'hi', conversationId: 'chat' })
@@ -119,6 +144,7 @@ describe('Agent approval IPC trusted boundary', () => {
   })
   beforeEach(async () => {
     state.workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'looma-agent-ipc-'))
+    state.settings = createAppSettingsService(path.join(state.workspacePath, 'settings.json'))
     await fs.mkdir(path.join(state.workspacePath, 'notes'))
     state.streamEvent = null
     state.streamAgent.mockClear()

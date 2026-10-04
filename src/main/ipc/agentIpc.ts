@@ -15,6 +15,7 @@ import {
   type AgentStreamEvent,
 } from '../services/ai/AIService'
 import { getWorkspacePathById } from './workspaceIpc'
+import { appSettingsService } from './appSettingsIpc'
 
 const MAX_ACTIVE_AGENT_RUNS_PER_SENDER = 4
 const MAX_ACTIVE_AGENT_RUNS_GLOBAL = 32
@@ -893,9 +894,10 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
     return { success: false, error: 'Unable to initialize Agent ledger' }
   }
 
+  await appSettingsService.getSettings()
   void aiService.streamAgent(
     workspacePath,
-    { ...options, taskId, runId, userProfileStore: new AgentMemoryStore(app.getPath('userData')) },
+    { ...options, taskId, runId, userProfileStore: new AgentMemoryStore(app.getPath('userData')), canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
     payload => sendEvent(key, run, requestId, payload),
     controller.signal,
   ).then(async (result) => {
@@ -1047,9 +1049,10 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
     return { success: false, error: 'Unable to persist Agent continuation' }
   }
 
+  await appSettingsService.getSettings()
   void aiService.streamAgent(
     workspacePath,
-    { ...options, userProfileStore: new AgentMemoryStore(app.getPath('userData')) },
+    { ...options, userProfileStore: new AgentMemoryStore(app.getPath('userData')), canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
     payload => sendEvent(key, run, requestId, payload),
     controller.signal,
   ).then(async (result) => {

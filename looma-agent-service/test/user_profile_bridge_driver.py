@@ -20,6 +20,7 @@ async def run():
     request.ai_config = AIConfig(chat=ChatModelConfig(provider=protocol, model='test-model', api_key='test-only'))
     provider = create_chat_provider(request.ai_config.chat)
     rounds = 0
+    can_update = 'user_profile_update' in request.agent.enabled_tools
 
     async def completion(*args, **kwargs):
         nonlocal rounds
@@ -30,7 +31,18 @@ async def run():
         assert 'user_profile_update' in serialized or protocol == 'ollama'
         if protocol == 'ollama':
             names = {tool['function']['name'] for tool in args[1]}
-            assert {'user_profile_read', 'user_profile_update'} <= names
+            assert 'user_profile_read' in names
+            assert ('user_profile_update' in names) == can_update
+        else:
+            schemas = json.loads(messages[0]['content'].split('运行时可用工具 JSON：\n')[-1])
+            assert ('user_profile_update' in {s['name'] for s in schemas}) == can_update
+        if rounds == 1 and not can_update:
+            result = json.loads([m for m in messages if m['role'] == 'tool'][-1]['content'])
+            assert result['success']
+            assert len(result['modelContext']['structuredData']['content']) > 4000
+            if protocol == 'ollama':
+                return {'message': {'content': '仅读取'}, 'done_reason': 'stop'}
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({'type': 'final', 'answer': '仅读取'})), finish_reason='stop')])
         if rounds == 0:
             name, arguments = 'user_profile_read', {}
         elif rounds == 1:
@@ -58,8 +70,8 @@ async def run():
         lines = [line async for line in main.agent_run_events(request)]
     events = [json.loads(line) for line in lines]
     assert events[-1]['type'] == 'done', events[-1]
-    assert events[-1]['answer'] == '已保存', events[-1]
-    assert sum(e['type'] == 'tool_result' for e in events) == 2
+    assert events[-1]['answer'] == ('已保存' if can_update else '仅读取'), events[-1]
+    assert sum(e['type'] == 'tool_result' for e in events) == (2 if can_update else 1)
     assert not any(e['type'] == 'approval_required' for e in events)
     sys.stdout.write(''.join(lines))
 

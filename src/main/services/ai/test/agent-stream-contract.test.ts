@@ -56,12 +56,12 @@ describe('Agent stream contract', () => {
     await aiService.streamAgent('/workspace', { input: 'hi', memory }, () => {})
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).memory).toEqual(memory)
   })
-  it('posts the exact approval-capable default body and forwards valid events', async () => {
+  it('posts the exact approval-capable body with main profile authorization and forwards valid events', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ndjsonResponse(validEvents))
     vi.stubGlobal('fetch', fetchMock)
     const received: AgentStreamEvent[] = []
 
-    const result = await aiService.streamAgent('D:/work/demo', { input: '  总结发布流程  ' }, event => received.push(event))
+    const result = await aiService.streamAgent('D:/work/demo', { input: '  总结发布流程  ', canUpdateUserProfile: () => true }, event => received.push(event))
 
     expect(result).toEqual({ success: true })
     expect(received).toEqual(validEvents)

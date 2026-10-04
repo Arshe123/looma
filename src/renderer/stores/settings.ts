@@ -34,9 +34,11 @@ export const useSettingsStore = defineStore('settings', {
     settings: normalizeAppSettings(defaultAppSettings) as AppSettings,
     isLoaded: false,
     lastError: '',
+    memorySettingsBusy: false,
   }),
 
   getters: {
+    autoMaintainUserProfile: (state) => state.settings.memory.autoMaintainUserProfile,
     fontPreset: (state) => state.settings.appearance.fontPreset,
     inlineMenuItems: (state) => state.settings.inlineMenu.items,
     showLineNumbers: (state) => state.settings.editor.showLineNumbers,
@@ -47,6 +49,22 @@ export const useSettingsStore = defineStore('settings', {
   },
 
   actions: {
+    async setAutoMaintainUserProfile(value: boolean): Promise<boolean> {
+      if (this.memorySettingsBusy) return false
+      this.memorySettingsBusy = true
+      this.lastError = ''
+      try {
+        const next = normalizeAppSettings(this.settings)
+        next.memory.autoMaintainUserProfile = value
+        const result = await window.electronAPI?.appSettings?.set?.(next)
+        if (!result?.success) throw new Error(result?.error || '保存长期记忆设置失败，请重试。')
+        this.settings.memory.autoMaintainUserProfile = value
+        return true
+      } catch (error) {
+        this.lastError = error instanceof Error ? error.message : '保存长期记忆设置失败，请重试。'
+        return false
+      } finally { this.memorySettingsBusy = false }
+    },
     async setFontPreset(preset: FontPreset) {
       this.settings.appearance.fontPreset = normalizeFontPreset(preset)
       await this.persist()
@@ -57,6 +75,7 @@ export const useSettingsStore = defineStore('settings', {
         const result = await window.electronAPI?.appSettings?.get?.()
         if (result?.success && result.data) {
           this.settings = normalizeAppSettings(result.data)
+          this.lastError = ''
         } else {
           this.settings = normalizeAppSettings(defaultAppSettings)
           this.lastError = result?.error ?? ''

@@ -7,6 +7,32 @@ import { AgentMemoryStore } from '../AgentMemoryStore'
 import { aiService, type AgentStreamEvent } from '../../ai/AIService'
 
 const roots: string[] = []
+it('filters update schemas using live main authorization on start and continuation, never snapshot flags', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-tools-policy-'))
+  roots.push(root)
+  const store = new AgentMemoryStore(root)
+  const memory = await store.snapshot('w', 'c')
+  const realFetch = globalThis.fetch
+  let enabled = false
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+    const body = JSON.parse(init.body as string)
+    expect(body.memory).toEqual(memory)
+    expect(body.agent.enabled_tools.includes('user_profile_update')).toBe(enabled)
+    expect(body.agent.enabled_tools).toContain('user_profile_read')
+    const bridge = body.user_profile_bridge
+    const call = async (tool: string, args = {}) => (await realFetch(bridge.url, { method: 'POST', headers: { Authorization: `Bearer ${bridge.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: body.run_id, tool, arguments: args }) })).json()
+    const read = await call('user_profile_read')
+    expect(read.success).toBe(true)
+    const update = await call('user_profile_update', { content: 'new', expectedRevision: read.data.revision })
+    expect(update.success).toBe(enabled)
+    return new Response('')
+  }))
+  for (const parentRunId of [undefined, 'old_run']) {
+    expect(await aiService.streamAgent('/unused', { input: 'hi', memory, parentRunId, recoveryReason: parentRunId ? 'manual_retry' : undefined, userProfileStore: store, canUpdateUserProfile: () => enabled }, () => {})).toEqual({ success: true })
+  }
+  enabled = true
+  expect(await aiService.streamAgent('/unused', { input: 'hi', memory, userProfileStore: store, canUpdateUserProfile: () => enabled }, () => {})).toEqual({ success: true })
+})
 afterEach(async () => {
   vi.unstubAllGlobals()
   await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })))
@@ -64,7 +90,7 @@ it.each(['done', 'error'])('drains an in-flight memory receipt before forwarding
       terminalRead()
     } }))
   }))
-  const pending = aiService.streamAgent('/unused-workspace', { input: 'hi', userProfileStore: store }, event => { events.push(event.type) })
+  const pending = aiService.streamAgent('/unused-workspace', { input: 'hi', userProfileStore: store, canUpdateUserProfile: () => true }, event => { events.push(event.type) })
   await readingTerminal
   // Let the terminal handler advance while the actual save callback is blocked.
   await new Promise(resolve => setTimeout(resolve, 0))
@@ -78,7 +104,7 @@ it.each(['done', 'error'])('drains an in-flight memory receipt before forwarding
 })
 
 for (const protocol of ['ollama', 'openai']) {
-  it(`runs real Python ${protocol} tools through AIService into the durable main store`, async () => {
+  it.each([true, false])(`runs real Python ${protocol} tools through AIService with maintenance=%s`, async enabled => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-e2e-'))
     roots.push(root)
     const store = new AgentMemoryStore(root)
@@ -105,11 +131,18 @@ for (const protocol of ['ollama', 'openai']) {
       return new Response(output, { headers: { 'Content-Type': 'application/x-ndjson' } })
     }))
     const events: AgentStreamEvent[] = []
-    const result = await aiService.streamAgent('/unused-workspace', { input: '我偏好中文，喜欢简洁回答；请删除过时习惯', memory, userProfileStore: store, enabledTools: ['user_profile_read', 'user_profile_update'] }, event => { events.push(event) })
+    const result = await aiService.streamAgent('/unused-workspace', { input: '我偏好中文，喜欢简洁回答；请删除过时习惯', memory, userProfileStore: store, canUpdateUserProfile: () => enabled, enabledTools: ['user_profile_read', 'user_profile_update'] }, event => { events.push(event) })
     expect(result).toEqual({ success: true })
-    expect(events.filter(event => event.type === 'tool_result')).toHaveLength(2)
+    expect(events.filter(event => event.type === 'tool_result')).toHaveLength(enabled ? 2 : 1)
     expect(events.at(-1)?.type).toBe('done')
     const changes = events.filter((event): event is Extract<AgentStreamEvent, { type: 'memory_updated' }> => event.type === 'memory_updated')
+    if (!enabled) {
+      expect(changes).toHaveLength(0)
+      expect((await store.read('user')).content).toBe(content)
+      expect(await store.snapshot('workspace', 'original')).toEqual(memory)
+      await expect(realFetch(bridgeUrl, { method: 'POST' })).rejects.toThrow()
+      return
+    }
     expect(changes).toHaveLength(1)
     expect(changes[0].change.kind).toBe('user')
     const removed = changes[0].change.changes.filter(item => item.type === 'removed').map(item => item.text).join('\n')

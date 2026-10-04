@@ -153,6 +153,8 @@ export interface AgentFileProposalPayload {
 export interface AgentRunOptions {
   /** Main-only capability; never accepted from renderer options. */
   userProfileStore?: AgentMemoryStore
+  /** Main-owned live authorization; IPC must never copy this from renderer input. */
+  canUpdateUserProfile?: () => boolean
   memory?: import('../../../shared/types/agent-memory').AgentMemorySnapshot
   input: string
   history?: RagChatMessage[]
@@ -642,9 +644,11 @@ export const aiService: AIService = {
     signal?: AbortSignal,
   ): Promise<Result<void>> {
     const body = toAgentRequestBody(workspacePath, options)
+    const canUpdate = options.canUpdateUserProfile ?? (() => false)
+    if (!canUpdate()) body.agent.enabled_tools = body.agent.enabled_tools.filter(tool => tool !== 'user_profile_update')
     const bridge = options.userProfileStore
       ? await openUserProfileBridge(options.userProfileStore, body.run_id, signal, body.agent.enabled_tools,
-        async change => onEvent({ type: 'memory_updated', runId: body.run_id, change }))
+        async change => onEvent({ type: 'memory_updated', runId: body.run_id, change }), canUpdate)
       : undefined
     try {
       return await streamNdjson<unknown>(

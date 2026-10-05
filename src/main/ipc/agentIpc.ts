@@ -29,6 +29,19 @@ ipcMain.handle('agentMemory:save', async (_event, kind: 'soul' | 'user', content
   catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '记忆保存失败，请检查文件权限和磁盘空间，重新加载后重试。' } }
 })
 
+ipcMain.handle('agentMemory:history:list', async (_event, cursor?: string) => {
+  try { return { success: true, data: await new AgentMemoryStore(app.getPath('userData')).listUserHistory(cursor) } }
+  catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '历史版本读取失败，请重试。' } }
+})
+ipcMain.handle('agentMemory:history:read', async (_event, id: string) => {
+  try { return { success: true, data: await new AgentMemoryStore(app.getPath('userData')).readUserHistory(id) } }
+  catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '历史版本读取失败，请重试。' } }
+})
+ipcMain.handle('agentMemory:history:restore', async (_event, id: string, revision: string) => {
+  try { return { success: true, data: await new AgentMemoryStore(app.getPath('userData')).restoreUserHistory(id, revision) } }
+  catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '恢复失败，无法确认保存；请重新加载画像后检查。' } }
+})
+
 type ApprovalRequiredStreamEvent = Extract<AgentStreamEvent, { type: 'approval_required' }>
 
 type ActiveAgentRun = {

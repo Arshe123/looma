@@ -53,6 +53,27 @@ const sender = (id: number) => ({
 })
 
 describe('Agent approval IPC trusted boundary', () => {
+  it('lists and restores main-owned history by ID with current CAS even when automatic updates are OFF', async () => {
+    await state.settings!.setSettings(normalizeAppSettings({ memory: { autoMaintainUserProfile: false } }))
+    const read = state.handlers.get('agentMemory:read')!
+    const save = state.handlers.get('agentMemory:save')!
+    const initial = await read({}, 'user')
+    const current = await save({}, 'user', 'current', initial.data.revision, 'agent')
+    const list = state.handlers.get('agentMemory:history:list')!
+    expect(list).toBeTypeOf('function')
+    const history = await list({})
+    expect(history.data.entries[0].source).toBe('manual')
+    const id = history.data.entries[0].id
+    const detail = await state.handlers.get('agentMemory:history:read')!({}, id)
+    expect(detail.data.content).toBe('')
+    const restore = state.handlers.get('agentMemory:history:restore')!
+    expect((await restore({}, id, initial.data.revision)).success).toBe(false)
+    expect((await restore({}, '../user.md', current.data.revision)).error).toContain('标识')
+    expect(await restore({}, id, current.data.revision, 'forged content')).toEqual(initial)
+    expect(await read({}, 'user')).toEqual(initial)
+    await fs.mkdir(path.join(state.workspacePath, 'app-data', 'user-history', 'bad'), { recursive: true })
+    expect((await list({}, '../bad')).success).toBe(false)
+  })
   it('supplies live main authorization on start and resume, ignoring renderer flags and callbacks', async () => {
     const owner = sender(101)
     await state.settings!.setSettings(normalizeAppSettings({ memory: { autoMaintainUserProfile: false } }))

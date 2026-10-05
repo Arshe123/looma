@@ -130,6 +130,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     set: (workspaceId: string, state: unknown) => ipcRenderer.invoke('workspaceAi:set', workspaceId, state),
   },
   agentMemory: {
+    listUserHistory: (cursor?: string) => ipcRenderer.invoke('agentMemory:history:list', cursor),
+    readUserHistory: (id: string) => ipcRenderer.invoke('agentMemory:history:read', id),
+    restoreUserHistory: (id: string, revision: string) => ipcRenderer.invoke('agentMemory:history:restore', id, revision),
     read: (kind: 'soul' | 'user') => ipcRenderer.invoke('agentMemory:read', kind),
     save: (kind: 'soul' | 'user', content: string, revision: string) => ipcRenderer.invoke('agentMemory:save', kind, content, revision),
   },

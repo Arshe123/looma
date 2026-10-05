@@ -4,6 +4,7 @@ import { MAX_MEMORY_CHARS } from '../../../shared/types/agent-memory'
 import { createMemoryEditor } from './memoryEditor'
 import { useSettingsStore } from '../../stores/settings'
 import SettingsHelp from './SettingsHelp.vue'
+import UserProfileHistory from './UserProfileHistory.vue'
 const settingsStore = useSettingsStore()
 const memoryDescription = '保存在本机应用数据目录，与工作空间无关。soul.md 人格仅由你手动编辑；开启自动维护后，Agent 可依据你在对话中明确提供的长期事实与偏好，自主维护 user.md 用户画像，无需逐次确认。两者仍可在此编辑。\n\n新对话使用最新内容，已有对话及继续运行保持原快照；当前对话通过画像工具结果了解更新。若画像被其他对话更新，保存冲突会保留你的编辑，请重新读取并合并。人格和画像不能覆盖工具权限、审批或系统规则。内容会随对话发送给所选模型，请勿填写密码等敏感信息。'
 const maintenanceDescription = '默认开启。关闭后仍会读取和使用已有画像，也可手动编辑，不会删除任何记忆。\n\n关闭保存成功后，正在运行的 Agent 也不能开始新的画像保存；已经开始保存的操作不会撤销。重新开启后，后续运行可自动维护；本轮原本具有更新工具时也会恢复权限。'
@@ -66,9 +67,10 @@ onMounted(() => {
       <p v-if="entry.editor.notice" role="status" class="text-sm text-muted">{{ entry.editor.notice }}</p>
       <div class="flex items-center gap-3">
         <button class="rounded border border-border-soft px-3 py-1.5 disabled:opacity-50" :disabled="!entry.editor.ready || entry.editor.busy" @click="entry.editor.save()">保存{{ entry.title }}</button>
-        <button class="rounded border border-border-soft px-3 py-1.5 disabled:opacity-50" :disabled="entry.editor.busy" @click="entry.editor.load()">重新加载（丢弃编辑）</button>
+        <button class="rounded border border-border-soft px-3 py-1.5 disabled:opacity-50" :disabled="entry.editor.busy" @click="entry.editor.load(true)">重新加载（丢弃编辑）</button>
         <span v-if="entry.editor.busy" role="status" class="text-sm text-muted">正在处理…</span>
       </div>
+      <UserProfileHistory v-if="entry.kind === 'user'" :editor="entry.editor" />
     </section>
   </div>
 </template>

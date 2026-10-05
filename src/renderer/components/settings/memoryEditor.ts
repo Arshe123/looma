@@ -7,9 +7,13 @@ export interface MemoryAPI {
 }
 export function createMemoryEditor(kind: AgentMemoryKind, api: MemoryAPI) {
   const state = reactive({
-    content: '', revision: '', ready: false, busy: false, error: '', notice: '',
-    async load() {
+    content: '', baseContent: '', revision: '', ready: false, busy: false, error: '', notice: '',
+    async load(discardEdits = false) {
       if (state.busy) return
+      if (!discardEdits && state.content !== state.baseContent) {
+        state.error = '有未保存的编辑，请先保存，或选择重新加载（丢弃编辑）。'
+        return
+      }
       state.busy = true
       state.ready = false
       state.error = ''; state.notice = ''
@@ -17,6 +21,7 @@ export function createMemoryEditor(kind: AgentMemoryKind, api: MemoryAPI) {
         const result = await api.read(kind)
         if (!result.success || !result.data) throw new Error(result.error || '读取失败，请重试。')
         state.content = result.data.content
+        state.baseContent = result.data.content
         state.revision = result.data.revision
         state.ready = true
       } catch (error) { state.error = error instanceof Error ? error.message : '读取失败，请重试。' }
@@ -31,6 +36,7 @@ export function createMemoryEditor(kind: AgentMemoryKind, api: MemoryAPI) {
         if (!result.success || !result.data) throw new Error(result.error || '保存失败，请重试。')
         state.revision = result.data.revision
         state.notice = '已保存，将在新对话中生效。'
+        state.baseContent = result.data.content
       } catch (error) { state.error = error instanceof Error ? error.message : '保存失败，请重试。' }
       finally { state.busy = false }
     },

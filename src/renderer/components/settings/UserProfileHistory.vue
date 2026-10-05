@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 import type { createMemoryEditor } from './memoryEditor'
 import { createUserProfileHistory } from './userProfileHistory'
 import SettingsHelp from './SettingsHelp.vue'
@@ -18,10 +18,7 @@ async function restorePrevious() {
   await history.select(previous.value.id)
   history.requestRestore()
 }
-watch(() => props.editor.revision, () => {
-  history.confirming = false
-  if (open.value && !history.busy) void history.load()
-})
+onUnmounted(() => history.dispose())
 </script>
 
 <template>

@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { AgentMemoryAuthorizationError, AgentMemoryConflictError, AgentMemoryError, AgentMemoryStore } from './AgentMemoryStore'
 import { MAX_MEMORY_CHARS } from '../../../shared/types/agent-memory'
 import type { MemoryUpdatedPayload } from '../../../shared/types/agent-events'
-import { diffMemoryLines } from '../../../shared/utils/agent-memory-changes'
+import { createMemoryRunDelta } from '../../../shared/utils/agent-memory-net'
 
 /** Run-local capability, never a workspace path or model-visible tool argument. */
 export async function openUserProfileBridge(store: AgentMemoryStore, runId: string, signal?: AbortSignal, enabledTools: readonly string[] = ['user_profile_read', 'user_profile_update'], onUpdated?: (change: MemoryUpdatedPayload) => Promise<unknown>, canUpdate: () => boolean = () => false) {
@@ -11,6 +11,7 @@ export async function openUserProfileBridge(store: AgentMemoryStore, runId: stri
   let closed = false
   const authorized = () => !closed && !signal?.aborted && canUpdate()
   let readRevision: string | undefined
+  const delta = createMemoryRunDelta()
   let queue: Promise<unknown> = Promise.resolve()
   const server = createServer((request, response) => {
     const reply = (status: number, body: unknown) => {
@@ -72,8 +73,7 @@ export async function openUserProfileBridge(store: AgentMemoryStore, runId: stri
         if (data.revision !== current.revision) {
           // A main-owned, confirmed CAS receipt, independent of model/tool claims.
           // Finish recording even if cancellation arrives during the disk write.
-          await onUpdated?.({ kind: 'user', beforeRevision: current.revision, afterRevision: data.revision,
-            changes: diffMemoryLines(current.content, data.content) })
+          await onUpdated?.(delta.record(current, data))
         }
         reply(200, { success: true, data })
       } catch (error) {

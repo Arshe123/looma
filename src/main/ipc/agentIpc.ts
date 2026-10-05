@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
-import { app, ipcMain, type WebContents } from 'electron'
+import { app, BrowserWindow, ipcMain, type WebContents } from 'electron'
 import { AgentMemoryError, AgentMemoryStore } from '../services/agent/AgentMemoryStore'
 import type { AgentEvent, AgentPendingFileReview, AgentSource, FilePatchArtifact, JsonValue } from '../../shared/types/agent-events'
 import type { AgentMessage } from '../../shared/types/agent-message'
@@ -20,25 +20,42 @@ import { appSettingsService } from './appSettingsIpc'
 const MAX_ACTIVE_AGENT_RUNS_PER_SENDER = 4
 const MAX_ACTIVE_AGENT_RUNS_GLOBAL = 32
 
+let observedMemoryRoot = ''
+let stopMemoryObservation: (() => void) | undefined
+function memoryStore() {
+  const root = app.getPath('userData')
+  if (root !== observedMemoryRoot) {
+    stopMemoryObservation?.()
+    observedMemoryRoot = root
+    stopMemoryObservation = AgentMemoryStore.subscribe(root, invalidation => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        try { if (!window.webContents.isDestroyed()) window.webContents.send('agentMemory:changed', invalidation) }
+        catch { /* A window can close while broadcasting. */ }
+      }
+    })
+  }
+  return new AgentMemoryStore(root)
+}
+
 ipcMain.handle('agentMemory:read', async (_event, kind: 'soul' | 'user') => {
-  try { return { success: true, data: await new AgentMemoryStore(app.getPath('userData')).read(kind) } }
+  try { return { success: true, data: await memoryStore().read(kind) } }
   catch { return { success: false, error: '记忆读取失败，请检查本机文件后重试。' } }
 })
 ipcMain.handle('agentMemory:save', async (_event, kind: 'soul' | 'user', content: string, revision: string) => {
-  try { return { success: true, data: await new AgentMemoryStore(app.getPath('userData')).save(kind, content, revision) } }
+  try { return { success: true, data: await memoryStore().save(kind, content, revision) } }
   catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '记忆保存失败，请检查文件权限和磁盘空间，重新加载后重试。' } }
 })
 
 ipcMain.handle('agentMemory:history:list', async (_event, cursor?: string) => {
-  try { return { success: true, data: await new AgentMemoryStore(app.getPath('userData')).listUserHistory(cursor) } }
+  try { return { success: true, data: await memoryStore().listUserHistory(cursor) } }
   catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '历史版本读取失败，请重试。' } }
 })
 ipcMain.handle('agentMemory:history:read', async (_event, id: string) => {
-  try { return { success: true, data: await new AgentMemoryStore(app.getPath('userData')).readUserHistory(id) } }
+  try { return { success: true, data: await memoryStore().readUserHistory(id) } }
   catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '历史版本读取失败，请重试。' } }
 })
 ipcMain.handle('agentMemory:history:restore', async (_event, id: string, revision: string) => {
-  try { return { success: true, data: await new AgentMemoryStore(app.getPath('userData')).restoreUserHistory(id, revision) } }
+  try { return { success: true, data: await memoryStore().restoreUserHistory(id, revision) } }
   catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '恢复失败，无法确认保存；请重新加载画像后检查。' } }
 })
 
@@ -855,7 +872,7 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
   }
   run.workspacePath = workspacePath
   try {
-    options.memory = await new AgentMemoryStore(app.getPath('userData')).snapshot(workspaceId, conversationId)
+    options.memory = await memoryStore().snapshot(workspaceId, conversationId)
   } catch {
     cleanupRun(key, run)
     return { success: false, error: '长期记忆快照读取或保存失败，请检查设置和本机文件后重试。' }
@@ -910,7 +927,7 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
   await appSettingsService.getSettings()
   void aiService.streamAgent(
     workspacePath,
-    { ...options, taskId, runId, userProfileStore: new AgentMemoryStore(app.getPath('userData')), canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
+    { ...options, taskId, runId, userProfileStore: memoryStore(), canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
     payload => sendEvent(key, run, requestId, payload),
     controller.signal,
   ).then(async (result) => {
@@ -988,7 +1005,7 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
       runId,
       parentRunId,
       recoveryReason: 'manual_retry',
-      memory: await new AgentMemoryStore(app.getPath('userData')).snapshot(workspaceId, parentRun.conversationId, true),
+      memory: await memoryStore().snapshot(workspaceId, parentRun.conversationId, true),
     })
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unable to rebuild Agent continuation context' }
@@ -1065,7 +1082,7 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
   await appSettingsService.getSettings()
   void aiService.streamAgent(
     workspacePath,
-    { ...options, userProfileStore: new AgentMemoryStore(app.getPath('userData')), canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
+    { ...options, userProfileStore: memoryStore(), canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
     payload => sendEvent(key, run, requestId, payload),
     controller.signal,
   ).then(async (result) => {

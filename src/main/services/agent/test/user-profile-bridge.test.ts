@@ -4,8 +4,45 @@ import os from 'node:os'
 import path from 'node:path'
 import { AgentMemoryStore } from '../AgentMemoryStore'
 import { openUserProfileBridge } from '../UserProfileBridge'
+import { AgentLedgerStore } from '../AgentLedgerStore'
+import { projectMemoryUpdates } from '../../../../shared/utils/agent-memory-net'
+import type { AgentEvent } from '../../../../shared/types/agent-events'
 
 const cleanup: Array<() => Promise<unknown>> = []
+it('persists exact multi-save net receipts and replays after store/ledger restart across competing writes', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-net-ledger-'))
+  cleanup.push(() => fs.rm(root, { recursive: true, force: true }))
+  const store = new AgentMemoryStore(root)
+  const ledger = new AgentLedgerStore(path.join(root, 'ledger'))
+  const events: AgentEvent[] = []
+  const bridge = await openUserProfileBridge(store, 'run_net', undefined, undefined, async payload => {
+    const sequence = events.length + 1
+    const event: AgentEvent = { id: `e${sequence}`, sequence, taskId: 'task', runId: 'run_net', timestamp: sequence, family: 'artifact', type: 'memory_updated', payload }
+    await ledger.commit({ kind: 'event_commit', events: [event] })
+    events.push(event)
+  }, () => true)
+  cleanup.push(bridge.close)
+  const call = async (tool: string, args = {}) => (await fetch(bridge.config.url, {
+    method: 'POST', headers: { Authorization: `Bearer ${bridge.config.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runId: 'run_net', tool, arguments: args }),
+  })).json()
+  const update = async (content: string) => {
+    const read = await call('user_profile_read')
+    expect((await call('user_profile_update', { content, expectedRevision: read.data.revision })).success).toBe(true)
+  }
+  await update('临时\n重复\n重复')
+  await update('最后🙂\n重复')
+  const projected = [{ id: 'e2', changes: [{ type: 'added', text: '最后🙂\n重复' }] }]
+  expect(projectMemoryUpdates(events)).toEqual(projected)
+  expect(projectMemoryUpdates((await new AgentLedgerStore(path.join(root, 'ledger')).materialize()).events)).toEqual(projected)
+  await update('')
+  expect(projectMemoryUpdates(events)).toEqual([])
+  const current = await store.read('user')
+  await new AgentMemoryStore(root).save('user', 'manual private', current.revision)
+  await update('manual private\nour final')
+  expect(projectMemoryUpdates(events)).toEqual([{ id: 'e4', changes: [{ type: 'added', text: 'our final' }] }])
+  expect(projectMemoryUpdates((await new AgentLedgerStore(path.join(root, 'ledger')).materialize()).events)).toEqual(projectMemoryUpdates(events))
+})
 afterEach(async () => { for (const close of cleanup.reverse()) await close(); cleanup.length = 0 })
 it('persists through the main store and requires a fresh read before a versioned update', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-bridge-'))
@@ -27,7 +64,7 @@ it('persists through the main store and requires a fresh read before a versioned
   expect(updated).not.toHaveBeenCalled()
   const update = await call('user_profile_update', { content: '中文', expectedRevision: read.revision })
   expect(update.body.success).toBe(true)
-  expect(updated).toHaveBeenCalledWith({ kind: 'user', beforeRevision: read.revision, afterRevision: update.body.data.revision, changes: [{ type: 'added', text: '中文' }] })
+  expect(updated).toHaveBeenCalledWith({ kind: 'user', beforeRevision: read.revision, afterRevision: update.body.data.revision, changes: [{ type: 'added', text: '中文' }], net: { segment: 1, changes: [{ type: 'added', text: '中文' }] } })
   await call('user_profile_read')
   expect((await call('user_profile_update', { content: '中文', expectedRevision: update.body.data.revision })).body.success).toBe(true)
   expect(updated).toHaveBeenCalledTimes(1)

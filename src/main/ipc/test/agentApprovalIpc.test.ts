@@ -12,9 +12,11 @@ const state = vi.hoisted(() => ({
   streamEvent: null as null | ((event: any) => Promise<void>),
   streamAgent: vi.fn(),
   settings: null as ReturnType<typeof createAppSettingsService> | null,
+  windows: [] as any[],
 }))
 
 vi.mock('electron', () => ({
+  BrowserWindow: { getAllWindows: () => state.windows },
   app: { getPath: () => path.join(state.workspacePath, 'app-data') },
   shell: { showItemInFolder: vi.fn() },
   ipcMain: {
@@ -53,6 +55,22 @@ const sender = (id: number) => ({
 })
 
 describe('Agent approval IPC trusted boundary', () => {
+  it('broadcasts plaintext-free invalidations to live windows for app writes', async () => {
+    const live = sender(901)
+    const dead = { ...sender(902), isDestroyed: () => true }
+    state.windows = [{ webContents: live }, { webContents: dead }]
+    const read = state.handlers.get('agentMemory:read')!
+    const save = state.handlers.get('agentMemory:save')!
+    const initial = await read({}, 'soul')
+    const result = await save({}, 'soul', 'private profile', initial.data.revision)
+    expect(result.success).toBe(true)
+    expect(live.send).toHaveBeenCalledWith('agentMemory:changed', { kind: 'soul', revision: result.data.revision })
+    expect(dead.send).not.toHaveBeenCalled()
+    await save({}, 'soul', 'private profile', result.data.revision)
+    await save({}, 'soul', 'rejected', 'stale')
+    expect(live.send).toHaveBeenCalledTimes(1)
+    state.windows = []
+  })
   it('lists and restores main-owned history by ID with current CAS even when automatic updates are OFF', async () => {
     await state.settings!.setSettings(normalizeAppSettings({ memory: { autoMaintainUserProfile: false } }))
     const read = state.handlers.get('agentMemory:read')!

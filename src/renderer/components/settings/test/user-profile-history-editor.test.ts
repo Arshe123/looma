@@ -2,6 +2,78 @@ import { expect, it, vi } from 'vitest'
 import { createMemoryEditor } from '../memoryEditor'
 import { createUserProfileHistory } from '../userProfileHistory'
 
+it('drains history invalidations after a rejected restore without losing selection or the conflict', async () => {
+  const version = { id: 'old', content: 'old', revision: 'r0', source: 'manual' as const, createdAt: 1 }
+  let release!: (value: unknown) => void
+  const api = {
+    read: vi.fn().mockResolvedValue({ success: true, data: { content: 'current', revision: 'r1' } }), save: vi.fn(),
+    listUserHistory: vi.fn().mockResolvedValue({ success: true, data: { entries: [version] } }),
+    readUserHistory: vi.fn().mockResolvedValue({ success: true, data: version }),
+    restoreUserHistory: vi.fn(() => new Promise<any>(resolve => { release = resolve })),
+  }
+  const editor = createMemoryEditor('user', api)
+  await editor.load()
+  const history = createUserProfileHistory(editor, api)
+  await history.load(); await history.select('old'); history.requestRestore()
+  const restoring = history.restore()
+  editor.invalidation++
+  api.listUserHistory.mockResolvedValue({ success: true, data: { entries: [{ ...version, id: 'new' }, version] } })
+  release({ success: false, error: '版本冲突' })
+  await restoring
+  expect(history.entries.map(entry => entry.id)).toEqual(['new', 'old'])
+  expect(history.selected?.id).toBe('old')
+  expect(history.error).toBe('版本冲突')
+  expect(history.confirming).toBe(false)
+  expect(editor.content).toBe('current')
+  history.dispose()
+})
+
+it('retries a stale history list response and retains an already selected immutable version', async () => {
+  const version = { id: 'old', content: 'old', revision: 'r0', source: 'manual' as const, createdAt: 1 }
+  const api = {
+    read: vi.fn().mockResolvedValue({ success: true, data: { content: 'current', revision: 'r1' } }), save: vi.fn(),
+    listUserHistory: vi.fn().mockResolvedValue({ success: true, data: { entries: [version] } }),
+    readUserHistory: vi.fn().mockResolvedValue({ success: true, data: version }), restoreUserHistory: vi.fn(),
+  }
+  const editor = createMemoryEditor('user', api)
+  await editor.load()
+  const history = createUserProfileHistory(editor, api)
+  await history.load(); await history.select('old')
+  let release!: (value: unknown) => void
+  api.listUserHistory.mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+    .mockResolvedValue({ success: true, data: { entries: [{ ...version, id: 'latest' }, version] } })
+  const loading = history.load()
+  editor.invalidation++
+  release({ success: true, data: { entries: [] } })
+  await loading
+  expect(history.entries.map(entry => entry.id)).toEqual(['latest', 'old'])
+  expect(history.selected?.id).toBe('old')
+  history.dispose()
+})
+
+it('invalidates restore confirmation and refreshes history without dropping selection or drafts', async () => {
+  const version = { id: 'old', content: 'old', revision: 'r0', source: 'manual' as const, createdAt: 1 }
+  const api = {
+    read: vi.fn().mockResolvedValue({ success: true, data: { content: 'current', revision: 'r1' } }), save: vi.fn(),
+    listUserHistory: vi.fn().mockResolvedValue({ success: true, data: { entries: [version] } }),
+    readUserHistory: vi.fn().mockResolvedValue({ success: true, data: version }), restoreUserHistory: vi.fn(),
+  }
+  const editor = createMemoryEditor('user', api)
+  await editor.load()
+  const history = createUserProfileHistory(editor, api)
+  await history.load(); await history.select('old'); history.requestRestore()
+  expect(history.confirming).toBe(true)
+  editor.content = 'draft'
+  editor.invalidation++
+  expect(history.confirming).toBe(false)
+  await history.load()
+  expect(history.selected?.id).toBe('old')
+  expect(editor.content).toBe('draft')
+  await history.restore()
+  expect(api.restoreUserHistory).not.toHaveBeenCalled()
+  history.dispose()
+})
+
 it('browses without overwriting drafts, requires confirmation, restores with current CAS, retains drafts on errors', async () => {
   const version = { id: 'version', content: '<script>literal</script>', revision: 'old', source: 'manual' as const, createdAt: 1 }
   const api = {

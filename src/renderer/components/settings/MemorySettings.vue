@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
 import { MAX_MEMORY_CHARS } from '../../../shared/types/agent-memory'
 import { createMemoryEditor } from './memoryEditor'
 import { useSettingsStore } from '../../stores/settings'
@@ -14,8 +14,9 @@ const entries = [
 ]
 onMounted(() => {
   if (!settingsStore.isLoaded) void settingsStore.load()
-  for (const entry of entries) void entry.editor.load()
+  for (const entry of entries) void entry.editor.start()
 })
+onUnmounted(() => { for (const entry of entries) entry.editor.dispose() })
 </script>
 
 <template>

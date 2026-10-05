@@ -130,6 +130,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     set: (workspaceId: string, state: unknown) => ipcRenderer.invoke('workspaceAi:set', workspaceId, state),
   },
   agentMemory: {
+    onChanged: (listener: (event: import('../shared/types/agent-memory').AgentMemoryInvalidation) => void) => {
+      const handler = (_: unknown, event: import('../shared/types/agent-memory').AgentMemoryInvalidation) => listener(event)
+      ipcRenderer.on('agentMemory:changed', handler)
+      return () => ipcRenderer.removeListener('agentMemory:changed', handler)
+    },
     listUserHistory: (cursor?: string) => ipcRenderer.invoke('agentMemory:history:list', cursor),
     readUserHistory: (id: string) => ipcRenderer.invoke('agentMemory:history:read', id),
     restoreUserHistory: (id: string, revision: string) => ipcRenderer.invoke('agentMemory:history:restore', id, revision),

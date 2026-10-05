@@ -7,6 +7,17 @@ const updates = [
   { id: 'first', changes: [{ type: 'added' as const, text: '偏好中文\n<script>alert(1)</script>' }] },
   { id: 'second', changes: [{ type: 'removed' as const, text: '旧习惯' }] },
 ]
+it('renders deletion-only and conservative receipts as a static memory icon without an empty disclosure', async () => {
+  for (const changes of [[{ type: 'removed' as const, text: 'deleted secret' }], []]) {
+    const html = await renderToString(createSSRApp(AgentMemoryUpdateNotice, { messageId: 1, completed: true, updates: [{ id: 'delete', changes }] }))
+    expect(html).toContain('记忆已更新')
+    expect(html).toContain('lucide-brain')
+    expect(html).not.toContain('<button')
+    expect(html).not.toContain('aria-expanded')
+    expect(html).not.toContain('chevron')
+    expect(html).not.toContain('deleted secret')
+  }
+})
 it('hides the notice until terminal and never creates one for legacy/no-change turns', async () => {
   for (const props of [{ completed: false, updates }, { completed: true, updates: [] }]) {
     const html = await renderToString(createSSRApp(AgentMemoryUpdateNotice, { messageId: 1, ...props }))

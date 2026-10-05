@@ -20,6 +20,7 @@ watch(() => props.messageId, () => { expanded.value = false })
 <template>
   <section v-if="completed && updates.length" class="memory-update-notice mt-3 text-xs text-text-muted" aria-label="记忆更新">
     <button
+      v-if="additions.length"
       type="button"
       class="inline-flex items-center gap-1 py-1 transition-colors hover:text-text-main focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
       :aria-expanded="expanded"
@@ -30,7 +31,8 @@ watch(() => props.messageId, () => { expanded.value = false })
       <span>记忆已更新</span>
       <ChevronDown :size="13" class="transition-transform" :class="{ 'rotate-180': expanded }" aria-hidden="true" />
     </button>
-    <div :id="`memory-changes-${messageId}`" v-show="expanded" class="mt-1 max-h-72 space-y-3 overflow-auto border-l border-border-soft pl-3">
+    <span v-else class="inline-flex items-center gap-1 py-1"><Brain :size="13" aria-hidden="true" /><span>记忆已更新</span></span>
+    <div v-if="additions.length" :id="`memory-changes-${messageId}`" v-show="expanded" class="mt-1 max-h-72 space-y-3 overflow-auto border-l border-border-soft pl-3">
       <pre v-for="addition in additions" :key="addition.id" class="whitespace-pre-wrap break-all rounded bg-panel-soft p-2 font-mono text-xs text-text-main">{{ addition.text || '（空行）' }}</pre>
     </div>
   </section>

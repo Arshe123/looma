@@ -1,10 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
-import { MAX_MEMORY_CHARS, type AgentMemoryKind, type AgentMemoryDocument, type AgentMemorySnapshot, type UserProfileHistoryEntry, type UserProfileHistoryPage } from '../../../shared/types/agent-memory'
+import { MAX_MEMORY_CHARS, type AgentMemoryInvalidation, type AgentMemoryKind, type AgentMemoryDocument, type AgentMemorySnapshot, type UserProfileHistoryEntry, type UserProfileHistoryPage } from '../../../shared/types/agent-memory'
 
 const revision = (content: string) => createHash('sha256').update(content).digest('hex')
 const queues = new Map<string, Promise<unknown>>()
+const subscribers = new Map<string, Set<(event: AgentMemoryInvalidation) => void>>()
 const historyId = /^\d{13}-[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/
 export class AgentMemoryError extends Error {}
 export class AgentMemoryConflictError extends AgentMemoryError {}
@@ -13,6 +14,18 @@ function validateContent(content: unknown): asserts content is string {
   if (typeof content !== 'string' || content.length > MAX_MEMORY_CHARS || content.includes('\0')) throw new AgentMemoryError('记忆内容无效或过长。')
 }
 export class AgentMemoryStore {
+  static subscribe(root: string, listener: (event: AgentMemoryInvalidation) => void) {
+    const key = path.resolve(root)
+    const listeners = subscribers.get(key) ?? new Set()
+    listeners.add(listener); subscribers.set(key, listeners)
+    return () => { listeners.delete(listener); if (!listeners.size) subscribers.delete(key) }
+  }
+  private invalidate(event: AgentMemoryInvalidation) {
+    for (const listener of subscribers.get(path.resolve(this.root)) ?? []) {
+      // A disconnected observer cannot change the outcome of a durable save.
+      try { listener(event) } catch { /* observer isolated */ }
+    }
+  }
   constructor(private readonly root: string, private readonly io: { rename?: typeof fs.rename; syncDirectory?: (directory: string) => Promise<void> } = {}) {}
   private locked<T>(operation: () => Promise<T>): Promise<T> {
     const key = path.resolve(this.root)
@@ -61,8 +74,8 @@ export class AgentMemoryStore {
       if (authorize && !authorize()) throw new AgentMemoryAuthorizationError('自动维护用户画像已关闭或运行授权已失效。')
       if (current.revision !== expectedRevision) throw new AgentMemoryConflictError('内容已在其他窗口更新，请重新加载后再保存。')
       validateContent(content)
+      if (content === current.content) return current
       if (kind === 'user') {
-        if (content === current.content) return current
         const ids = await this.historyIds()
         const createdAt = Math.max(Date.now(), Number(ids[0]?.slice(0, 13) ?? 0) + 1)
         const id = `${createdAt}-${randomUUID()}`
@@ -73,7 +86,10 @@ export class AgentMemoryStore {
         // Backing up is not the start of the current-file commit boundary.
         if (authorize && !authorize()) throw new AgentMemoryAuthorizationError('自动维护用户画像已关闭或运行授权已失效。')
       }
-      await this.atomicWrite(this.file(kind), content)
+      let renamed = false
+      try { await this.atomicWrite(this.file(kind), content, () => { renamed = true }) }
+      catch (error) { if (renamed) this.invalidate({ kind }); throw error }
+      this.invalidate({ kind, revision: revision(content) })
       return { content, revision: revision(content) }
   }
   private historyFile(id: string) {
@@ -121,13 +137,14 @@ export class AgentMemoryStore {
       return this.saveLocked('user', entry.content, expectedRevision, 'restore')
     })
   }
-  private async atomicWrite(file: string, content: string) {
+  private async atomicWrite(file: string, content: string, onRenamed?: () => void) {
     await fs.mkdir(path.dirname(file), { recursive: true })
     const temporary = `${file}.${randomUUID()}.tmp`
     try {
       const handle = await fs.open(temporary, 'wx', 0o600)
       try { await handle.writeFile(content, 'utf8'); await handle.sync() } finally { await handle.close() }
       await (this.io.rename ?? fs.rename)(temporary, file)
+      onRenamed?.()
       await this.syncDirectory(path.dirname(file))
     } finally { await fs.rm(temporary, { force: true }) }
   }

@@ -172,6 +172,9 @@ export interface MemoryUpdatedPayload {
   beforeRevision: string
   afterRevision: string
   changes: Array<{ type: 'added' | 'removed'; text: string }>
+  /** Main-computed first-before/final-after diff within one continuous run
+   * segment. No full profile/context is persisted in the receipt. */
+  net?: { segment: number; changes: MemoryUpdatedPayload['changes'] }
 }
 
 export type ArtifactEvent = AgentEventBase & (

@@ -83,6 +83,7 @@ describe('agent stream state', () => {
     const runId = run.runId!
     const receipt = canonicalEvent(runId, 2, 'artifact', 'memory_updated', {
       kind: 'user', beforeRevision: 'old', afterRevision: 'new', changes: [{ type: 'added', text: '偏好中文' }],
+      net: { segment: 1, changes: [{ type: 'added', text: '偏好中文' }] },
     })
     const key = `${conversationId}:${run.assistantMessageId}`
     store.agentEventsByMessageKey[key] = [receipt]
@@ -90,10 +91,11 @@ describe('agent stream state', () => {
     const finish = canonicalEvent(runId, 4, terminal === 'run_interrupted' ? 'recovery' : 'execution', terminal, { reason: 'cancelled', message: 'failed' })
     const second = canonicalEvent(runId, 3, 'artifact', 'memory_updated', {
       ...receipt.payload, beforeRevision: 'new', afterRevision: 'latest', changes: [{ type: 'removed', text: '旧习惯' }],
+      net: { segment: 1, changes: [{ type: 'removed', text: '旧习惯' }, { type: 'added', text: '偏好中文' }] },
     })
     store.agentEventsByMessageKey[key] = [second, finish, receipt, receipt]
     expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId, runId)).toEqual([
-      { id: receipt.id, changes: receipt.payload.changes }, { id: second.id, changes: second.payload.changes },
+      { id: second.id, changes: second.payload.net.changes },
     ])
     expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId, 'child-run')).toEqual([])
     expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId + 1, runId)).toEqual([])
@@ -104,7 +106,7 @@ describe('agent stream state', () => {
     store.agentEventsByMessageKey = {}
     const message = useWorkspaceStore().aiAssistant.conversations.find(c => c.id === conversationId)!.messages.find(m => m.id === run.assistantMessageId)!
     await store.hydrateAgentHistory('workspace-1', [{ id: conversationId, messages: [message] }])
-    expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId, runId)).toHaveLength(2)
+    expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId, runId)).toEqual([{ id: second.id, changes: second.payload.net.changes }])
   })
 
   it('keeps late saved memory on a cancelled parent even after a child turn starts', async () => {

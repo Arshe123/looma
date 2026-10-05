@@ -9,7 +9,8 @@ import {
   failAiTimelineStep,
   formatAiRuntimeError,
 } from '../components/ai/aiTimeline'
-import { foldAgentState, orderAgentEvents } from '../../shared/utils/agent-event-projections'
+import { foldAgentState } from '../../shared/utils/agent-event-projections'
+import { projectMemoryUpdates } from '../../shared/utils/agent-memory-net'
 import { isArtifactBackedFilePatchBridgeInterruption, projectAgentDisplayEvents, projectAgentRunView } from './agent-event-view'
 import {
   flattenAgentHistoryForSummary,
@@ -281,13 +282,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       const events = (state.agentEventsByMessageKey[getAgentDisplayMessageKey(conversationId, messageId)] || [])
         .filter(event => event.runId === runId)
       if (!['completed', 'failed', 'cancelled'].includes(foldAgentState(events).status)) return []
-      const seen = new Set<string>()
-      return orderAgentEvents(events).flatMap(event => {
-        if (event.type !== 'memory_updated' || seen.has(event.id) || !event.payload.changes.length
-          || event.payload.beforeRevision === event.payload.afterRevision) return []
-        seen.add(event.id)
-        return [{ id: event.id, changes: event.payload.changes }]
-      })
+      return projectMemoryUpdates(events)
     },
     getMessageAgentDisplayEvents: (state) => (conversationId: string | null | undefined, messageId: number | undefined) => {
       if (!conversationId || messageId === undefined) return []

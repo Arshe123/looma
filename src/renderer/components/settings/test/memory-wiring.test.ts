@@ -3,6 +3,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 const source = (file: string) => fs.readFileSync(path.resolve(file), 'utf8')
 describe('memory settings wiring', () => {
+  it('wires mount/unmount and a removable main-origin subscription', () => {
+    const ui = source('src/renderer/components/settings/MemorySettings.vue')
+    expect(ui).toContain('entry.editor.start()')
+    expect(ui).toContain('entry.editor.dispose()')
+    const preload = source('src/preload/index.ts')
+    expect(preload).toContain("ipcRenderer.on('agentMemory:changed', handler)")
+    expect(preload).toContain("ipcRenderer.removeListener('agentMemory:changed', handler)")
+  })
   it('offers user-only history with escaped full preview and explicit confirmation, independent of maintenance permission', () => {
     expect(source('src/renderer/components/settings/MemorySettings.vue')).toContain('<UserProfileHistory v-if="entry.kind === \'user\'"')
     const ui = source('src/renderer/components/settings/UserProfileHistory.vue')

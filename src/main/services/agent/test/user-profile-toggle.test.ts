@@ -5,7 +5,7 @@ import path from 'node:path'
 import { AgentMemoryStore } from '../AgentMemoryStore'
 import { openUserProfileBridge } from '../UserProfileBridge'
 import { createAppSettingsService } from '../../app/appSettingsService'
-import { normalizeAppSettings } from '../../../../shared/utils/app-settings'
+
 
 const cleanup: Array<() => Promise<unknown>> = []
 afterEach(async () => { for (const close of cleanup.reverse()) await close(); cleanup.length = 0 })
@@ -19,7 +19,7 @@ async function setup() {
   cleanup.push(() => fs.rm(root, { recursive: true, force: true }))
   const settings = createAppSettingsService(path.join(root, 'settings.json'))
   await settings.getSettings()
-  const toggle = (enabled: boolean) => settings.setSettings(normalizeAppSettings({ memory: { autoMaintainUserProfile: enabled } }))
+  const toggle = (enabled: boolean) => settings.patchSettings({ memory: { autoMaintainUserProfile: enabled } })
   const store = new AgentMemoryStore(root)
   const updated = vi.fn()
   const bridge = await openUserProfileBridge(store, 'run_a', undefined, undefined, updated, settings.canAutoMaintainUserProfile)

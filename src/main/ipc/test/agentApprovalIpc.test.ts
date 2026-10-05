@@ -4,7 +4,6 @@ import os from 'os'
 import path from 'path'
 import { createHash } from 'crypto'
 import { createAppSettingsService } from '../../services/app/appSettingsService'
-import { normalizeAppSettings } from '../../../shared/utils/app-settings'
 
 const state = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => any>(),
@@ -72,7 +71,7 @@ describe('Agent approval IPC trusted boundary', () => {
     state.windows = []
   })
   it('lists and restores main-owned history by ID with current CAS even when automatic updates are OFF', async () => {
-    await state.settings!.setSettings(normalizeAppSettings({ memory: { autoMaintainUserProfile: false } }))
+    await state.settings!.patchSettings({ memory: { autoMaintainUserProfile: false } })
     const read = state.handlers.get('agentMemory:read')!
     const save = state.handlers.get('agentMemory:save')!
     const initial = await read({}, 'user')
@@ -94,18 +93,18 @@ describe('Agent approval IPC trusted boundary', () => {
   })
   it('supplies live main authorization on start and resume, ignoring renderer flags and callbacks', async () => {
     const owner = sender(101)
-    await state.settings!.setSettings(normalizeAppSettings({ memory: { autoMaintainUserProfile: false } }))
+    await state.settings!.patchSettings({ memory: { autoMaintainUserProfile: false } })
     const started = await state.handlers.get('agent:runStream:start')!({ sender: owner }, 'toggle', 'workspace-1', {
       input: 'hello', conversationId: 'chat', canUpdateUserProfile: () => true, autoMaintainUserProfile: true, enabledTools: ['user_profile_update'],
     })
     expect(started.success).toBe(true)
     const options = state.streamAgent.mock.calls[0][1]
     expect(options.canUpdateUserProfile()).toBe(false)
-    await state.settings!.setSettings(normalizeAppSettings({}))
+    await state.settings!.patchSettings({ memory: { autoMaintainUserProfile: true } })
     expect(options.canUpdateUserProfile()).toBe(true)
     await state.streamEvent!({ type: 'error', runId: started.data.runId, error: { code: 'test', message: 'failure', retryable: true } })
     abortAllAgentRuns()
-    await state.settings!.setSettings(normalizeAppSettings({ memory: { autoMaintainUserProfile: false } }))
+    await state.settings!.patchSettings({ memory: { autoMaintainUserProfile: false } })
     const resumed = await state.handlers.get('agent:runStream:resume')!({ sender: owner }, 'resume', 'workspace-1', started.data.runId)
     expect(resumed.success).toBe(true)
     expect(state.streamAgent.mock.calls[1][1].canUpdateUserProfile()).toBe(false)

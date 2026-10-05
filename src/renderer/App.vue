@@ -250,6 +250,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  settingsStore.stopSync();
   cleanupHandoff?.();
   cleanupExternalOpen?.();
   cleanupWorkspaceActions();

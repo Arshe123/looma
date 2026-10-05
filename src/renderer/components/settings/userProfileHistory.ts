@@ -15,6 +15,9 @@ export function createUserProfileHistory(editor: ReturnType<typeof createMemoryE
   const state = reactive({
     entries: [] as UserProfileHistoryPage['entries'], nextCursor: undefined as string | undefined,
     selected: null as UserProfileHistoryEntry | null, confirming: false, busy: false, loaded: false, error: '',
+    get previous(): UserProfileHistoryPage['entries'][number] | undefined {
+      return state.entries.find(entry => entry.status === 'valid' && entry.revision !== editor.revision)
+    },
     dispose() { disposed = true; stop() },
     async load(more = false) {
       if (state.busy || disposed) return
@@ -28,6 +31,10 @@ export function createUserProfileHistory(editor: ReturnType<typeof createMemoryE
           if (ticket !== generation) { more = false; continue }
           if (!result.success || !result.data) throw new Error(result.error || '历史版本读取失败，请重试。')
           state.entries = more ? [...state.entries, ...result.data.entries] : result.data.entries
+          if (state.selected && state.entries.some(entry => entry.id === state.selected?.id && entry.status === 'invalid')) {
+            state.selected = null
+            state.error = '历史版本缺失或已损坏，无法查看或恢复。'
+          }
           state.nextCursor = result.data.nextCursor
           state.loaded = true
         } while (pending)
@@ -38,6 +45,8 @@ export function createUserProfileHistory(editor: ReturnType<typeof createMemoryE
       if (state.busy || disposed) return
       state.busy = true; state.error = ''; state.confirming = false; state.selected = null
       try {
+        const entry = state.entries.find(entry => entry.id === id)
+        if (!entry || entry.status !== 'valid') throw new Error('历史版本缺失或已损坏，无法查看或恢复。')
         const result = await api.readUserHistory(id)
         if (disposed) return
         if (!result.success || !result.data) throw new Error(result.error || '历史版本读取失败，请重试。')

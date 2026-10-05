@@ -10,6 +10,7 @@ const historyId = /^\d{13}-[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3
 export class AgentMemoryError extends Error {}
 export class AgentMemoryConflictError extends AgentMemoryError {}
 export class AgentMemoryAuthorizationError extends AgentMemoryError {}
+class UserProfileHistoryRecordError extends AgentMemoryError {}
 function validateContent(content: unknown): asserts content is string {
   if (typeof content !== 'string' || content.length > MAX_MEMORY_CHARS || content.includes('\0')) throw new AgentMemoryError('记忆内容无效或过长。')
 }
@@ -109,8 +110,8 @@ export class AgentMemoryStore {
   }
   async readUserHistory(id: string): Promise<UserProfileHistoryEntry> {
     const file = this.historyFile(id)
+    await this.validateHistoryDirectory()
     try {
-      await this.validateHistoryDirectory()
       const stat = await fs.lstat(file)
       if (!stat.isFile() || stat.size > MAX_MEMORY_CHARS * 6 + 1024) throw new Error('invalid file')
       const entry = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await fs.readFile(file))) as UserProfileHistoryEntry
@@ -118,15 +119,21 @@ export class AgentMemoryStore {
       if (entry.id !== id || entry.revision !== revision(entry.content) || entry.createdAt !== Number(id.slice(0, 13))
         || !['manual', 'agent', 'restore'].includes(entry.source)) throw new Error('invalid entry')
       return { id, createdAt: entry.createdAt, source: entry.source, revision: entry.revision, content: entry.content }
-    } catch { throw new AgentMemoryError('历史版本缺失或已损坏，未恢复任何内容。') }
+    } catch { throw new UserProfileHistoryRecordError('历史版本缺失或已损坏，未恢复任何内容。') }
   }
   async listUserHistory(cursor?: string): Promise<UserProfileHistoryPage> {
     if (cursor !== undefined) this.historyFile(cursor)
     return this.locked(async () => {
       const ids = (await this.historyIds()).filter(id => cursor === undefined || id < cursor)
       const entries = await Promise.all(ids.slice(0, 20).map(async id => {
-        const { content: _content, ...entry } = await this.readUserHistory(id)
-        return entry
+        try {
+          const { content: _content, ...entry } = await this.readUserHistory(id)
+          return { ...entry, status: 'valid' as const }
+        } catch (error) {
+          if (!(error instanceof UserProfileHistoryRecordError)) throw error
+          // Derive metadata only from a validated filename, never damaged bytes.
+          return { id, createdAt: Number(id.slice(0, 13)), status: 'invalid' as const, error: '历史版本缺失或已损坏，无法查看或恢复。' }
+        }
       }))
       return { entries, ...(ids.length > 20 ? { nextCursor: ids[19] } : {}) }
     })

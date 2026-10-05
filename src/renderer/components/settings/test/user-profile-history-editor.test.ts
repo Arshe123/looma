@@ -2,8 +2,53 @@ import { expect, it, vi } from 'vitest'
 import { createMemoryEditor } from '../memoryEditor'
 import { createUserProfileHistory } from '../userProfileHistory'
 
+it('blocks damaged selections and skips them for previous-version restore while allowing healthy selection', async () => {
+  const valid = { id: 'healthy', createdAt: 1, source: 'manual' as const, revision: 'old', content: 'safe', status: 'valid' as const }
+  const invalid = { id: 'broken', createdAt: 2, status: 'invalid' as const, error: '历史版本缺失或已损坏，无法查看或恢复。' }
+  const api = {
+    read: vi.fn().mockResolvedValue({ success: true, data: { content: 'current', revision: 'current' } }), save: vi.fn(),
+    listUserHistory: vi.fn().mockResolvedValue({ success: true, data: { entries: [invalid, valid] } }),
+    readUserHistory: vi.fn().mockResolvedValue({ success: true, data: valid }),
+    restoreUserHistory: vi.fn().mockResolvedValue({ success: true, data: valid }),
+  }
+  const editor = createMemoryEditor('user', api)
+  await editor.load()
+  const history = createUserProfileHistory(editor, api)
+  await history.load()
+  expect(history.previous?.id).toBe('healthy')
+  await history.select('broken'); history.requestRestore(); await history.restore()
+  expect(history.selected).toBeNull()
+  expect(history.error).toContain('无法查看或恢复')
+  expect(api.readUserHistory).not.toHaveBeenCalled()
+  expect(api.restoreUserHistory).not.toHaveBeenCalled()
+  await history.select('healthy'); history.requestRestore(); await history.restore()
+  expect(api.restoreUserHistory).toHaveBeenCalledWith('healthy', 'current')
+  expect(editor.content).toBe('safe')
+  history.dispose()
+})
+
+it('clears a selected preview and confirmation when a refresh identifies its file as damaged', async () => {
+  const valid = { id: 'old', createdAt: 1, source: 'manual' as const, status: 'valid' as const, revision: 'old', content: 'old' }
+  const api = {
+    read: vi.fn().mockResolvedValue({ success: true, data: { content: 'current', revision: 'current' } }), save: vi.fn(),
+    listUserHistory: vi.fn().mockResolvedValue({ success: true, data: { entries: [valid] } }),
+    readUserHistory: vi.fn().mockResolvedValue({ success: true, data: valid }), restoreUserHistory: vi.fn(),
+  }
+  const editor = createMemoryEditor('user', api)
+  await editor.load()
+  const history = createUserProfileHistory(editor, api)
+  await history.load(); await history.select('old'); history.requestRestore()
+  api.listUserHistory.mockResolvedValue({ success: true, data: { entries: [{ id: 'old', createdAt: 1, status: 'invalid', error: '历史版本缺失或已损坏，无法查看或恢复。' }] } })
+  await history.load()
+  expect(history.selected).toBeNull()
+  expect(history.confirming).toBe(false)
+  history.requestRestore(); await history.restore()
+  expect(api.restoreUserHistory).not.toHaveBeenCalled()
+  history.dispose()
+})
+
 it('drains history invalidations after a rejected restore without losing selection or the conflict', async () => {
-  const version = { id: 'old', content: 'old', revision: 'r0', source: 'manual' as const, createdAt: 1 }
+  const version = { id: 'old', content: 'old', revision: 'r0', source: 'manual' as const, status: 'valid' as const, createdAt: 1 }
   let release!: (value: unknown) => void
   const api = {
     read: vi.fn().mockResolvedValue({ success: true, data: { content: 'current', revision: 'r1' } }), save: vi.fn(),
@@ -29,7 +74,7 @@ it('drains history invalidations after a rejected restore without losing selecti
 })
 
 it('retries a stale history list response and retains an already selected immutable version', async () => {
-  const version = { id: 'old', content: 'old', revision: 'r0', source: 'manual' as const, createdAt: 1 }
+  const version = { id: 'old', content: 'old', revision: 'r0', source: 'manual' as const, status: 'valid' as const, createdAt: 1 }
   const api = {
     read: vi.fn().mockResolvedValue({ success: true, data: { content: 'current', revision: 'r1' } }), save: vi.fn(),
     listUserHistory: vi.fn().mockResolvedValue({ success: true, data: { entries: [version] } }),
@@ -52,7 +97,7 @@ it('retries a stale history list response and retains an already selected immuta
 })
 
 it('invalidates restore confirmation and refreshes history without dropping selection or drafts', async () => {
-  const version = { id: 'old', content: 'old', revision: 'r0', source: 'manual' as const, createdAt: 1 }
+  const version = { id: 'old', content: 'old', revision: 'r0', source: 'manual' as const, status: 'valid' as const, createdAt: 1 }
   const api = {
     read: vi.fn().mockResolvedValue({ success: true, data: { content: 'current', revision: 'r1' } }), save: vi.fn(),
     listUserHistory: vi.fn().mockResolvedValue({ success: true, data: { entries: [version] } }),
@@ -75,7 +120,7 @@ it('invalidates restore confirmation and refreshes history without dropping sele
 })
 
 it('browses without overwriting drafts, requires confirmation, restores with current CAS, retains drafts on errors', async () => {
-  const version = { id: 'version', content: '<script>literal</script>', revision: 'old', source: 'manual' as const, createdAt: 1 }
+  const version = { id: 'version', content: '<script>literal</script>', revision: 'old', source: 'manual' as const, status: 'valid' as const, createdAt: 1 }
   const api = {
     read: vi.fn().mockResolvedValue({ success: true, data: { content: 'current', revision: 'current' } }),
     save: vi.fn(),
@@ -128,7 +173,7 @@ it('does not discard dirty content on a background/retry load and preserves it w
 })
 
 it('paginates and retains drafts on list/read/restore transport failures', async () => {
-  const entry = { id: 'one', content: 'old', revision: 'old', createdAt: 1, source: 'agent' as const }
+  const entry = { id: 'one', content: 'old', revision: 'old', createdAt: 1, source: 'agent' as const, status: 'valid' as const }
   const api = {
     read: vi.fn().mockResolvedValue({ success: true, data: { content: 'current', revision: 'current' } }), save: vi.fn(),
     listUserHistory: vi.fn().mockResolvedValue({ success: true, data: { entries: [entry], nextCursor: 'one' } }),

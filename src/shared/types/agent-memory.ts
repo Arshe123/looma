@@ -13,7 +13,10 @@ export interface UserProfileHistoryEntry extends AgentMemoryDocument {
   createdAt: number
   source: 'manual' | 'agent' | 'restore'
 }
+export type UserProfileHistoryListEntry =
+  | (Omit<UserProfileHistoryEntry, 'content'> & { status: 'valid' })
+  | { id: string; createdAt: number; status: 'invalid'; error: string; source?: never; revision?: never }
 export interface UserProfileHistoryPage {
-  entries: Omit<UserProfileHistoryEntry, 'content'>[]
+  entries: UserProfileHistoryListEntry[]
   nextCursor?: string
 }

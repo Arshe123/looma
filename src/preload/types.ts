@@ -367,8 +367,10 @@ interface ElectronAPI {
     set: (workspaceId: string, state: AiAssistantStatePayload) => Promise<Result<void>>;
   };
   appSettings: {
-    get: () => Promise<Result<AppSettingsPayload>>;
-    set: (settings: AppSettingsPayload) => Promise<Result<void>>;
+    get: () => Promise<Result<AppSettingsPayload> & { revision?: number }>;
+    set: (settings: AppSettingsPayload, revision?: number) => Promise<Result<AppSettingsPayload> & { revision?: number }>;
+    patch: (patch: unknown) => Promise<Result<AppSettingsPayload> & { revision?: number }>;
+    onChanged: (callback: (revision: number) => void) => () => void;
   };
   noteTemplates: {
     list: () => Promise<Result<NoteTemplateStore>>;

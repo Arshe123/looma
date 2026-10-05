@@ -1,11 +1,11 @@
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { AgentMemoryStore } from '../AgentMemoryStore'
 
 const roots: string[] = []
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
+afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
 async function setup() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'looma-history-'))
   roots.push(root)
@@ -31,6 +31,59 @@ it('backs up pre-feature content, survives restart, restores reversibly with cur
   expect(await restarted.restoreUserHistory(next.entries[0].id, restored.revision)).toEqual(saved)
   expect(await restarted.snapshot('w', 'old')).toEqual(pinned)
   expect((await restarted.snapshot('w', 'new')).user).toEqual(saved)
+})
+
+it('isolates corrupt history without leaking its content and still restores healthy versions', async () => {
+  const { root, store } = await setup()
+  const original = await store.read('user')
+  await store.save('user', 'middle', original.revision)
+  const current = await store.save('user', 'current', (await store.read('user')).revision)
+  const before = await store.listUserHistory()
+  const damaged = before.entries[0].id
+  await fs.writeFile(path.join(root, 'user-history', `${damaged}.json`), '{SECRET broken')
+  const page = await store.listUserHistory()
+  expect(page.entries).toHaveLength(2)
+  expect(page.entries[0]).toEqual({ id: damaged, createdAt: Number(damaged.slice(0, 13)), status: 'invalid', error: '历史版本缺失或已损坏，无法查看或恢复。' })
+  expect(page.entries[1]).toMatchObject({ status: 'valid', revision: original.revision })
+  expect(JSON.stringify(page)).not.toContain('SECRET')
+  await expect(store.restoreUserHistory(damaged, current.revision)).rejects.toThrow('损坏')
+  expect(await store.restoreUserHistory(page.entries[1].id, current.revision)).toEqual(original)
+  expect(await fs.readFile(path.join(root, 'user-history', `${damaged}.json`), 'utf8')).toBe('{SECRET broken')
+})
+
+it('keeps fully damaged pages and cursors stable without pruning, including unsafe record files', async () => {
+  const { root, store } = await setup()
+  for (let i = 0; i < 23; i++) await store.save('user', `v${i}`, (await store.read('user')).revision)
+  const first = await store.listUserHistory()
+  const second = await store.listUserHistory(first.nextCursor)
+  const ids = [...first.entries, ...second.entries].map(entry => entry.id)
+  const directory = path.join(root, 'user-history')
+  for (const id of ids) await fs.writeFile(path.join(directory, `${id}.json`), '{SECRET')
+  await fs.writeFile(path.join(directory, `${ids[1]}.json`), 'x'.repeat(100000))
+  await fs.rm(path.join(directory, `${ids[2]}.json`))
+  await fs.symlink(path.join(root, 'user.md'), path.join(directory, `${ids[2]}.json`))
+  await fs.writeFile(path.join(directory, 'unsafe-id.json'), 'SECRET')
+  const damagedFirst = await store.listUserHistory()
+  const damagedSecond = await store.listUserHistory(damagedFirst.nextCursor)
+  expect(damagedFirst.entries).toHaveLength(20)
+  expect(damagedFirst.nextCursor).toBe(first.nextCursor)
+  expect(damagedSecond.nextCursor).toBeUndefined()
+  const entries = [...damagedFirst.entries, ...damagedSecond.entries]
+  expect(entries.map(entry => entry.id)).toEqual(ids)
+  expect(entries.every(entry => entry.status === 'invalid')).toBe(true)
+  expect(JSON.stringify(entries)).not.toContain('SECRET')
+  const current = await store.read('user')
+  for (const id of [...ids, 'unsafe-id']) await expect(store.restoreUserHistory(id, current.revision)).rejects.toThrow()
+  expect(await store.read('user')).toEqual(current)
+  expect(await fs.readdir(directory)).toHaveLength(24)
+})
+
+it('surfaces directory enumeration permission errors instead of a healthy empty page', async () => {
+  const { store } = await setup()
+  await store.save('user', 'current', (await store.read('user')).revision)
+  const error = Object.assign(new Error('directory permission failure'), { code: 'EACCES' })
+  vi.spyOn(fs, 'readdir').mockRejectedValueOnce(error)
+  await expect(store.listUserHistory()).rejects.toBe(error)
 })
 
 it('syncs the backup directory and its parent before committing current content', async () => {

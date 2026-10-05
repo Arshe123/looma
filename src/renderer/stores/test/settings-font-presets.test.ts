@@ -16,7 +16,7 @@ describe('font preset persistence', () => {
   it('persists each preset through the real settings service and reloads it', async () => {
     directory = await mkdtemp(join(tmpdir(), 'looma-fonts-'))
     const service = createAppSettingsService(join(directory, 'settings.json'))
-    vi.stubGlobal('window', { electronAPI: { appSettings: { get: () => service.getSettings(), set: (value: Parameters<typeof service.setSettings>[0]) => service.setSettings(value) } } })
+    vi.stubGlobal('window', { electronAPI: { appSettings: { get: service.getSettings, patch: service.patchSettings } } })
     for (const preset of ['simple', 'literary', 'handwritten'] as const) {
       setActivePinia(createPinia())
       const store = useSettingsStore()

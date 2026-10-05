@@ -8,7 +8,7 @@ import '/src/renderer/styles/style.css'
 // Isolated fixture: never loads user settings, notes or real credentials.
 window.localRequests = []
 window.electronAPI = {
-  appSettings: { set: async () => ({ success: true }) },
+  appSettings: { patch: async () => ({ success: true, data: JSON.parse(JSON.stringify(store.settings)), revision: 1 }) },
   ollama: {
     checkInstalled: async () => ({ success: true, data: { installed: true } }),
     listModels: async baseUrl => {

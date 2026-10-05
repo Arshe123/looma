@@ -143,7 +143,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   appSettings: {
     get: () => ipcRenderer.invoke('appSettings:get'),
-    set: (settings: unknown) => ipcRenderer.invoke('appSettings:set', settings),
+    set: (settings: unknown, revision?: number) => ipcRenderer.invoke('appSettings:set', settings, revision),
+    patch: (patch: unknown) => ipcRenderer.invoke('appSettings:patch', patch),
+    onChanged: (callback: (revision: number) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, revision: number) => callback(revision)
+      ipcRenderer.on('appSettings:changed', handler)
+      return () => ipcRenderer.removeListener('appSettings:changed', handler)
+    },
   },
   noteTemplates: {
     list: () => ipcRenderer.invoke('noteTemplates:list'),

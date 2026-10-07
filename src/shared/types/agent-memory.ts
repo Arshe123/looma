@@ -5,6 +5,14 @@ export interface AgentMemoryInvalidation { kind: AgentMemoryKind; revision?: str
 export interface AgentMemoryDocument { content: string; revision: string }
 export interface AgentMemorySnapshot { soul: AgentMemoryDocument; user: AgentMemoryDocument }
 export const MAX_MEMORY_CHARS = 16000
+export interface MemoryCleanupSelection { history: boolean; snapshots: boolean; user: boolean }
+export interface MemoryCleanupPreview {
+  selection: MemoryCleanupSelection
+  token: string
+  counts: { history: number; snapshots: number; user: number; receipts: number }
+  records: string[]
+  skipped: string[]
+}
 
 /** A durable pre-write snapshot, not proof the subsequent write committed.
  * source identifies the operation that requested the backup, not its author. */

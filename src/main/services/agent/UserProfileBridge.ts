@@ -1,15 +1,18 @@
 import { createServer } from 'node:http'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import type { MemoryReceipt, MemoryReceiptContext } from './AgentMemoryStore'
 import { AgentMemoryAuthorizationError, AgentMemoryConflictError, AgentMemoryError, AgentMemoryStore } from './AgentMemoryStore'
 import { MAX_MEMORY_CHARS } from '../../../shared/types/agent-memory'
 import type { MemoryUpdatedPayload } from '../../../shared/types/agent-events'
 import { createMemoryRunDelta } from '../../../shared/utils/agent-memory-net'
 
 /** Run-local capability, never a workspace path or model-visible tool argument. */
-export async function openUserProfileBridge(store: AgentMemoryStore, runId: string, signal?: AbortSignal, enabledTools: readonly string[] = ['user_profile_read', 'user_profile_update'], onUpdated?: (change: MemoryUpdatedPayload) => Promise<unknown>, canUpdate: () => boolean = () => false) {
+export async function openUserProfileBridge(store: AgentMemoryStore, runId: string, signal?: AbortSignal, enabledTools: readonly string[] = ['user_profile_read', 'user_profile_update'], onUpdated?: (change: MemoryUpdatedPayload, receipt?: MemoryReceipt) => Promise<unknown>, canUpdate: () => boolean = () => false, receiptContext?: MemoryReceiptContext) {
+  await store.recover()
+  const generation = store.generation
   const token = randomBytes(32).toString('hex')
   let closed = false
-  const authorized = () => !closed && !signal?.aborted && canUpdate()
+  const authorized = () => !closed && !signal?.aborted && generation === store.generation && canUpdate()
   let readRevision: string | undefined
   const delta = createMemoryRunDelta()
   let queue: Promise<unknown> = Promise.resolve()
@@ -69,11 +72,17 @@ export async function openUserProfileBridge(store: AgentMemoryStore, runId: stri
         if (current.revision !== input.expectedRevision) {
           reply(409, { success: false, code: 'user_profile_conflict', error: '用户画像已更新，请重新读取并合并后重试。' }); return
         }
-        const data = await store.save('user', input.content, input.expectedRevision, authorized)
-        if (data.revision !== current.revision) {
-          // A main-owned, confirmed CAS receipt, independent of model/tool claims.
+        const after = { content: input.content, revision: createHash('sha256').update(input.content).digest('hex') }
+        const change = after.revision === current.revision ? undefined : delta.preview(current, after)
+        const receipt = receiptContext && change ? { ...receiptContext, id: randomUUID(), timestamp: Date.now(), change } : undefined
+        const data = await store.save('user', input.content, input.expectedRevision, authorized, receipt)
+        if (change) {
+          delta.record(current, data)
           // Finish recording even if cancellation arrives during the disk write.
-          await onUpdated?.(delta.record(current, data))
+          if (receipt) {
+            if (!onUpdated) throw new Error('Missing durable receipt sink')
+            if (!await store.deliverReceipt(receipt.id, stored => onUpdated(stored.change, stored))) throw new AgentMemoryError('该次记忆已被清理，未重新发布更新详情。')
+          } else await onUpdated?.(change)
         }
         reply(200, { success: true, data })
       } catch (error) {

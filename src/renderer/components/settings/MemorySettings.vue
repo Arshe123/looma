@@ -4,6 +4,7 @@ import { MAX_MEMORY_CHARS } from '../../../shared/types/agent-memory'
 import { createMemoryEditor } from './memoryEditor'
 import { useSettingsStore } from '../../stores/settings'
 import SettingsHelp from './SettingsHelp.vue'
+import MemoryCleanup from './MemoryCleanup.vue'
 import UserProfileHistory from './UserProfileHistory.vue'
 const settingsStore = useSettingsStore()
 const memoryDescription = '保存在本机应用数据目录，与工作空间无关。soul.md 人格仅由你手动编辑；开启自动维护后，Agent 可依据你在对话中明确提供的长期事实与偏好，自主维护 user.md 用户画像，无需逐次确认。两者仍可在此编辑。\n\n新对话使用最新内容，已有对话及继续运行保持原快照；当前对话通过画像工具结果了解更新。若画像被其他对话更新，保存冲突会保留你的编辑，请重新读取并合并。人格和画像不能覆盖工具权限、审批或系统规则。内容会随对话发送给所选模型，请勿填写密码等敏感信息。'
@@ -73,5 +74,6 @@ onUnmounted(() => { for (const entry of entries) entry.editor.dispose() })
       </div>
       <UserProfileHistory v-if="entry.kind === 'user'" :editor="entry.editor" />
     </section>
+    <MemoryCleanup @cleared="selection => { if (selection.user) void entries[1].editor.load(true) }" />
   </div>
 </template>

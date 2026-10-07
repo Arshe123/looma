@@ -9,15 +9,22 @@ export function createMemoryRunDelta() {
   let baseline: AgentMemoryDocument | undefined
   let previousRevision: string | undefined
   let segment = 0
+  const preview = (before: AgentMemoryDocument, after: AgentMemoryDocument): MemoryUpdatedPayload => {
+    const continuous = baseline && previousRevision === before.revision
+    return {
+      kind: 'user', beforeRevision: before.revision, afterRevision: after.revision,
+      changes: diffMemoryLines(before.content, after.content),
+      net: { segment: continuous ? segment : segment + 1, changes: diffMemoryLines((continuous ? baseline : before).content, after.content) },
+    }
+  }
   return {
+    // Intent creation must not advance the successful-save baseline.
+    preview,
     record(before: AgentMemoryDocument, after: AgentMemoryDocument): MemoryUpdatedPayload {
+      const change = preview(before, after)
       if (!baseline || previousRevision !== before.revision) { baseline = before; segment++ }
       previousRevision = after.revision
-      return {
-        kind: 'user', beforeRevision: before.revision, afterRevision: after.revision,
-        changes: diffMemoryLines(before.content, after.content),
-        net: { segment, changes: diffMemoryLines(baseline.content, after.content) },
-      }
+      return change
     },
   }
 }

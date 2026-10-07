@@ -130,6 +130,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     set: (workspaceId: string, state: unknown) => ipcRenderer.invoke('workspaceAi:set', workspaceId, state),
   },
   agentMemory: {
+    previewCleanup: (selection: import('../shared/types/agent-memory').MemoryCleanupSelection) => ipcRenderer.invoke('agentMemory:cleanup:preview', selection),
+    cleanup: (selection: import('../shared/types/agent-memory').MemoryCleanupSelection, token: string) => ipcRenderer.invoke('agentMemory:cleanup:apply', selection, token),
     onChanged: (listener: (event: import('../shared/types/agent-memory').AgentMemoryInvalidation) => void) => {
       const handler = (_: unknown, event: import('../shared/types/agent-memory').AgentMemoryInvalidation) => listener(event)
       ipcRenderer.on('agentMemory:changed', handler)

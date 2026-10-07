@@ -9,6 +9,51 @@ import { projectMemoryUpdates } from '../../../../shared/utils/agent-memory-net'
 import type { AgentEvent } from '../../../../shared/types/agent-events'
 
 const cleanup: Array<() => Promise<unknown>> = []
+it('journals a real bridge update before reporting tool success and invalidates old capabilities after cleanup', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-outbox-'))
+  cleanup.push(() => fs.rm(root, { recursive: true, force: true }))
+  const store = new AgentMemoryStore(root)
+  const updated = vi.fn(async () => { throw new Error('ledger unavailable') })
+  const bridge = await openUserProfileBridge(store, 'r', undefined, undefined, updated, () => true, { workspaceId: 'w', taskId: 't', runId: 'r' })
+  cleanup.push(bridge.close)
+  const call = async (tool: string, args = {}) => (await fetch(bridge.config.url, {
+    method: 'POST', headers: { Authorization: `Bearer ${bridge.config.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runId: 'r', tool, arguments: args }),
+  })).json()
+  const before = (await call('user_profile_read')).data
+  expect((await call('user_profile_update', { content: 'private', expectedRevision: before.revision })).success).toBe(false)
+  expect((await store.read('user')).content).toBe('private')
+  const preview = await store.previewCleanup({ user: true, history: true, snapshots: true })
+  expect(preview.counts.receipts).toBe(1)
+  await store.cleanup(preview.selection, preview.token)
+  const read = (await call('user_profile_read')).data
+  expect((await call('user_profile_update', { content: 'resurrected', expectedRevision: read.revision })).success).toBe(false)
+  await store.replayReceipts(async () => { throw new Error('must not replay forgotten text') })
+  expect((await store.read('user')).content).toBe('')
+})
+it('does not split successful net history when an intervening profile rename fails', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-failed-delta-'))
+  cleanup.push(() => fs.rm(root, { recursive: true, force: true }))
+  let fail = false
+  const store = new AgentMemoryStore(root, { rename: async (from, to) => {
+    if (fail && String(to).endsWith('user.md')) throw new Error('injected rename failure')
+    await fs.rename(from, to)
+  } })
+  const updated = vi.fn()
+  const bridge = await openUserProfileBridge(store, 'r', undefined, undefined, updated, () => true, { workspaceId: 'w', taskId: 't', runId: 'r' })
+  cleanup.push(bridge.close)
+  const call = async (tool: string, args = {}) => (await fetch(bridge.config.url, {
+    method: 'POST', headers: { Authorization: `Bearer ${bridge.config.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runId: 'r', tool, arguments: args }),
+  })).json()
+  const update = async (content: string) => call('user_profile_update', { content, expectedRevision: (await call('user_profile_read')).data.revision })
+  expect((await update('one')).success).toBe(true)
+  fail = true
+  expect((await update('failed')).success).toBe(false)
+  fail = false
+  expect((await update('one\ntwo')).success).toBe(true)
+  expect(updated.mock.calls.at(-1)?.[0].net).toEqual({ segment: 1, changes: [{ type: 'added', text: 'one\ntwo' }] })
+})
 it('persists exact multi-save net receipts and replays after store/ledger restart across competing writes', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-net-ledger-'))
   cleanup.push(() => fs.rm(root, { recursive: true, force: true }))

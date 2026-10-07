@@ -153,6 +153,7 @@ export interface AgentFileProposalPayload {
 export interface AgentRunOptions {
   /** Main-only capability; never accepted from renderer options. */
   userProfileStore?: AgentMemoryStore
+  receiptContext?: import('../agent/AgentMemoryStore').MemoryReceiptContext
   /** Main-owned live authorization; IPC must never copy this from renderer input. */
   canUpdateUserProfile?: () => boolean
   memory?: import('../../../shared/types/agent-memory').AgentMemorySnapshot
@@ -190,7 +191,7 @@ export interface AgentToolResultPayload {
 
 export type AgentStreamEvent =
   // Main-only receipt: deliberately not accepted by isAgentStreamEvent.
-  | { type: 'memory_updated'; runId: string; change: import('../../../shared/types/agent-events').MemoryUpdatedPayload }
+  | { type: 'memory_updated'; runId: string; receipt?: import('../agent/AgentMemoryStore').MemoryReceipt; change: import('../../../shared/types/agent-events').MemoryUpdatedPayload }
   | { type: 'run_started'; runId: string; startedAt: string }
   | { type: 'timeline'; runId: string; step: number; stepId: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; summary: string }
   | { type: 'tool_call'; runId: string; step: number; stepId: string; callId: string; tool: AgentToolName; arguments: Record<string, unknown>; thought_summary: string }
@@ -648,7 +649,7 @@ export const aiService: AIService = {
     if (!canUpdate()) body.agent.enabled_tools = body.agent.enabled_tools.filter(tool => tool !== 'user_profile_update')
     const bridge = options.userProfileStore
       ? await openUserProfileBridge(options.userProfileStore, body.run_id, signal, body.agent.enabled_tools,
-        async change => onEvent({ type: 'memory_updated', runId: body.run_id, change }), canUpdate)
+        async (change, receipt) => onEvent({ type: 'memory_updated', runId: body.run_id, change, ...(receipt ? { receipt } : {}) }), canUpdate, options.receiptContext)
       : undefined
     try {
       return await streamNdjson<unknown>(

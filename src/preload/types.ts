@@ -291,6 +291,8 @@ interface OllamaModelPullProgressPayload extends OllamaDownloadProgressPayload {
 
 interface ElectronAPI {
   agentMemory: {
+    previewCleanup: (selection: import('../shared/types/agent-memory').MemoryCleanupSelection) => Promise<Result<import('../shared/types/agent-memory').MemoryCleanupPreview>>;
+    cleanup: (selection: import('../shared/types/agent-memory').MemoryCleanupSelection, token: string) => Promise<Result<void>>;
     onChanged: (listener: (event: import('../shared/types/agent-memory').AgentMemoryInvalidation) => void) => () => void;
     listUserHistory: (cursor?: string) => Promise<Result<import('../shared/types/agent-memory').UserProfileHistoryPage>>;
     readUserHistory: (id: string) => Promise<Result<import('../shared/types/agent-memory').UserProfileHistoryEntry>>;

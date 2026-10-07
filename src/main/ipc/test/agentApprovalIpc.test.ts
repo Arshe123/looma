@@ -3,6 +3,10 @@ import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import { createHash } from 'crypto'
+import { AgentMemoryStore } from '../../services/agent/AgentMemoryStore'
+import { AgentLedgerStore } from '../../services/agent/AgentLedgerStore'
+import { randomUUID } from 'node:crypto'
+import { createMemoryRunDelta } from '../../../shared/utils/agent-memory-net'
 import { createAppSettingsService } from '../../services/app/appSettingsService'
 
 const state = vi.hoisted(() => ({
@@ -54,6 +58,55 @@ const sender = (id: number) => ({
 })
 
 describe('Agent approval IPC trusted boundary', () => {
+  it('finishes confirmed cleanup before a direct history preview can expose the old record', async () => {
+    const root = path.join(state.workspacePath, 'app-data')
+    const store = new AgentMemoryStore(root)
+    await store.save('user', 'private', sha(''))
+    await store.save('user', 'new', sha('private'))
+    const entry = (await store.listUserHistory()).entries[0]
+    await fs.writeFile(path.join(root, 'memory-cleanup.json'), JSON.stringify({ version: 1, records: [`user-history/${entry.id}.json`] }))
+    const result = await state.handlers.get('agentMemory:history:read')!({}, entry.id)
+    expect(result.success).toBe(false)
+    await expect(fs.stat(path.join(root, 'user-history', `${entry.id}.json`))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+  it('reconciles pending main-owned memory receipts before reconstructing ledger history', async () => {
+    const owner = sender(889)
+    const started = await state.handlers.get('agent:runStream:start')!({ sender: owner }, 'recover', 'workspace-1', { input: 'hi', receiptContext: { workspaceId: 'evil' } })
+    const options = state.streamAgent.mock.calls[0][1]
+    expect(options.receiptContext).toEqual({ workspaceId: 'workspace-1', taskId: started.data.taskId, runId: started.data.runId })
+    abortAllAgentRuns()
+    const store = new AgentMemoryStore(path.join(state.workspacePath, 'app-data'))
+    const before = await store.read('user')
+    const after = { content: 'durable fact', revision: sha('durable fact') }
+    await store.save('user', after.content, before.revision, () => true, { id: randomUUID(), timestamp: Date.now(), workspaceId: 'workspace-1', taskId: started.data.taskId, runId: started.data.runId, change: createMemoryRunDelta().record(before, after) })
+    const get = state.handlers.get('agent:ledger:getRuns')!
+    const first = await get({}, 'workspace-1', [started.data.runId])
+    expect(first.success).toBe(true)
+    expect(first.data.runs[started.data.runId].events.filter((event: any) => event.type === 'memory_updated')).toHaveLength(1)
+    await get({}, 'workspace-1', [started.data.runId])
+    expect((await new AgentLedgerStore(path.join(state.workspacePath, '.looma', 'agent-ledger')).materialize()).events.filter(event => event.type === 'memory_updated')).toHaveLength(1)
+    expect(await fs.readdir(path.join(state.workspacePath, 'app-data', 'memory-receipts'))).toEqual([])
+  })
+  it('exposes preview-confirmed cleanup, refuses active runs and never changes automatic authorization', async () => {
+    const read = state.handlers.get('agentMemory:read')!
+    const save = state.handlers.get('agentMemory:save')!
+    const selection = { history: true, snapshots: true, user: true }
+    const initial = await read({}, 'user')
+    await save({}, 'user', 'private', initial.data.revision)
+    const preview = state.handlers.get('agentMemory:cleanup:preview')!
+    const apply = state.handlers.get('agentMemory:cleanup:apply')!
+    expect(preview).toBeTypeOf('function')
+    const first = await preview({}, selection)
+    expect(first.data.counts.history).toBe(1)
+    await state.handlers.get('agent:runStream:start')!({ sender: sender(888) }, 'clean', 'workspace-1', { input: 'hi' })
+    expect((await apply({}, selection, first.data.token)).error).toContain('停止')
+    abortAllAgentRuns()
+    const next = await preview({}, selection)
+    expect((await apply({}, selection, first.data.token)).success).toBe(false)
+    expect((await apply({}, selection, next.data.token)).success).toBe(true)
+    expect((await read({}, 'user')).data.content).toBe('')
+    expect(state.settings!.canAutoMaintainUserProfile()).toBe(true)
+  })
   it('broadcasts plaintext-free invalidations to live windows for app writes', async () => {
     const live = sender(901)
     const dead = { ...sender(902), isDestroyed: () => true }
@@ -130,7 +183,7 @@ describe('Agent approval IPC trusted boundary', () => {
   it('reports memory filesystem failures in Chinese without exposing local paths', async () => {
     await fs.mkdir(path.join(state.workspacePath, 'app-data', 'user.md'), { recursive: true })
     const result = await state.handlers.get('agentMemory:save')!({}, 'user', '偏好中文', 'old')
-    expect(result).toEqual({ success: false, error: '记忆保存失败，请检查文件权限和磁盘空间，重新加载后重试。' })
+    expect(result).toEqual({ success: false, error: '记忆记录不能是链接或非普通文件。' })
   })
   it('does not start a model when memory cannot be read', async () => {
     await fs.mkdir(path.join(state.workspacePath, 'app-data', 'soul.md'), { recursive: true })

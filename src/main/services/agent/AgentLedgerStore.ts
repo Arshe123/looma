@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
+import type { MemoryReceipt } from './AgentMemoryStore'
 import type { AgentEvent } from '../../../shared/types/agent-events'
 import type { AgentMessage } from '../../../shared/types/agent-message'
 import type { AgentRun, AgentTask } from '../../../shared/types/agent-state'
@@ -165,7 +166,10 @@ export class AgentLedgerStore {
 
   async commit(input: LedgerCommitInput): Promise<AgentLedgerTransaction> {
     await this.init()
-    return this.serialize(async () => {
+    return this.serialize(() => this.commitLocked(input))
+  }
+
+  private async commitLocked(input: LedgerCommitInput): Promise<AgentLedgerTransaction> {
       const ledgerSequence = this.shared.nextSequence++
       const txId = `tx_${randomUUID().replace(/-/g, '')}`
       const transaction: AgentLedgerTransaction = {
@@ -181,6 +185,32 @@ export class AgentLedgerStore {
       await writeDurableFile(temporaryPath, stableJson(transaction))
       await rename(temporaryPath, committedPath)
       return transaction
+  }
+
+  /** Stable receipt IDs and sequence allocation share the ledger write queue. */
+  async commitMemoryReceipt(receipt: MemoryReceipt, reservedSequence?: number): Promise<AgentEvent> {
+    await this.init()
+    return this.serialize(async () => {
+      const view = await this.materialize()
+      const run = view.runs[receipt.runId]
+      if (!run || run.taskId !== receipt.taskId) throw new Error('记忆回执原运行不存在或不匹配，请恢复原工作空间后重试。')
+      const id = `evt_memory_${receipt.id.replace(/-/g, '')}`
+      let event = view.events.find(event => event.id === id)
+      if (event && (event.runId !== receipt.runId || event.type !== 'memory_updated' || JSON.stringify(event.payload) !== JSON.stringify(receipt.change))) throw new Error('记忆回执冲突，未覆盖原事件。')
+      if (!event) {
+        const sequence = reservedSequence ?? Math.max(0, ...view.events.filter(event => event.runId === receipt.runId).map(event => event.sequence)) + 1
+        if (!Number.isSafeInteger(sequence) || sequence < 1 || view.events.some(event => event.runId === receipt.runId && event.sequence === sequence)) throw new Error('记忆回执序号冲突，请重新读取对话后重试。')
+        event = { id, taskId: receipt.taskId, runId: receipt.runId, timestamp: receipt.timestamp,
+          sequence,
+          family: 'artifact', type: 'memory_updated', payload: receipt.change }
+        await this.commitLocked({ kind: 'event_commit', events: [event] })
+      }
+      // Retry also syncs a rename that succeeded before a prior sync failure.
+      if (process.platform !== 'win32') {
+        const directory = await open(this.transactionsDir, 'r')
+        try { await directory.sync() } finally { await directory.close() }
+      }
+      return event
     })
   }
 

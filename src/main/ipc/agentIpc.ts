@@ -3,6 +3,7 @@ import path from 'node:path'
 import { app, BrowserWindow, ipcMain, type WebContents } from 'electron'
 import { AgentMemoryError, AgentMemoryStore } from '../services/agent/AgentMemoryStore'
 import type { AgentEvent, AgentPendingFileReview, AgentSource, FilePatchArtifact, JsonValue } from '../../shared/types/agent-events'
+import type { MemoryCleanupSelection } from '../../shared/types/agent-memory'
 import type { AgentMessage } from '../../shared/types/agent-message'
 import type { AgentRun, AgentTask } from '../../shared/types/agent-state'
 import { createEventSnapshot, foldAgentState } from '../../shared/utils/agent-event-projections'
@@ -20,6 +21,7 @@ import { appSettingsService } from './appSettingsIpc'
 const MAX_ACTIVE_AGENT_RUNS_PER_SENDER = 4
 const MAX_ACTIVE_AGENT_RUNS_GLOBAL = 32
 
+let memoryCleanupBusy = false
 let observedMemoryRoot = ''
 let stopMemoryObservation: (() => void) | undefined
 function memoryStore() {
@@ -38,7 +40,7 @@ function memoryStore() {
 }
 
 ipcMain.handle('agentMemory:read', async (_event, kind: 'soul' | 'user') => {
-  try { return { success: true, data: await memoryStore().read(kind) } }
+  try { const store = memoryStore(); await store.recover(); return { success: true, data: await store.read(kind) } }
   catch { return { success: false, error: '记忆读取失败，请检查本机文件后重试。' } }
 })
 ipcMain.handle('agentMemory:save', async (_event, kind: 'soul' | 'user', content: string, revision: string) => {
@@ -51,12 +53,24 @@ ipcMain.handle('agentMemory:history:list', async (_event, cursor?: string) => {
   catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '历史版本读取失败，请重试。' } }
 })
 ipcMain.handle('agentMemory:history:read', async (_event, id: string) => {
-  try { return { success: true, data: await memoryStore().readUserHistory(id) } }
+  try { const store = memoryStore(); await store.recover(); return { success: true, data: await store.readUserHistory(id) } }
   catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '历史版本读取失败，请重试。' } }
 })
 ipcMain.handle('agentMemory:history:restore', async (_event, id: string, revision: string) => {
   try { return { success: true, data: await memoryStore().restoreUserHistory(id, revision) } }
   catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '恢复失败，无法确认保存；请重新加载画像后检查。' } }
+})
+
+ipcMain.handle('agentMemory:cleanup:preview', async (_event, selection: MemoryCleanupSelection) => {
+  try { return { success: true, data: await memoryStore().previewCleanup(selection) } }
+  catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '清理预览失败，请检查本机文件权限后重试。' } }
+})
+ipcMain.handle('agentMemory:cleanup:apply', async (_event, selection: MemoryCleanupSelection, token: string) => {
+  if (memoryCleanupBusy || activeAgentRuns.size) return { success: false, error: '请先停止所有 Agent 运行，再预览并确认清理。' }
+  memoryCleanupBusy = true
+  try { await memoryStore().cleanup(selection, token); return { success: true } }
+  catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '清理未完成，可能已有部分记录删除。请检查权限和磁盘后重新预览；应用会先继续已确认的清理，期间不会新增记忆。' } }
+  finally { memoryCleanupBusy = false }
 })
 
 type ApprovalRequiredStreamEvent = Extract<AgentStreamEvent, { type: 'approval_required' }>
@@ -82,6 +96,23 @@ type ActiveAgentRun = {
 }
 
 export const activeAgentRuns = new Map<string, ActiveAgentRun>()
+
+export async function recoverMemoryReceipts(workspaceId?: string) {
+  await memoryStore().replayReceipts(async receipt => {
+    if ((workspaceId && receipt.workspaceId !== workspaceId) || [...activeAgentRuns.values()].some(run => run.runId === receipt.runId)) return false
+    const workspacePath = await getWorkspacePathById(receipt.workspaceId)
+    if (!workspacePath) {
+      if (workspaceId) throw new AgentMemoryError('记忆回执的工作空间不可用，请恢复工作空间后重试。')
+      return false
+    }
+    await new AgentLedgerStore(path.join(workspacePath, '.looma', 'agent-ledger')).commitMemoryReceipt(receipt)
+    return true
+  })
+}
+// Startup is best-effort; ledger reads retry and surface failures before hydration.
+void app.whenReady?.().then(() => recoverMemoryReceipts()).catch(() => {
+  console.error('记忆回执恢复未完成；打开原对话时将重试。请检查本机文件权限与工作空间。')
+})
 
 const runKey = (senderId: number, requestId: string) => `${senderId}:${requestId}`
 const validIdentifier = (value: unknown): value is string => typeof value === 'string'
@@ -271,6 +302,12 @@ const persistStreamEvent = async (run: ActiveAgentRun, requestId: string, payloa
   if (payload.runId !== run.runId) throw new Error('Agent stream run ID mismatch')
   switch (payload.type) {
     case 'memory_updated': {
+      if (payload.receipt) {
+        if (payload.receipt.workspaceId !== run.workspaceId || payload.receipt.taskId !== run.taskId || payload.receipt.runId !== run.runId) throw new Error('记忆回执运行不匹配。')
+        const event = await ledger.commitMemoryReceipt(payload.receipt, run.nextEventSequence++)
+        run.nextEventSequence = Math.max(run.nextEventSequence, event.sequence + 1)
+        break
+      }
       const receipt = withEventBase(run, 'artifact', 'memory_updated', payload.change)
       await retryTransientLedgerWrite(() => ledger.commit({ kind: 'event_commit', events: [receipt] }))
       break
@@ -758,13 +795,14 @@ ipcMain.handle('agent:ledger:getRun', async (_event, workspaceId: unknown, runId
   const workspacePath = await getWorkspacePathById(workspaceId)
   if (!workspacePath) return { success: false, error: 'Workspace not found' }
   try {
+    await recoverMemoryReceipts(workspaceId)
     const ledger = new AgentLedgerStore(path.join(workspacePath, '.looma', 'agent-ledger'))
     const view = await ledger.materialize()
     const auditIssues = await ledger.audit(view)
     const data = await buildAgentRunHistory(ledger, view, auditIssues, runId)
     return data ? { success: true, data } : { success: false, error: 'Agent run not found' }
   } catch {
-    return { success: false, error: 'Unable to read Agent ledger' }
+    return { success: false, error: '对话账本或记忆回执恢复失败，请检查原工作空间和本机文件权限后重试。' }
   }
 })
 
@@ -775,6 +813,7 @@ ipcMain.handle('agent:ledger:getRuns', async (_event, workspaceId: unknown, runI
   const workspacePath = await getWorkspacePathById(workspaceId)
   if (!workspacePath) return { success: false, error: 'Workspace not found' }
   try {
+    await recoverMemoryReceipts(workspaceId)
     const ledger = new AgentLedgerStore(path.join(workspacePath, '.looma', 'agent-ledger'))
     const view = await ledger.materialize()
     const auditIssues = await ledger.audit(view)
@@ -785,11 +824,12 @@ ipcMain.handle('agent:ledger:getRuns', async (_event, workspaceId: unknown, runI
     }))
     return { success: true, data: { runs } }
   } catch {
-    return { success: false, error: 'Unable to read Agent ledger' }
+    return { success: false, error: '对话账本或记忆回执恢复失败，请检查原工作空间和本机文件权限后重试。' }
   }
 })
 
 ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, workspaceId: unknown, rawOptions: unknown) => {
+  if (memoryCleanupBusy) return { success: false, error: '记忆清理中，请完成后新建对话。' }
   if (!validIdentifier(requestId)) return { success: false, error: 'Invalid Agent request ID' }
   if (!validIdentifier(workspaceId)) return { success: false, error: 'Invalid workspace ID' }
 
@@ -925,9 +965,13 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
   }
 
   await appSettingsService.getSettings()
+  if (activeAgentRuns.get(key) !== run || controller.signal.aborted || memoryCleanupBusy) {
+    cleanupRun(key, run)
+    return { success: false, error: '运行已取消，请新建对话。' }
+  }
   void aiService.streamAgent(
     workspacePath,
-    { ...options, taskId, runId, userProfileStore: memoryStore(), canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
+    { ...options, taskId, runId, userProfileStore: memoryStore(), receiptContext: { workspaceId, taskId: run.taskId, runId }, canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
     payload => sendEvent(key, run, requestId, payload),
     controller.signal,
   ).then(async (result) => {
@@ -960,6 +1004,8 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
 })
 
 ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, workspaceId: unknown, parentRunId: unknown) => {
+  if (memoryCleanupBusy) return { success: false, error: '记忆清理中，请完成后新建对话。' }
+  const memoryGeneration = memoryStore().generation
   if (!validIdentifier(requestId) || !validIdentifier(workspaceId) || !validIdentifier(parentRunId)) {
     return { success: false, error: 'Invalid Agent continuation request' }
   }
@@ -977,6 +1023,7 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
   const ledger = new AgentLedgerStore(ledgerRoot)
   const artifactStore = new AgentArtifactStore(ledgerRoot)
   await Promise.all([ledger.init(), artifactStore.init()])
+  await recoverMemoryReceipts(workspaceId)
   const view = await ledger.materialize()
   const parentRun = view.runs[parentRunId]
   if (!parentRun) return { success: false, error: 'Parent Agent run not found' }
@@ -1011,6 +1058,7 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
     return { success: false, error: error instanceof Error ? error.message : 'Unable to rebuild Agent continuation context' }
   }
 
+  if (memoryCleanupBusy || memoryStore().generation !== memoryGeneration) return { success: false, error: '记忆已清理，请新建对话。' }
   const key = runKey(sender.id, requestId)
   const previous = activeAgentRuns.get(key)
   if (previous) {
@@ -1080,9 +1128,13 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
   }
 
   await appSettingsService.getSettings()
+  if (activeAgentRuns.get(key) !== run || controller.signal.aborted || memoryCleanupBusy) {
+    cleanupRun(key, run)
+    return { success: false, error: '运行已取消，请新建对话。' }
+  }
   void aiService.streamAgent(
     workspacePath,
-    { ...options, userProfileStore: memoryStore(), canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
+    { ...options, userProfileStore: memoryStore(), receiptContext: { workspaceId, taskId: run.taskId, runId }, canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
     payload => sendEvent(key, run, requestId, payload),
     controller.signal,
   ).then(async (result) => {

@@ -5,14 +5,14 @@ import { orderAgentEvents } from './agent-event-projections'
 
 /** Main only: retain at most one bounded baseline, not a growing patch log.
  * Revision gaps split attribution: manual/other-run changes are never ours. */
-export function createMemoryRunDelta() {
+export function createMemoryRunDelta(kind: MemoryUpdatedPayload['kind'] = 'user', workspaceId?: string) {
   let baseline: AgentMemoryDocument | undefined
   let previousRevision: string | undefined
   let segment = 0
   const preview = (before: AgentMemoryDocument, after: AgentMemoryDocument): MemoryUpdatedPayload => {
     const continuous = baseline && previousRevision === before.revision
     return {
-      kind: 'user', beforeRevision: before.revision, afterRevision: after.revision,
+      kind, ...(kind === 'workspace' ? { workspaceId } : {}), beforeRevision: before.revision, afterRevision: after.revision,
       changes: diffMemoryLines(before.content, after.content),
       net: { segment: continuous ? segment : segment + 1, changes: diffMemoryLines((continuous ? baseline : before).content, after.content) },
     }
@@ -33,7 +33,22 @@ export function createMemoryRunDelta() {
  * unverifiable at the final state: preserve only a static update indicator for
  * those segments, not possibly retracted text. Legacy multi-save receipts have
  * no positional/baseline metadata and likewise must not invent a net diff. */
-export function projectMemoryUpdates(events: readonly AgentEvent[]) {
+export function projectMemoryUpdates(events: readonly AgentEvent[]): Array<{ id: string; changes: MemoryUpdatedPayload['changes']; kind?: MemoryUpdatedPayload['kind']; workspaceId?: string }> {
+  const scopes = new Map<string, AgentEvent[]>()
+  for (const event of orderAgentEvents([...events])) {
+    if (event.type !== 'memory_updated') continue
+    const key = JSON.stringify([event.runId, event.payload.kind, event.payload.workspaceId ?? ''])
+    const group = scopes.get(key) ?? []
+    group.push(event); scopes.set(key, group)
+  }
+  return [...scopes.values()].flatMap(group => {
+    const first = group[0] as Extract<AgentEvent, { type: 'memory_updated' }>
+    return projectScopeUpdates(group).map(update => first.payload.kind === 'workspace'
+      ? { ...update, kind: 'workspace' as const, workspaceId: first.payload.workspaceId }
+      : update)
+  })
+}
+function projectScopeUpdates(events: readonly AgentEvent[]) {
   const seen = new Set<string>()
   const receipts = orderAgentEvents([...events]).filter((event): event is Extract<AgentEvent, { type: 'memory_updated' }> => {
     if (event.type !== 'memory_updated' || seen.has(event.id) || event.payload.beforeRevision === event.payload.afterRevision) return false

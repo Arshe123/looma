@@ -135,6 +135,8 @@ class IndexBuildRequest(BaseModel):
     ai_config: Optional[AIConfig] = None
 
 ToolName = Literal[
+    "workspace_memory_read",
+    "workspace_memory_update",
     "user_profile_read",
     "user_profile_update",
     "rag_search",
@@ -154,6 +156,8 @@ DEFAULT_AGENT_TOOLS: tuple[ToolName, ...] = (
     "file_patch",
     "user_profile_read",
     "user_profile_update",
+    "workspace_memory_read",
+    "workspace_memory_update",
 )
 
 
@@ -185,6 +189,7 @@ class AgentMemoryDocument(StrictAgentModel):
 class AgentMemorySnapshot(StrictAgentModel):
     soul: AgentMemoryDocument
     user: AgentMemoryDocument
+    workspace: Optional[AgentMemoryDocument] = None
 
 
 class UserProfileBridgeConfig(StrictAgentModel):
@@ -193,6 +198,7 @@ class UserProfileBridgeConfig(StrictAgentModel):
 
 
 class AgentRunRequest(StrictAgentModel):
+    workspace_memory_bridge: Optional[UserProfileBridgeConfig] = None
     user_profile_bridge: Optional[UserProfileBridgeConfig] = None
     memory: Optional[AgentMemorySnapshot] = None
     input: str = Field(..., min_length=1)

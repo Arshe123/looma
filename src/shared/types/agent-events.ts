@@ -168,7 +168,8 @@ export interface FilePatchFailedPayload {
 }
 
 export interface MemoryUpdatedPayload {
-  kind: 'user'
+  kind: 'user' | 'workspace'
+  workspaceId?: string
   beforeRevision: string
   afterRevision: string
   changes: Array<{ type: 'added' | 'removed'; text: string }>

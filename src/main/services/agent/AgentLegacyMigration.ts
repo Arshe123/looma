@@ -59,7 +59,7 @@ export interface LegacyAgentMigrationResult<T extends LegacyAgentState> {
   migratedRunIds: string[]
 }
 
-const tools = new Set<AgentToolName>(['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch', 'user_profile_read', 'user_profile_update'])
+const tools = new Set<AgentToolName>(['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch', 'user_profile_read', 'user_profile_update', 'workspace_memory_read', 'workspace_memory_update'])
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const stableId = (prefix: string, ...parts: Array<string | number>) => `${prefix}_${digest(parts).slice(0, 24)}`
 const safeText = (value: unknown, max: number) => typeof value === 'string' ? value.trim().slice(0, max) : ''

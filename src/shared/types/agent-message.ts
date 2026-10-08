@@ -6,6 +6,8 @@ export const AGENT_TOOL_NAMES = [
   'file_patch',
   'user_profile_read',
   'user_profile_update',
+  'workspace_memory_read',
+  'workspace_memory_update',
 ] as const
 
 export type AgentToolName = typeof AGENT_TOOL_NAMES[number]

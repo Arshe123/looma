@@ -7,6 +7,16 @@ const updates = [
   { id: 'first', changes: [{ type: 'added' as const, text: '偏好中文\n<script>alert(1)</script>' }] },
   { id: 'second', changes: [{ type: 'removed' as const, text: '旧习惯' }] },
 ]
+it('labels independent user and workspace updates without mixing their disclosures', async () => {
+  const html = await renderToString(createSSRApp(AgentMemoryUpdateNotice, { messageId: 1, completed: true, updates: [
+    { id: 'u', kind: 'user', changes: [{ type: 'removed', text: 'private' }] },
+    { id: 'w', kind: 'workspace', changes: [{ type: 'added', text: 'project' }] },
+  ] }))
+  expect(html).toContain('用户画像已更新')
+  expect(html).toContain('工作空间记忆已更新')
+  expect(html.match(/<button/g)).toHaveLength(1)
+  expect(html).not.toContain('private')
+})
 it('renders deletion-only and conservative receipts as a static memory icon without an empty disclosure', async () => {
   for (const changes of [[{ type: 'removed' as const, text: 'deleted secret' }], []]) {
     const html = await renderToString(createSSRApp(AgentMemoryUpdateNotice, { messageId: 1, completed: true, updates: [{ id: 'delete', changes }] }))

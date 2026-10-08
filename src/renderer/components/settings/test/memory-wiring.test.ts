@@ -3,6 +3,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 const source = (file: string) => fs.readFileSync(path.resolve(file), 'utf8')
 describe('memory settings wiring', () => {
+  it('exposes a scoped current-workspace section with captured APIs and no-workspace state', () => {
+    const ui = source('src/renderer/components/settings/MemorySettings.vue')
+    expect(ui).toContain('全局')
+    expect(ui).toContain('当前工作空间')
+    expect(ui).toContain('workspaceMemory.current.api')
+    expect(ui).toContain('尚未打开工作空间')
+    expect(ui).toContain('workspaceMemory.switchWorkspace')
+  })
   it('wires mount/unmount and a removable main-origin subscription', () => {
     const ui = source('src/renderer/components/settings/MemorySettings.vue')
     expect(ui).toContain('entry.editor.start()')

@@ -4,6 +4,7 @@ import { createOpenWithController } from './ipc/externalDocumentsIpc';
 import { markdownArguments } from './services/app/openWithRouting';
 import { fileURLToPath } from 'url';
 import { workspaceService } from './services/workspace/workspaceService';
+import { registerWindowWorkspace } from './services/workspace/windowWorkspaceContext';
 import { workspaceAiService } from './services/workspace/workspaceAiService';
 import { fileSystemService } from './services/file/fileSystemService';
 import { abortAllAgentRuns } from './ipc/agentIpc';
@@ -146,6 +147,7 @@ function createWindow(initialWorkspaceId?: string, editorOnly = false) {
   });
 
   mainWindow = win;
+  registerWindowWorkspace(win.webContents, initialWorkspaceId ?? null);
   openWith.register(win);
   win.setIcon(path.join(__dirname, '../resources/icon.png'));
 

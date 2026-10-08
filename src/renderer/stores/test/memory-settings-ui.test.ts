@@ -13,7 +13,7 @@ it('exposes one accessible maintenance switch with persistence and honest bounda
 })
 it('moves static descriptions into adjacent help tooltips while keeping errors visible', () => {
   const source = readFileSync('src/renderer/components/settings/MemorySettings.vue', 'utf8')
-  expect(source.match(/<SettingsHelp\b/g)).toHaveLength(3)
+  expect(source.match(/<SettingsHelp\b/g)).toHaveLength(4)
   expect(source).not.toMatch(/<p[^>]*>保存在本机/)
   expect(source).not.toMatch(/<p[^>]*>默认开启/)
   expect(source).not.toMatch(/<p[^>]*>\{\{ entry.description/)

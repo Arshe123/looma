@@ -17,6 +17,8 @@ import {
 } from '../services/ai/AIService'
 import { getWorkspacePathById } from './workspaceIpc'
 import { appSettingsService } from './appSettingsIpc'
+import { workspaceService } from '../services/workspace/workspaceService'
+import { getWindowWorkspace } from '../services/workspace/windowWorkspaceContext'
 
 const MAX_ACTIVE_AGENT_RUNS_PER_SENDER = 4
 const MAX_ACTIVE_AGENT_RUNS_GLOBAL = 32
@@ -73,6 +75,62 @@ ipcMain.handle('agentMemory:cleanup:apply', async (_event, selection: MemoryClea
   finally { memoryCleanupBusy = false }
 })
 
+const workspaceObservers = new Map<string, () => void>()
+function workspaceMemoryStore(workspaceId: string) {
+  const root = app.getPath('userData')
+  const store = AgentMemoryStore.workspace(root, workspaceId)
+  const key = `${root}:${workspaceId}`
+  if (!workspaceObservers.has(key)) workspaceObservers.set(key, store.subscribe(invalidation => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      try { if (!window.webContents.isDestroyed()) window.webContents.send('agentMemory:changed', invalidation) } catch { /* disconnected */ }
+    }
+  }))
+  return store
+}
+async function currentWorkspaceMemoryContext(sender: WebContents) {
+  // Capture before awaiting: a switch may not retarget an in-flight operation.
+  const workspaceId = getWindowWorkspace(sender)
+  if (workspaceId === undefined) throw new AgentMemoryError('未知窗口，未操作任何记忆。')
+  const state = await workspaceService.getState()
+  if (!state.success || !state.data) throw new AgentMemoryError('工作空间信息读取失败，未操作任何记忆。')
+  const workspace = state.data.workspaces.find(item => item.id === workspaceId)
+  return workspace ? { workspaceId: workspace.id, name: workspace.name } : null
+}
+async function boundWorkspaceMemory(sender: WebContents, workspaceId: unknown) {
+  const context = await currentWorkspaceMemoryContext(sender)
+  if (!context || context.workspaceId !== workspaceId) throw new AgentMemoryError('当前工作空间已变化，请重新加载；未操作其他工作空间。')
+  const store = workspaceMemoryStore(context.workspaceId)
+  await store.recover()
+  return store
+}
+ipcMain.handle('workspaceMemory:context', async (event) => {
+  try { return { success: true, data: await currentWorkspaceMemoryContext(event.sender) } }
+  catch { return { success: false, error: '当前工作空间不可用，请重新加载。' } }
+})
+const workspaceOperations = {
+  read: (store: AgentMemoryStore) => store.read('user'),
+  save: (store: AgentMemoryStore, content: string, revision: string) => store.save('user', content, revision),
+  'history:list': (store: AgentMemoryStore, cursor?: string) => store.listUserHistory(cursor),
+  'history:read': (store: AgentMemoryStore, id: string) => store.readUserHistory(id),
+  'history:restore': (store: AgentMemoryStore, id: string, revision: string) => store.restoreUserHistory(id, revision),
+  'maintenance:read': (store: AgentMemoryStore) => store.readMaintenance(),
+  'maintenance:set': (store: AgentMemoryStore, enabled: boolean) => store.setMaintenance(enabled),
+  'cleanup:preview': (store: AgentMemoryStore, selection: MemoryCleanupSelection) => store.previewCleanup(selection),
+  'cleanup:apply': async (store: AgentMemoryStore, selection: MemoryCleanupSelection, token: string) => {
+    if (memoryCleanupBusy || activeAgentRuns.size) throw new AgentMemoryError('请先停止所有 Agent 运行，再预览并确认清理。')
+    memoryCleanupBusy = true
+    try { await store.cleanup(selection, token) } finally { memoryCleanupBusy = false }
+  },
+}
+for (const [operation, execute] of Object.entries(workspaceOperations)) {
+  ipcMain.handle(`workspaceMemory:${operation}`, async (_event, workspaceId: unknown, ...args: unknown[]) => {
+    try {
+      const store = await boundWorkspaceMemory(_event.sender, workspaceId)
+      return { success: true, data: await (execute as (store: AgentMemoryStore, ...args: unknown[]) => Promise<unknown>)(store, ...args) }
+    } catch (error) { return { success: false, error: error instanceof AgentMemoryError ? error.message : '工作空间记忆操作失败，无法确认保存；请重新读取。' } }
+  })
+}
+
 type ApprovalRequiredStreamEvent = Extract<AgentStreamEvent, { type: 'approval_required' }>
 
 type ActiveAgentRun = {
@@ -98,7 +156,13 @@ type ActiveAgentRun = {
 export const activeAgentRuns = new Map<string, ActiveAgentRun>()
 
 export async function recoverMemoryReceipts(workspaceId?: string) {
-  await memoryStore().replayReceipts(async receipt => {
+  const stores = [memoryStore()]
+  if (workspaceId) stores.push(workspaceMemoryStore(workspaceId))
+  else {
+    const state = await workspaceService.getState()
+    if (state.success && state.data) for (const workspace of state.data.workspaces) stores.push(workspaceMemoryStore(workspace.id))
+  }
+  for (const store of stores) await store.replayReceipts(async receipt => {
     if ((workspaceId && receipt.workspaceId !== workspaceId) || [...activeAgentRuns.values()].some(run => run.runId === receipt.runId)) return false
     const workspacePath = await getWorkspacePathById(receipt.workspaceId)
     if (!workspacePath) {
@@ -913,6 +977,7 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
   run.workspacePath = workspacePath
   try {
     options.memory = await memoryStore().snapshot(workspaceId, conversationId)
+    await workspaceMemoryStore(workspaceId).readMaintenance()
   } catch {
     cleanupRun(key, run)
     return { success: false, error: '长期记忆快照读取或保存失败，请检查设置和本机文件后重试。' }
@@ -971,7 +1036,7 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
   }
   void aiService.streamAgent(
     workspacePath,
-    { ...options, taskId, runId, userProfileStore: memoryStore(), receiptContext: { workspaceId, taskId: run.taskId, runId }, canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
+    { ...options, taskId, runId, userProfileStore: memoryStore(), workspaceMemoryStore: workspaceMemoryStore(workspaceId), canUpdateWorkspaceMemory: workspaceMemoryStore(workspaceId).canAutoMaintain, receiptContext: { workspaceId, taskId: run.taskId, runId }, canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
     payload => sendEvent(key, run, requestId, payload),
     controller.signal,
   ).then(async (result) => {
@@ -1054,6 +1119,7 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
       recoveryReason: 'manual_retry',
       memory: await memoryStore().snapshot(workspaceId, parentRun.conversationId, true),
     })
+    await workspaceMemoryStore(workspaceId).readMaintenance()
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unable to rebuild Agent continuation context' }
   }
@@ -1134,7 +1200,7 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
   }
   void aiService.streamAgent(
     workspacePath,
-    { ...options, userProfileStore: memoryStore(), receiptContext: { workspaceId, taskId: run.taskId, runId }, canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
+    { ...options, userProfileStore: memoryStore(), workspaceMemoryStore: workspaceMemoryStore(workspaceId), canUpdateWorkspaceMemory: workspaceMemoryStore(workspaceId).canAutoMaintain, receiptContext: { workspaceId, taskId: run.taskId, runId }, canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
     payload => sendEvent(key, run, requestId, payload),
     controller.signal,
   ).then(async (result) => {

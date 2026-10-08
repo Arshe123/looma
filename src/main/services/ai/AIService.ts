@@ -138,7 +138,7 @@ export interface RagChatMessage {
   tool_call_id?: string
 }
 
-export type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch' | 'user_profile_read' | 'user_profile_update'
+export type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch' | 'user_profile_read' | 'user_profile_update' | 'workspace_memory_read' | 'workspace_memory_update'
 
 export interface AgentFileProposalPayload {
   requiresApproval: true
@@ -153,6 +153,8 @@ export interface AgentFileProposalPayload {
 export interface AgentRunOptions {
   /** Main-only capability; never accepted from renderer options. */
   userProfileStore?: AgentMemoryStore
+  workspaceMemoryStore?: AgentMemoryStore
+  canUpdateWorkspaceMemory?: () => boolean
   receiptContext?: import('../agent/AgentMemoryStore').MemoryReceiptContext
   /** Main-owned live authorization; IPC must never copy this from renderer input. */
   canUpdateUserProfile?: () => boolean
@@ -265,7 +267,7 @@ interface AIService {
 
 }
 
-const AGENT_TOOLS: readonly AgentToolName[] = ['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch', 'user_profile_read', 'user_profile_update']
+const AGENT_TOOLS: readonly AgentToolName[] = ['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch', 'user_profile_read', 'user_profile_update', 'workspace_memory_read', 'workspace_memory_update']
 const AGENT_TOOL_SET = new Set<string>(AGENT_TOOLS)
 const MAX_AGENT_INPUT_CHARS = 32_000
 const MAX_AGENT_HISTORY_MESSAGES = 200
@@ -647,19 +649,25 @@ export const aiService: AIService = {
     const body = toAgentRequestBody(workspacePath, options)
     const canUpdate = options.canUpdateUserProfile ?? (() => false)
     if (!canUpdate()) body.agent.enabled_tools = body.agent.enabled_tools.filter(tool => tool !== 'user_profile_update')
+    const canUpdateWorkspace = options.canUpdateWorkspaceMemory ?? (() => false)
+    if (!options.workspaceMemoryStore) body.agent.enabled_tools = body.agent.enabled_tools.filter(tool => !tool.startsWith('workspace_memory_'))
+    else if (!canUpdateWorkspace()) body.agent.enabled_tools = body.agent.enabled_tools.filter(tool => tool !== 'workspace_memory_update')
     const bridge = options.userProfileStore
       ? await openUserProfileBridge(options.userProfileStore, body.run_id, signal, body.agent.enabled_tools,
         async (change, receipt) => onEvent({ type: 'memory_updated', runId: body.run_id, change, ...(receipt ? { receipt } : {}) }), canUpdate, options.receiptContext)
       : undefined
+    let workspaceBridge: Awaited<ReturnType<typeof openUserProfileBridge>> | undefined
     try {
+      if (options.workspaceMemoryStore) workspaceBridge = await openUserProfileBridge(options.workspaceMemoryStore, body.run_id, signal, body.agent.enabled_tools,
+        async (change, receipt) => onEvent({ type: 'memory_updated', runId: body.run_id, change, ...(receipt ? { receipt } : {}) }), canUpdateWorkspace, options.receiptContext)
       return await streamNdjson<unknown>(
         '/agent/run/stream',
-        { ...body, ...(bridge ? { user_profile_bridge: bridge.config } : {}) },
+        { ...body, ...(bridge ? { user_profile_bridge: bridge.config } : {}), ...(workspaceBridge ? { workspace_memory_bridge: workspaceBridge.config } : {}) },
         async (event) => {
           if (isAgentStreamEvent(event)) {
             // A timed-out tool may still be completing its main-owned save.
             // Revoke new writes and drain its receipt before ending the turn.
-            if (event.type === 'done' || event.type === 'error') await bridge?.close()
+            if (event.type === 'done' || event.type === 'error') await Promise.all([bridge?.close(), workspaceBridge?.close()])
             await onEvent(event)
             return
           }
@@ -667,6 +675,6 @@ export const aiService: AIService = {
         },
         signal,
       )
-    } finally { await bridge?.close() }
+    } finally { await Promise.all([bridge?.close(), workspaceBridge?.close()]) }
   },
 }

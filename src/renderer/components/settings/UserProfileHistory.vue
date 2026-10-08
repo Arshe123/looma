@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, onUnmounted } from 'vue'
 import type { createMemoryEditor } from './memoryEditor'
-import { createUserProfileHistory } from './userProfileHistory'
+import { createUserProfileHistory, type UserProfileHistoryAPI } from './userProfileHistory'
 import SettingsHelp from './SettingsHelp.vue'
-const props = defineProps<{ editor: ReturnType<typeof createMemoryEditor> }>()
-const history = createUserProfileHistory(props.editor, window.electronAPI.agentMemory)
+const props = defineProps<{ editor: ReturnType<typeof createMemoryEditor>; api?: UserProfileHistoryAPI; scopeLabel?: string }>()
+const history = createUserProfileHistory(props.editor, props.api ?? window.electronAPI.agentMemory)
 const open = ref(false)
 const sourceLabels = { manual: '手动保存前', agent: 'Agent 保存前', restore: '恢复前' }
 const description = '每次画像变更前保留旧内容，含升级前已有画像；相同内容不新增版本。来源表示触发备份的操作，不代表内容作者或后续保存成功。失败的保存也可能留下有效的旧内容备份。\n\n恢复会先备份当前画像，可再次恢复撤销；不会更改已有对话快照。请先保存或丢弃未保存的编辑。历史仅保存在本机，不自动删除。'
@@ -55,7 +55,7 @@ onUnmounted(() => history.dispose())
         <button type="button" :disabled="history.busy || editor.busy || !editor.ready || history.selected.revision === editor.revision" class="rounded border border-border-soft px-3 py-1.5 text-sm disabled:opacity-50" @click="history.requestRestore()">恢复此版本</button>
       </div>
       <div v-if="history.confirming" role="group" aria-label="确认恢复历史版本" class="space-y-2 rounded border border-border-soft p-3">
-        <p class="text-sm">确认用所选版本替换当前画像？当前已保存内容会保留在历史中。</p>
+        <p class="text-sm">确认用所选版本替换{{ scopeLabel || '当前画像' }}？当前已保存内容会保留在历史中。</p>
         <div class="flex gap-3">
           <button type="button" class="rounded border border-border-soft px-3 py-1.5 text-sm" @click="history.restore()">确认恢复</button>
           <button type="button" class="px-3 py-1.5 text-sm" @click="history.confirming = false">取消</button>

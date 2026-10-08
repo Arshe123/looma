@@ -60,7 +60,7 @@ type AiIndexResultState = {
   documentCount: number
 }
 
-type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch' | 'user_profile_read' | 'user_profile_update'
+type AgentToolName = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch' | 'user_profile_read' | 'user_profile_update' | 'workspace_memory_read' | 'workspace_memory_update'
 
 export type AgentRecoveryState = {
   recoverable: boolean
@@ -282,7 +282,10 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       const events = (state.agentEventsByMessageKey[getAgentDisplayMessageKey(conversationId, messageId)] || [])
         .filter(event => event.runId === runId)
       if (!['completed', 'failed', 'cancelled'].includes(foldAgentState(events).status)) return []
-      return projectMemoryUpdates(events)
+      return projectMemoryUpdates(events).map(update => {
+        const source = events.find(event => event.id === update.id)
+        return source?.type === 'memory_updated' && source.payload.net ? { ...update, kind: source.payload.kind } : update
+      })
     },
     getMessageAgentDisplayEvents: (state) => (conversationId: string | null | undefined, messageId: number | undefined) => {
       if (!conversationId || messageId === undefined) return []

@@ -42,7 +42,7 @@ describe('聊天消息底栏', () => {
     const html = await renderToString(createSSRApp(AiAssistant))
     expect(html.match(/记忆已更新/g)).toHaveLength(1)
     expect(html).toContain('aria-expanded="false"')
-    expect(html).toContain('aria-controls="memory-changes-2"')
+    expect(html).toContain('aria-controls="memory-changes-2-legacy-"')
     expect(html).toContain('lucide-brain')
     expect(html).toContain('偏好中文')
     expect(html).not.toContain('旧偏好')

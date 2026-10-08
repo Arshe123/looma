@@ -240,7 +240,7 @@ type RagStreamEventPayload =
   | { requestId: string; type: 'done'; result?: RagIndexPayload; status?: string; document_count?: number; file_count?: number; exists?: boolean; persist_dir?: string }
   | { requestId: string; type: 'error'; error: string; stepId?: string };
 
-type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch' | 'user_profile_read' | 'user_profile_update';
+type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch' | 'user_profile_read' | 'user_profile_update' | 'workspace_memory_read' | 'workspace_memory_update';
 interface AgentRunOptionsPayload {
   conversationId?: string;
   input: string;
@@ -290,6 +290,7 @@ interface OllamaModelPullProgressPayload extends OllamaDownloadProgressPayload {
 }
 
 interface ElectronAPI {
+  workspaceMemory: import('../shared/types/agent-memory').WorkspaceMemoryAPI;
   agentMemory: {
     previewCleanup: (selection: import('../shared/types/agent-memory').MemoryCleanupSelection) => Promise<Result<import('../shared/types/agent-memory').MemoryCleanupPreview>>;
     cleanup: (selection: import('../shared/types/agent-memory').MemoryCleanupSelection, token: string) => Promise<Result<void>>;

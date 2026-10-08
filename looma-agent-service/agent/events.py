@@ -49,7 +49,7 @@ def _safe_model_value(value: Any, depth: int = 0) -> Any:
 
 def tool_result_model_context(result: ToolResult) -> dict[str, Any]:
     # Full replacement requires the complete bounded document, not a 4k preview.
-    if result.tool in {"user_profile_read", "user_profile_update"} and result.success and isinstance(result.data, dict):
+    if result.tool in {"user_profile_read", "user_profile_update", "workspace_memory_read", "workspace_memory_update"} and result.success and isinstance(result.data, dict):
         content, revision = result.data.get("content"), result.data.get("revision")
         if isinstance(content, str) and len(content) <= 16000 and isinstance(revision, str) and len(revision) == 64:
             return {"facts": [], "structuredData": {"content": content, "revision": revision}}

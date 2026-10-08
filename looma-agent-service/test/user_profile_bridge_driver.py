@@ -16,26 +16,29 @@ from schemas import AgentRunRequest, AIConfig, ChatModelConfig
 async def run():
     payload = json.loads(sys.stdin.read())
     protocol = payload.pop('_protocol')
+    prefix = 'workspace_memory' if payload.pop('_scope', 'user') == 'workspace' else 'user_profile'
+    read_tool, update_tool = prefix + '_read', prefix + '_update'
     request = AgentRunRequest.model_validate(payload)
     request.ai_config = AIConfig(chat=ChatModelConfig(provider=protocol, model='test-model', api_key='test-only'))
     provider = create_chat_provider(request.ai_config.chat)
     rounds = 0
-    can_update = 'user_profile_update' in request.agent.enabled_tools
+    can_update = update_tool in request.agent.enabled_tools
+    bridge = getattr(request, prefix + '_bridge')
 
     async def completion(*args, **kwargs):
         nonlocal rounds
         messages = args[0] if protocol == 'ollama' else kwargs['messages']
         serialized = json.dumps(messages, ensure_ascii=False)
-        assert request.user_profile_bridge.token not in serialized
-        assert request.user_profile_bridge.url not in serialized
-        assert 'user_profile_update' in serialized or protocol == 'ollama'
+        assert bridge.token not in serialized
+        assert bridge.url not in serialized
+        assert update_tool in serialized or protocol == 'ollama'
         if protocol == 'ollama':
             names = {tool['function']['name'] for tool in args[1]}
-            assert 'user_profile_read' in names
-            assert ('user_profile_update' in names) == can_update
+            assert read_tool in names
+            assert (update_tool in names) == can_update
         else:
             schemas = json.loads(messages[0]['content'].split('运行时可用工具 JSON：\n')[-1])
-            assert ('user_profile_update' in {s['name'] for s in schemas}) == can_update
+            assert (update_tool in {s['name'] for s in schemas}) == can_update
         if rounds == 1 and not can_update:
             result = json.loads([m for m in messages if m['role'] == 'tool'][-1]['content'])
             assert result['success']
@@ -44,13 +47,13 @@ async def run():
                 return {'message': {'content': '仅读取'}, 'done_reason': 'stop'}
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({'type': 'final', 'answer': '仅读取'})), finish_reason='stop')])
         if rounds == 0:
-            name, arguments = 'user_profile_read', {}
+            name, arguments = read_tool, {}
         elif rounds == 1:
             result = json.loads([m for m in messages if m['role'] == 'tool'][-1]['content'])
             assert result['success']
             data = result['modelContext']['structuredData']
             assert len(data['content']) > 4000, 'must not replace a truncated profile'
-            name, arguments = 'user_profile_update', {'content': data['content'].replace('偏好英文', '偏好中文').replace('过时习惯\n', '') + '\n喜欢简洁回答', 'expectedRevision': data['revision']}
+            name, arguments = update_tool, {'content': data['content'].replace('偏好英文', '偏好中文').replace('过时习惯\n', '') + '\n喜欢简洁回答', 'expectedRevision': data['revision']}
         else:
             result = json.loads([m for m in messages if m['role'] == 'tool'][-1]['content'])
             assert result['success']

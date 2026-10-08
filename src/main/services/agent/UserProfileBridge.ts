@@ -9,12 +9,15 @@ import { createMemoryRunDelta } from '../../../shared/utils/agent-memory-net'
 /** Run-local capability, never a workspace path or model-visible tool argument. */
 export async function openUserProfileBridge(store: AgentMemoryStore, runId: string, signal?: AbortSignal, enabledTools: readonly string[] = ['user_profile_read', 'user_profile_update'], onUpdated?: (change: MemoryUpdatedPayload, receipt?: MemoryReceipt) => Promise<unknown>, canUpdate: () => boolean = () => false, receiptContext?: MemoryReceiptContext) {
   await store.recover()
+  if (store.workspaceId && receiptContext && receiptContext.workspaceId !== store.workspaceId) throw new AgentMemoryError('工作空间运行不匹配。')
+  const readTool = store.scope === 'workspace' ? 'workspace_memory_read' : 'user_profile_read'
+  const updateTool = store.scope === 'workspace' ? 'workspace_memory_update' : 'user_profile_update'
   const generation = store.generation
   const token = randomBytes(32).toString('hex')
   let closed = false
   const authorized = () => !closed && !signal?.aborted && generation === store.generation && canUpdate()
   let readRevision: string | undefined
-  const delta = createMemoryRunDelta()
+  const delta = createMemoryRunDelta(store.scope, store.workspaceId)
   let queue: Promise<unknown> = Promise.resolve()
   const server = createServer((request, response) => {
     const reply = (status: number, body: unknown) => {
@@ -38,7 +41,7 @@ export async function openUserProfileBridge(store: AgentMemoryStore, runId: stri
         body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AgentMemoryError('用户画像请求无效。')
       } catch { reply(400, { success: false, code: 'user_profile_invalid', error: '用户画像请求无效或过长。' }); return }
-      if (closed || signal?.aborted || body.runId !== runId || typeof body.tool !== 'string' || !enabledTools.includes(body.tool)) {
+      if (closed || signal?.aborted || (store.scope === 'workspace' && generation !== store.generation) || body.runId !== runId || typeof body.tool !== 'string' || !enabledTools.includes(body.tool) || ![readTool, updateTool].includes(body.tool)) {
         reply(403, { success: false, code: 'user_profile_denied', error: '用户画像运行授权已失效。' }); return
       }
       try {
@@ -48,12 +51,12 @@ export async function openUserProfileBridge(store: AgentMemoryStore, runId: stri
           reply(400, { success: false, code: 'user_profile_invalid', error: '用户画像参数无效。' }); return
         }
         const input = args as Record<string, unknown>
-        if (body.tool === 'user_profile_read' && Object.keys(input).length === 0) {
+        if (body.tool === readTool && Object.keys(input).length === 0) {
           const data = await store.read('user')
           readRevision = data.revision
           reply(200, { success: true, data }); return
         }
-        if (body.tool !== 'user_profile_update' || Object.keys(input).length !== 2
+        if (body.tool !== updateTool || Object.keys(input).length !== 2
           || typeof input.content !== 'string' || input.content.length > MAX_MEMORY_CHARS || input.content.includes('\0')
           || typeof input.expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(input.expectedRevision)) {
           reply(400, { success: false, code: 'user_profile_invalid', error: '用户画像参数无效，只允许更新 user.md。' }); return

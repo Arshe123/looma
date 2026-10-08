@@ -12,6 +12,7 @@ const receiptId = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0
 const revision = (content: string | Buffer) => createHash('sha256').update(content).digest('hex')
 const queues = new Map<string, Promise<unknown>>()
 const generations = new Map<string, number>()
+const maintenance = new Map<string, boolean>()
 const subscribers = new Map<string, Set<(event: AgentMemoryInvalidation) => void>>()
 const historyId = /^\d{13}-[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/
 export class AgentMemoryError extends Error {}
@@ -22,6 +23,13 @@ function validateContent(content: unknown): asserts content is string {
   if (typeof content !== 'string' || content.length > MAX_MEMORY_CHARS || content.includes('\0')) throw new AgentMemoryError('记忆内容无效或过长。')
 }
 export class AgentMemoryStore {
+  /** Main-only factory. Resolve the stable ID against known workspaces first. */
+  static workspace(root: string, workspaceId: string) {
+    if (typeof workspaceId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(workspaceId)) throw new AgentMemoryError('工作空间标识无效。')
+    return new AgentMemoryStore(path.join(root, 'workspace-memory', revision(workspaceId)), {}, workspaceId)
+  }
+  get scope() { return this.workspaceId ? 'workspace' as const : 'user' as const }
+  subscribe(listener: (event: AgentMemoryInvalidation) => void) { return AgentMemoryStore.subscribe(this.root, listener) }
   static subscribe(root: string, listener: (event: AgentMemoryInvalidation) => void) {
     const key = path.resolve(root)
     const listeners = subscribers.get(key) ?? new Set()
@@ -29,13 +37,43 @@ export class AgentMemoryStore {
     return () => { listeners.delete(listener); if (!listeners.size) subscribers.delete(key) }
   }
   private invalidate(event: AgentMemoryInvalidation) {
+    if (this.workspaceId) event = { ...event, kind: 'workspace', workspaceId: this.workspaceId }
     for (const listener of subscribers.get(path.resolve(this.root)) ?? []) {
       // A disconnected observer cannot change the outcome of a durable save.
       try { listener(event) } catch { /* observer isolated */ }
     }
   }
-  constructor(private readonly root: string, private readonly io: { rename?: typeof fs.rename; syncDirectory?: (directory: string) => Promise<void> } = {}) {}
+  constructor(private readonly root: string, private readonly io: { rename?: typeof fs.rename; syncDirectory?: (directory: string) => Promise<void> } = {}, readonly workspaceId?: string) {}
   get generation() { return generations.get(path.resolve(this.root)) ?? 0 }
+  canAutoMaintain = () => maintenance.get(path.resolve(this.root)) === true
+  async readMaintenance(): Promise<boolean> {
+    return this.locked(async () => {
+      if (!this.workspaceId) throw new AgentMemoryError('仅用于工作空间设置。')
+      let enabled = true
+      try {
+        await this.safePath('maintenance.json')
+        const value = JSON.parse(await fs.readFile(path.join(this.root, 'maintenance.json'), 'utf8'))
+        if (typeof value.enabled !== 'boolean') throw new AgentMemoryError('工作空间记忆设置损坏。')
+        enabled = value.enabled
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { maintenance.set(path.resolve(this.root), false); throw error }
+      }
+      maintenance.set(path.resolve(this.root), enabled)
+      return enabled
+    })
+  }
+  async setMaintenance(enabled: boolean) {
+    return this.locked(async () => {
+      if (!this.workspaceId || typeof enabled !== 'boolean') throw new AgentMemoryError('工作空间记忆设置无效。')
+      // Fail closed if a post-rename durability error makes the outcome unknown.
+      maintenance.set(path.resolve(this.root), false)
+      try {
+        await this.atomicWrite(path.join(this.root, 'maintenance.json'), JSON.stringify({ enabled }))
+        maintenance.set(path.resolve(this.root), enabled)
+      } finally { this.invalidate({ kind: 'workspace', maintenance: true }) }
+      return enabled
+    })
+  }
   async recover() { await this.locked(async () => {}) }
   private locked<T>(operation: () => Promise<T>): Promise<T> {
     const key = path.resolve(this.root)
@@ -46,26 +84,48 @@ export class AgentMemoryStore {
     return next
   }
   private file(kind: AgentMemoryKind) {
+    if (this.workspaceId && kind !== 'user') throw new AgentMemoryError('工作空间不能访问全局记忆。')
     if (kind !== 'soul' && kind !== 'user') throw new AgentMemoryError('记忆类型无效。')
     return path.join(this.root, `${kind}.md`)
   }
   async snapshot(workspaceId: string, conversationId: string, requireExisting = false): Promise<AgentMemorySnapshot> {
+    if (this.workspaceId) throw new AgentMemoryError('工作空间不能保存全局快照。')
     return this.locked(async () => {
       const file = path.join(this.root, 'memory-snapshots', `${revision(JSON.stringify([workspaceId, conversationId]))}.json`)
       try {
         await this.safePath(path.relative(this.root, file).split(path.sep).join('/'))
-        const snapshot = JSON.parse(await fs.readFile(file, 'utf8')) as AgentMemorySnapshot
+        const snapshot = JSON.parse(await fs.readFile(file, 'utf8')) as AgentMemorySnapshot & { workspaceBound?: boolean }
         for (const kind of ['soul', 'user'] as const) {
           validateContent(snapshot?.[kind]?.content)
           if (snapshot[kind].revision !== revision(snapshot[kind].content)) throw new AgentMemoryError('记忆快照已损坏。')
         }
-        return snapshot
+        const workspace = snapshot.workspaceBound
+          ? await AgentMemoryStore.workspace(this.root, workspaceId).workspaceSnapshot(conversationId, true)
+          : { content: '', revision: revision('') }
+        return { soul: snapshot.soul, user: snapshot.user, workspace }
       }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
       if (requireExisting) throw new AgentMemoryError('原对话记忆快照缺失，请新建对话。')
       const snapshot = { soul: await this.read('soul'), user: await this.read('user') }
-      await this.atomicWrite(file, JSON.stringify(snapshot))
-      return snapshot
+      const workspace = await AgentMemoryStore.workspace(this.root, workspaceId).workspaceSnapshot(conversationId, false)
+      await this.atomicWrite(file, JSON.stringify({ ...snapshot, workspaceBound: true }))
+      return { ...snapshot, workspace }
+    })
+  }
+  private workspaceSnapshot(conversationId: string, requireExisting: boolean): Promise<AgentMemoryDocument> {
+    return this.locked(async () => {
+      const relative = `memory-snapshots/${revision(conversationId)}.json`
+      try {
+        await this.safePath(relative)
+        const document = JSON.parse(await fs.readFile(path.join(this.root, relative), 'utf8')) as AgentMemoryDocument
+        validateContent(document.content)
+        if (document.revision !== revision(document.content)) throw new AgentMemoryError('工作空间记忆快照已损坏。')
+        return document
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+      if (requireExisting) throw new AgentMemoryError('原工作空间记忆快照缺失，请新建对话。')
+      const document = await this.read('user')
+      await this.atomicWrite(path.join(this.root, relative), JSON.stringify(document))
+      return document
     })
   }
   async read(kind: AgentMemoryKind): Promise<AgentMemoryDocument> {
@@ -189,7 +249,8 @@ export class AgentMemoryStore {
       && items.every(item => item && ['added', 'removed'].includes(item.type) && typeof item.text === 'string' && item.text.length <= MAX_MEMORY_CHARS && !item.text.includes('\0'))
     if (!value || !receiptId.test(value.id) || !identifier(value.workspaceId) || !identifier(value.runId) || !identifier(value.taskId)
       || !Number.isSafeInteger(value.timestamp) || value.timestamp < 0 || !['pending', 'committed'].includes(value.status)
-      || value.change?.kind !== 'user' || !hash(value.change.beforeRevision) || !hash(value.change.afterRevision)
+      || value.change?.kind !== this.scope || (this.workspaceId !== undefined && (value.workspaceId !== this.workspaceId || value.change.workspaceId !== this.workspaceId))
+      || !hash(value.change.beforeRevision) || !hash(value.change.afterRevision)
       || !changes(value.change.changes) || (value.change.net !== undefined && (!value.change.net || !Number.isSafeInteger(value.change.net.segment)
         || value.change.net.segment < 1 || !changes(value.change.net.changes)))) throw new AgentMemoryError('记忆回执日志损坏，请检查本机文件后重试；未继续保存画像。')
   }
@@ -256,6 +317,10 @@ export class AgentMemoryStore {
     return { history: value.history, snapshots: value.snapshots, user: value.user }
   }
   private async safePath(relative: string, directory = false) {
+    if (this.workspaceId) {
+      const parent = await fs.lstat(path.dirname(this.root))
+      if (!parent.isDirectory()) throw new AgentMemoryError('工作空间记忆目录不能是链接。')
+    }
     const root = await fs.lstat(this.root)
     if (!root.isDirectory()) throw new AgentMemoryError('记忆目录不能是链接或非目录。')
     const parts = relative.split('/')
@@ -311,7 +376,7 @@ export class AgentMemoryStore {
       fingerprints.push(revision(await fs.readFile(this.file('user'))))
       if (selection.user) { records.push('user.md'); counts.user++ }
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; fingerprints.push('absent') }
-    return { selection, records, skipped, counts, token: revision(JSON.stringify([selection, records, skipped, fingerprints])) }
+    return { selection, records, skipped, counts, token: revision(JSON.stringify([this.workspaceId ?? 'global', selection, records, skipped, fingerprints])) }
   }
   async previewCleanup(value: MemoryCleanupSelection) {
     const selection = this.cleanupSelection(value)
@@ -350,6 +415,7 @@ export class AgentMemoryStore {
   }
   private async atomicWrite(file: string, content: string, onRenamed?: () => void) {
     await fs.mkdir(path.dirname(file), { recursive: true })
+    await this.safePath(path.relative(this.root, path.dirname(file)).split(path.sep).join('/') || '.', true)
     const temporary = `${file}.${randomUUID()}.tmp`
     try {
       const handle = await fs.open(temporary, 'wx', 0o600)

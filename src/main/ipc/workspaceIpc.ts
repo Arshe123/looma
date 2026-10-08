@@ -2,6 +2,7 @@ import { ipcMain, dialog, BrowserWindow, app } from 'electron';
 import { workspaceAiService } from '../services/workspace/workspaceAiService';
 import { workspaceMetaService } from '../services/workspace/workspaceMetaService';
 import { workspaceService } from '../services/workspace/workspaceService';
+import { getWindowWorkspace, setWindowWorkspace } from '../services/workspace/windowWorkspaceContext';
 import { mainWindow } from '../index';
 import { getWindowFromEvent } from './windowIpc';
 import fs from 'fs/promises';
@@ -77,8 +78,12 @@ ipcMain.handle('workspace:checkExists', async (_, id: string) => {
 });
 
 ipcMain.handle('workspace:setActive', async (event, id: string | null) => {
+  if (getWindowWorkspace(event.sender) === undefined) return { success: false, error: '未知窗口' };
   const r = await workspaceService.setActiveWorkspace(id);
-  if (r.success) await setWindowTitleForWorkspace(id, getWindowFromEvent(event));
+  if (r.success) {
+    if (!setWindowWorkspace(event.sender, id)) return { success: false, error: '窗口已关闭' };
+    await setWindowTitleForWorkspace(id, getWindowFromEvent(event));
+  }
   return r;
 });
 

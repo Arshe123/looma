@@ -37,6 +37,7 @@ class AgentToolContext:
     ai_config: AIConfig | None = None
     knowledge: KnowledgeConfig | None = None
     user_profile_bridge: dict[str, str] | None = None
+    workspace_memory_bridge: dict[str, str] | None = None
 
 
 class AgentTool(ABC):

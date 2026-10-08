@@ -46,7 +46,7 @@ _FILE_PATCH_VALIDATION_MESSAGES = {
 
 
 def _safe_argument_error(tool_name: str, exc: Exception) -> tuple[str, str, bool]:
-    if tool_name in {"user_profile_read", "user_profile_update"}:
+    if tool_name in {"user_profile_read", "user_profile_update", "workspace_memory_read", "workspace_memory_update"}:
         return "tool_invalid_arguments", "用户画像参数无效：只允许有界完整内容与最新 expectedRevision，不接受路径或人格修改。", True
     if tool_name == "file_patch" and isinstance(exc, ValidationError):
         for item in exc.errors():
@@ -323,7 +323,7 @@ class ToolRegistry:
         try:
             serialized, truncated = _serialize_json_output(
                 data,
-                110_000 if tool_name in {"user_profile_read", "user_profile_update"} else self._max_output_chars,
+                110_000 if tool_name in {"user_profile_read", "user_profile_update", "workspace_memory_read", "workspace_memory_update"} else self._max_output_chars,
                 max_string_chars=(
                     MAX_APPROVAL_OUTPUT_STRING_CHARS
                     if approval_payload is not None
@@ -364,7 +364,7 @@ class ToolRegistry:
     def _policy_allows(self, tool: AgentTool) -> bool:
         if tool.name not in self._allowed_tools:
             return False
-        return not self._default_policy or tool.risk_level == "read" or tool.name == "user_profile_update"
+        return not self._default_policy or tool.risk_level == "read" or tool.name in {"user_profile_update", "workspace_memory_update"}
 
     @staticmethod
     def _failure(

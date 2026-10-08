@@ -25,6 +25,8 @@ const AGENT_TOOL_NAMES = new Set([
   'file_patch',
   'user_profile_read',
   'user_profile_update',
+  'workspace_memory_read',
+  'workspace_memory_update',
 ])
 
 const parseArguments = (step: AiAssistantTimelineStep): Record<string, unknown> => {

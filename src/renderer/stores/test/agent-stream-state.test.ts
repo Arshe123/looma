@@ -95,7 +95,7 @@ describe('agent stream state', () => {
     })
     store.agentEventsByMessageKey[key] = [second, finish, receipt, receipt]
     expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId, runId)).toEqual([
-      { id: second.id, changes: second.payload.net.changes },
+      { id: second.id, kind: 'user', changes: second.payload.net.changes },
     ])
     expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId, 'child-run')).toEqual([])
     expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId + 1, runId)).toEqual([])
@@ -106,7 +106,7 @@ describe('agent stream state', () => {
     store.agentEventsByMessageKey = {}
     const message = useWorkspaceStore().aiAssistant.conversations.find(c => c.id === conversationId)!.messages.find(m => m.id === run.assistantMessageId)!
     await store.hydrateAgentHistory('workspace-1', [{ id: conversationId, messages: [message] }])
-    expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId, runId)).toEqual([{ id: second.id, changes: second.payload.net.changes }])
+    expect(store.getMessageMemoryUpdates(conversationId, run.assistantMessageId, runId)).toEqual([{ id: second.id, kind: 'user', changes: second.payload.net.changes }])
   })
 
   it('keeps late saved memory on a cancelled parent even after a child turn starts', async () => {

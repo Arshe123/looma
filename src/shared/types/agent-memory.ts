@@ -1,10 +1,22 @@
 export type AgentMemoryKind = 'soul' | 'user'
 /** Main-owned invalidation, never profile plaintext. Missing revision means
  * a commit may have reached disk but durability could not be confirmed. */
-export interface AgentMemoryInvalidation { kind: AgentMemoryKind; revision?: string }
+export interface AgentMemoryInvalidation { kind: AgentMemoryKind | 'workspace'; revision?: string; workspaceId?: string; maintenance?: boolean }
 export interface AgentMemoryDocument { content: string; revision: string }
-export interface AgentMemorySnapshot { soul: AgentMemoryDocument; user: AgentMemoryDocument }
+export interface AgentMemorySnapshot { soul: AgentMemoryDocument; user: AgentMemoryDocument; workspace?: AgentMemoryDocument }
 export const MAX_MEMORY_CHARS = 16000
+export interface WorkspaceMemoryAPI {
+  context(): Promise<import('./Result').Result<{ workspaceId: string; name: string } | null>>
+  read(workspaceId: string): Promise<import('./Result').Result<AgentMemoryDocument>>
+  save(workspaceId: string, content: string, revision: string): Promise<import('./Result').Result<AgentMemoryDocument>>
+  readMaintenance(workspaceId: string): Promise<import('./Result').Result<boolean>>
+  setMaintenance(workspaceId: string, enabled: boolean): Promise<import('./Result').Result<boolean>>
+  listHistory(workspaceId: string, cursor?: string): Promise<import('./Result').Result<UserProfileHistoryPage>>
+  readHistory(workspaceId: string, id: string): Promise<import('./Result').Result<UserProfileHistoryEntry>>
+  restoreHistory(workspaceId: string, id: string, revision: string): Promise<import('./Result').Result<AgentMemoryDocument>>
+  previewCleanup(workspaceId: string, selection: MemoryCleanupSelection): Promise<import('./Result').Result<MemoryCleanupPreview>>
+  cleanup(workspaceId: string, selection: MemoryCleanupSelection, token: string): Promise<import('./Result').Result<void>>
+}
 export interface MemoryCleanupSelection { history: boolean; snapshots: boolean; user: boolean }
 export interface MemoryCleanupPreview {
   selection: MemoryCleanupSelection

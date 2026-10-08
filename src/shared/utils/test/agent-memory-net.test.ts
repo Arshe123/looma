@@ -4,6 +4,11 @@ import { createMemoryRunDelta, projectMemoryUpdates } from '../agent-memory-net'
 import type { AgentEvent, MemoryUpdatedPayload } from '../../types/agent-events'
 const doc = (content: string) => ({ content, revision: createHash('sha256').update(content).digest('hex') })
 const event = (payload: MemoryUpdatedPayload, sequence: number): Extract<AgentEvent, { type: 'memory_updated' }> => ({ id: `e${sequence}`, sequence, runId: 'run', taskId: 'task', timestamp: sequence, family: 'artifact', type: 'memory_updated', payload })
+it('does not mix interleaved workspace and user revision segments or reversions', () => {
+  const user = createMemoryRunDelta(), workspace = createMemoryRunDelta('workspace', 'a')
+  const events = [event(user.record(doc(''), doc('user')), 1), event(workspace.record(doc(''), doc('project')), 2), event(user.record(doc('user'), doc('')), 3)]
+  expect(projectMemoryUpdates(events)).toEqual([{ id: 'e2', kind: 'workspace', workspaceId: 'a', changes: [{ type: 'added', text: 'project' }] }])
+})
 
 it('projects exact first-to-final changes, not retracted additions, identically after JSON replay', () => {
   const delta = createMemoryRunDelta()

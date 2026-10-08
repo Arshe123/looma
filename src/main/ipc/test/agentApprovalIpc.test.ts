@@ -8,6 +8,8 @@ import { AgentLedgerStore } from '../../services/agent/AgentLedgerStore'
 import { randomUUID } from 'node:crypto'
 import { createMemoryRunDelta } from '../../../shared/utils/agent-memory-net'
 import { createAppSettingsService } from '../../services/app/appSettingsService'
+import { registerWindowWorkspace, setWindowWorkspace } from '../../services/workspace/windowWorkspaceContext'
+import type { WebContents } from 'electron'
 
 const state = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => any>(),
@@ -16,6 +18,7 @@ const state = vi.hoisted(() => ({
   streamAgent: vi.fn(),
   settings: null as ReturnType<typeof createAppSettingsService> | null,
   windows: [] as any[],
+  activeWorkspaceId: 'workspace-1' as string | null,
 }))
 
 vi.mock('electron', () => ({
@@ -30,6 +33,9 @@ vi.mock('electron', () => ({
 vi.mock('../workspaceIpc', () => ({
   getWorkspacePathById: vi.fn(async () => state.workspacePath),
 }))
+vi.mock('../../services/workspace/workspaceService', () => ({ workspaceService: {
+  getState: async () => ({ success: true, data: { activeId: state.activeWorkspaceId, workspaces: [{ id: 'workspace-1', name: 'A', path: state.workspacePath }, { id: 'workspace-2', name: 'B', path: state.workspacePath }] } }),
+} }))
 vi.mock('../appSettingsIpc', () => ({ appSettingsService: {
   getSettings: () => state.settings!.getSettings(),
   canAutoMaintainUserProfile: () => state.settings!.canAutoMaintainUserProfile(),
@@ -58,6 +64,61 @@ const sender = (id: number) => ({
 })
 
 describe('Agent approval IPC trusted boundary', () => {
+  it('binds workspace settings to each main-owned window, not the global active workspace', async () => {
+    const a = { sender: sender(200) as unknown as WebContents }
+    const b = { sender: sender(201) as unknown as WebContents }
+    registerWindowWorkspace(a.sender, 'workspace-1')
+    registerWindowWorkspace(b.sender, 'workspace-2')
+    state.activeWorkspaceId = 'workspace-1'
+    expect((await state.handlers.get('workspaceMemory:context')!(b)).data).toEqual({ workspaceId: 'workspace-2', name: 'B' })
+    const read = state.handlers.get('workspaceMemory:read')!
+    const save = state.handlers.get('workspaceMemory:save')!
+    const initial = await read(a, 'workspace-1')
+    expect((await save(a, 'workspace-2', 'wrong', initial.data.revision)).success).toBe(false)
+    expect((await save(a, 'workspace-1', 'A only', initial.data.revision)).success).toBe(true)
+    expect((await save(b, 'workspace-2', 'B only', initial.data.revision)).success).toBe(true)
+    state.activeWorkspaceId = 'workspace-2'
+    expect((await read(a, 'workspace-1')).data.content).toBe('A only')
+    expect((await read(b, 'workspace-2')).data.content).toBe('B only')
+    for (const operation of ['read', 'save', 'history:list', 'history:read', 'history:restore', 'maintenance:read', 'maintenance:set', 'cleanup:preview', 'cleanup:apply']) {
+      expect((await state.handlers.get(`workspaceMemory:${operation}`)!(a, 'workspace-2')).success).toBe(false)
+    }
+    setWindowWorkspace(a.sender, 'workspace-2')
+    expect((await save(a, 'workspace-1', 'late', initial.data.revision)).success).toBe(false)
+    setWindowWorkspace(a.sender, null)
+    expect((await state.handlers.get('workspaceMemory:context')!(a)).data).toBeNull()
+    expect((await read(a, 'workspace-2')).success).toBe(false)
+    expect((await read({ sender: sender(201) }, 'workspace-2')).success).toBe(false)
+    expect((await state.handlers.get('workspaceMemory:context')!({})).success).toBe(false)
+    state.activeWorkspaceId = 'workspace-1'
+  })
+  it('pins an in-flight workspace save to its original window scope across switching', async () => {
+    const owner = sender(202) as unknown as WebContents
+    registerWindowWorkspace(owner, 'workspace-1')
+    const save = state.handlers.get('workspaceMemory:save')!({ sender: owner }, 'workspace-1', 'original target', sha(''))
+    setWindowWorkspace(owner, 'workspace-2')
+    state.activeWorkspaceId = 'workspace-2'
+    expect((await save).success).toBe(true)
+    const root = path.join(state.workspacePath, 'app-data')
+    expect((await AgentMemoryStore.workspace(root, 'workspace-1').read('user')).content).toBe('original target')
+    expect((await AgentMemoryStore.workspace(root, 'workspace-2').read('user')).content).toBe('')
+    state.activeWorkspaceId = 'workspace-1'
+  })
+  it('keeps a running Agent workspace memory bound to the run after its window switches', async () => {
+    const owner = sender(203) as unknown as WebContents
+    registerWindowWorkspace(owner, 'workspace-1')
+    const root = path.join(state.workspacePath, 'app-data')
+    await AgentMemoryStore.workspace(root, 'workspace-1').save('user', 'run A', sha(''))
+    await AgentMemoryStore.workspace(root, 'workspace-2').save('user', 'run B', sha(''))
+    const started = await state.handlers.get('agent:runStream:start')!({ sender: owner }, 'bound-run', 'workspace-1', { input: 'hi' })
+    expect(started.success).toBe(true)
+    setWindowWorkspace(owner, 'workspace-2')
+    state.activeWorkspaceId = 'workspace-2'
+    const options = state.streamAgent.mock.calls[0][1]
+    expect((await options.workspaceMemoryStore.read('user')).content).toBe('run A')
+    expect(options.receiptContext.workspaceId).toBe('workspace-1')
+    state.activeWorkspaceId = 'workspace-1'
+  })
   it('finishes confirmed cleanup before a direct history preview can expose the old record', async () => {
     const root = path.join(state.workspacePath, 'app-data')
     const store = new AgentMemoryStore(root)

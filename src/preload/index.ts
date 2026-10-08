@@ -14,7 +14,7 @@ type RagChatMessagePayload = {
   content: string;
   name?: string;
 };
-type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch' | 'user_profile_read' | 'user_profile_update';
+type AgentToolNamePayload = 'rag_search' | 'workspace_list' | 'workspace_search' | 'file_read' | 'file_patch' | 'user_profile_read' | 'user_profile_update' | 'workspace_memory_read' | 'workspace_memory_update';
 type AgentRunOptionsPayload = {
   input: string;
   history?: RagChatMessagePayload[];
@@ -142,6 +142,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     restoreUserHistory: (id: string, revision: string) => ipcRenderer.invoke('agentMemory:history:restore', id, revision),
     read: (kind: 'soul' | 'user') => ipcRenderer.invoke('agentMemory:read', kind),
     save: (kind: 'soul' | 'user', content: string, revision: string) => ipcRenderer.invoke('agentMemory:save', kind, content, revision),
+  },
+  workspaceMemory: {
+    context: () => ipcRenderer.invoke('workspaceMemory:context'),
+    read: (workspaceId: string) => ipcRenderer.invoke('workspaceMemory:read', workspaceId),
+    save: (workspaceId: string, content: string, revision: string) => ipcRenderer.invoke('workspaceMemory:save', workspaceId, content, revision),
+    readMaintenance: (workspaceId: string) => ipcRenderer.invoke('workspaceMemory:maintenance:read', workspaceId),
+    setMaintenance: (workspaceId: string, enabled: boolean) => ipcRenderer.invoke('workspaceMemory:maintenance:set', workspaceId, enabled),
+    listHistory: (workspaceId: string, cursor?: string) => ipcRenderer.invoke('workspaceMemory:history:list', workspaceId, cursor),
+    readHistory: (workspaceId: string, id: string) => ipcRenderer.invoke('workspaceMemory:history:read', workspaceId, id),
+    restoreHistory: (workspaceId: string, id: string, revision: string) => ipcRenderer.invoke('workspaceMemory:history:restore', workspaceId, id, revision),
+    previewCleanup: (workspaceId: string, selection: import('../shared/types/agent-memory').MemoryCleanupSelection) => ipcRenderer.invoke('workspaceMemory:cleanup:preview', workspaceId, selection),
+    cleanup: (workspaceId: string, selection: import('../shared/types/agent-memory').MemoryCleanupSelection, token: string) => ipcRenderer.invoke('workspaceMemory:cleanup:apply', workspaceId, selection, token),
   },
   appSettings: {
     get: () => ipcRenderer.invoke('appSettings:get'),

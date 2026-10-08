@@ -16,7 +16,7 @@ class AgentRequestContractTest(unittest.TestCase):
     def test_memory_snapshot_request_is_bounded_and_strict(self):
         memory = {"soul": {"content": "简洁", "revision": "a"}, "user": {"content": "中文", "revision": "b"}}
         request = AgentRunRequest(task_id="t", run_id="r", input="hi", memory=memory)
-        self.assertEqual(request.memory.model_dump(), memory)
+        self.assertEqual(request.memory.model_dump(exclude_none=True), memory)
         memory["soul"]["content"] = "x" * 16001
         with self.assertRaises(ValidationError):
             AgentRunRequest(task_id="t", run_id="r", input="hi", memory=memory)
@@ -33,7 +33,7 @@ class AgentRequestContractTest(unittest.TestCase):
         self.assertIsNone(request.knowledge)
         self.assertEqual(
             request.agent.enabled_tools,
-            ["rag_search", "workspace_list", "workspace_search", "file_read", "file_patch", "user_profile_read", "user_profile_update"],
+            ["rag_search", "workspace_list", "workspace_search", "file_read", "file_patch", "user_profile_read", "user_profile_update", "workspace_memory_read", "workspace_memory_update"],
         )
         self.assertEqual(request.agent.max_iterations, 90)
         self.assertEqual(request.agent.tool_timeout_seconds, 30)

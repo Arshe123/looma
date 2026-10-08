@@ -294,6 +294,7 @@ const normalizeAiAssistantState = (state?: AiAssistantState | null): AiAssistant
         ? conversation.favoriteCategory.trim()
         : undefined,
       titleEdited: Boolean(conversation.titleEdited),
+      titleGenerated: conversation.titleGenerated === true,
     }
   }
 
@@ -677,7 +678,7 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     touchAiAssistantConversation(conversation: AiAssistantConversation) {
       conversation.updatedAt = Date.now()
-      if (!conversation.titleEdited) {
+      if (!conversation.titleEdited && !conversation.titleGenerated) {
         conversation.title = getAiConversationTitle(conversation.messages)
       }
     },

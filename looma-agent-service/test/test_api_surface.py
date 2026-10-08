@@ -12,6 +12,7 @@ class ApiSurfaceTest(unittest.TestCase):
         self.assertEqual(routes, {
             ('GET', '/health'),
             ('POST', '/agent/summarize'),
+            ('POST', '/agent/title'),
             ('POST', '/agent/run/stream'),
             ('POST', '/rag/index/status'),
             ('POST', '/rag/index/build/stream'),

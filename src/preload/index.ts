@@ -217,6 +217,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteIndex: (workspaceId: string) => ipcRenderer.invoke('rag:index:delete', workspaceId),
   },
   agent: {
+    generateConversationTitle: (userText: string, assistantText: string) =>
+      ipcRenderer.invoke('agent:generateConversationTitle', userText, assistantText),
     getRun: (workspaceId: string, runId: string) => ipcRenderer.invoke('agent:ledger:getRun', workspaceId, runId),
     getRuns: (workspaceId: string, runIds: string[]) => ipcRenderer.invoke('agent:ledger:getRuns', workspaceId, runIds),
     resumeRun: (requestId: string, workspaceId: string, parentRunId: string) => ipcRenderer.invoke('agent:runStream:resume', requestId, workspaceId, parentRunId),

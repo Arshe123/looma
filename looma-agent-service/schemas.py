@@ -96,6 +96,20 @@ class RequestStats(BaseModel):
     distant_summary_messages: int = Field(default=0, ge=0)
 
 
+class AgentTitleRequest(BaseModel):
+    user_text: str
+    assistant_text: str
+
+    @validator("user_text", "assistant_text", pre=True)
+    def validate_title_text(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("生成会话标题需要有效的用户消息和助手回复")
+        return value.strip()
+
+    class Config:
+        extra = "forbid"
+
+
 class AgentSummarizeRequest(BaseModel):
     messages: list[ChatMessage] = Field(..., min_items=1, max_items=100)
     max_chars: int = Field(default=1600, ge=200, le=8000)

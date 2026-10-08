@@ -26,6 +26,7 @@ export interface AiAssistantState {
     favorite?: boolean
     favoriteCategory?: string
     titleEdited?: boolean
+    titleGenerated?: boolean
   }[]
   activeConversationId: string | null
   temporaryDraft?: string
@@ -363,6 +364,7 @@ export const normalizeAiAssistantState = (value: unknown): AiAssistantState => {
         ? item.favoriteCategory.trim()
         : undefined,
       titleEdited: Boolean(item.titleEdited),
+      titleGenerated: item.titleGenerated === true,
     }
   }
 

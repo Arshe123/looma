@@ -217,6 +217,8 @@ const buildConversationStats = (
   }
 }
 
+const EMPTY_AGENT_ANSWER = 'Agent 没有返回可展示的回答。'
+
 export const useAiAssistantStore = defineStore('aiAssistant', {
   state: () => ({
     indexStreamsByWorkspaceId: {} as Record<string, AiIndexStreamState>,
@@ -231,6 +233,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     agentRecoveryByMessageKey: {} as Record<string, AgentRecoveryState>,
     subscribeAgentStreamEvents: null as null | (() => void),
     agentStartingConversationIds: {} as Record<string, ConversationPreparingState>,
+    conversationTitleRequests: {} as Record<string, string>,
     pendingFileReviewsByWorkspaceId: {} as Record<string, PendingFileReviewState[]>,
   }),
   getters: {
@@ -833,7 +836,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       const run = this.agentRunsByConversationId[conversationId]
       if (!run) return
       const finalStatus = status === 'cancelled' ? 'cancelled' : 'completed'
-      const finalText = run.assistantText.trim() || (status === 'cancelled' ? '已取消本次 Agent 运行。' : 'Agent 没有返回可展示的回答。')
+      const finalText = run.assistantText.trim() || (status === 'cancelled' ? '已取消本次 Agent 运行。' : EMPTY_AGENT_ANSWER)
       const projection = this.syncAgentProjection(run)
       const workspaceStore = useWorkspaceStore()
       workspaceStore.updateAiAssistantMessageTextInConversation(conversationId, run.assistantMessageId, finalText, { persist: false })
@@ -844,6 +847,44 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       }, { persist: true })
       delete this.agentRequestIdToConversationId[run.requestId]
       delete this.agentRunsByConversationId[conversationId]
+      if (status === 'completed' && run.assistantText.trim()) {
+        void this.generateConversationTitle(run.workspaceId, conversationId)
+      }
+    },
+
+    async generateConversationTitle(workspaceId: string, conversationId: string) {
+      const workspace = useWorkspaceStore()
+      const conversation = workspace.getAiAssistantConversationById(conversationId)
+      if (workspace.activeWorkspaceId !== workspaceId || workspace.isAiAssistantStateBlocked
+        || !conversation || conversation.titleEdited || conversation.titleGenerated) return
+      const loadRequestId = workspace.aiAssistantLoadRequestId
+      const key = JSON.stringify([workspaceId, conversationId, loadRequestId])
+      if (this.conversationTitleRequests[key]) return
+      const user = conversation.messages.find(message => message.role === 'user' && message.text.trim())
+      const assistant = conversation.messages.find(message => message.role === 'assistant'
+        && message.mode === 'agent' && message.agentSummary?.status === 'completed'
+        && message.text.trim() && message.text.trim() !== EMPTY_AGENT_ANSWER)
+      if (!user || !assistant) return
+      const requestId = this.createStreamRequestId()
+      this.conversationTitleRequests[key] = requestId
+      try {
+        const result = await window.electronAPI.agent.generateConversationTitle(
+          Array.from(user.text.trim()).slice(0, 2000).join(''),
+          Array.from(assistant.text.trim()).slice(0, 4000).join(''),
+        )
+        if (!result.success || !result.data?.title?.trim()) return
+        if (this.conversationTitleRequests[key] !== requestId
+          || workspace.activeWorkspaceId !== workspaceId || workspace.aiAssistantLoadRequestId !== loadRequestId
+          || workspace.isAiAssistantStateBlocked || workspace.getAiAssistantConversationById(conversationId) !== conversation
+          || conversation.titleEdited || conversation.titleGenerated) return
+        conversation.title = Array.from(result.data.title.trim()).slice(0, 24).join('')
+        conversation.titleGenerated = true
+        workspace.saveAiAssistantState()
+      } catch {
+        // A title is optional: preserve the fallback and retry after a later successful turn.
+      } finally {
+        if (this.conversationTitleRequests[key] === requestId) delete this.conversationTitleRequests[key]
+      }
     },
 
     failAgentConversation(conversationId: string, message: string, technicalDetail?: string) {

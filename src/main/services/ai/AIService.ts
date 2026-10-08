@@ -257,6 +257,7 @@ interface AIService {
   deleteAllIndex(workspacePath: string): Promise<Result<RagIndexResult>>
 
   summarizeAgentConversation(messages: RagChatMessage[], maxChars: number): Promise<Result<ChatAnswer>>
+  generateAgentConversationTitle(userText: string, assistantText: string): Promise<Result<{ title: string }>>
 
   streamAgent(
     workspacePath: string,
@@ -638,6 +639,28 @@ export const aiService: AIService = {
 
   async summarizeAgentConversation(messages: RagChatMessage[], maxChars: number): Promise<Result<ChatAnswer>> {
     return postJson<ChatAnswer>('/agent/summarize', { messages, max_chars: maxChars })
+  },
+
+  async generateAgentConversationTitle(userText: string, assistantText: string): Promise<Result<{ title: string }>> {
+    try {
+      const response = await fetch(`${getRagBaseUrl()}/agent/title`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_text: Array.from(userText.trim()).slice(0, 2000).join(''),
+          assistant_text: Array.from(assistantText.trim()).slice(0, 4000).join(''),
+        }),
+        signal: AbortSignal.timeout(30_000),
+      })
+      const data = await response.json()
+      if (!response.ok || typeof data?.title !== 'string' || !data.title.trim()
+        || /[\r\n\u2028\u2029]/.test(data.title) || Array.from(data.title).length > 24) {
+        return { success: false, error: '生成会话标题失败：服务返回了无效标题' }
+      }
+      return { success: true, data: { title: data.title.trim() } }
+    } catch {
+      return { success: false, error: '生成会话标题失败：连接异常或请求超时' }
+    }
   },
 
   async streamAgent(

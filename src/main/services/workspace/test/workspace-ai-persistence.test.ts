@@ -18,6 +18,14 @@ const fixture = async () => {
 const state = (draft = '') => ({ schemaVersion: 2, conversations: [{ id: 'chat', title: 'Chat', createdAt: 1, updatedAt: 1, draft, messages: [] }], activeConversationId: 'chat' })
 
 describe('workspace AI persistence transactions', () => {
+  it('round trips generated titles and their protection flag through the disk checkpoint', async () => {
+    const { file } = await fixture()
+    const saved = state()
+    Object.assign(saved.conversations[0], { title: '项目文档整理', titleGenerated: true })
+    expect((await workspaceAiService.setState('ws', saved)).success).toBe(true)
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).conversations[0]).toMatchObject({ title: '项目文档整理', titleGenerated: true })
+    expect((await workspaceAiService.getState('ws')).data?.conversations[0]).toMatchObject({ title: '项目文档整理', titleGenerated: true })
+  })
   it('returns the healthy checkpoint without overwriting a damaged sidecar', async () => {
     const { file } = await fixture()
     await workspaceAiService.setState('ws', state('healthy'))

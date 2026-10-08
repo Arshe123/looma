@@ -132,6 +132,7 @@ export interface AiAssistantConversation {
   favorite?: boolean
   favoriteCategory?: string
   titleEdited?: boolean
+  titleGenerated?: boolean
 }
 
 export interface AiAssistantState {

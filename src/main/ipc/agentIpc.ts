@@ -728,6 +728,17 @@ const buildContinuationHistory = (
   }))
 }
 
+ipcMain.handle('agent:generateConversationTitle', async (_event, userText: unknown, assistantText: unknown) => {
+  if (typeof userText !== 'string' || !userText.trim()
+    || typeof assistantText !== 'string' || !assistantText.trim()) {
+    return { success: false, error: '生成会话标题需要有效的用户消息和助手回复' }
+  }
+  return aiService.generateAgentConversationTitle(
+    Array.from(userText.trim()).slice(0, 2000).join(''),
+    Array.from(assistantText.trim()).slice(0, 4000).join(''),
+  )
+})
+
 ipcMain.handle('agent:summarizeConversation', async (_event, messages: unknown, maxChars: unknown) => {
   if (!Array.isArray(messages) || messages.length < 1 || messages.length > 100) {
     return { success: false, error: 'Invalid Agent summary messages' }

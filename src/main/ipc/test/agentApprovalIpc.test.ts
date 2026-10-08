@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   workspacePath: '',
   streamEvent: null as null | ((event: any) => Promise<void>),
   streamAgent: vi.fn(),
+  generateTitle: vi.fn(),
   settings: null as ReturnType<typeof createAppSettingsService> | null,
   windows: [] as any[],
   activeWorkspaceId: 'workspace-1' as string | null,
@@ -48,6 +49,7 @@ vi.mock('../../services/ai/AIService', () => ({
       return new Promise(() => {})
     }),
     summarizeAgentConversation: vi.fn(),
+    generateAgentConversationTitle: state.generateTitle,
   },
   normalizeAgentRunOptions: vi.fn((value: any) => value),
 }))
@@ -64,6 +66,17 @@ const sender = (id: number) => ({
 })
 
 describe('Agent approval IPC trusted boundary', () => {
+  it('validates title texts and forwards only bounded user and assistant text', async () => {
+    const handler = state.handlers.get('agent:generateConversationTitle')
+    expect(handler).toBeTypeOf('function')
+    for (const args of [[null, 'a'], ['u', {}], [' ', 'a'], ['u', '\n']]) {
+      expect(await handler!({}, ...args)).toEqual({ success: false, error: expect.stringContaining('标题') })
+    }
+    expect(state.generateTitle).not.toHaveBeenCalled()
+    state.generateTitle.mockResolvedValue({ success: true, data: { title: '标题' } })
+    expect(await handler!({}, '😀'.repeat(2100), '回'.repeat(4100))).toEqual({ success: true, data: { title: '标题' } })
+    expect(state.generateTitle).toHaveBeenCalledWith('😀'.repeat(2000), '回'.repeat(4000))
+  })
   it('binds workspace settings to each main-owned window, not the global active workspace', async () => {
     const a = { sender: sender(200) as unknown as WebContents }
     const b = { sender: sender(201) as unknown as WebContents }

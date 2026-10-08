@@ -111,6 +111,7 @@ interface AiAssistantConversationPayload {
   favorite?: boolean;
   favoriteCategory?: string;
   titleEdited?: boolean;
+  titleGenerated?: boolean;
 }
 
 interface WorkspaceTabPayloadBase {
@@ -418,6 +419,7 @@ interface ElectronAPI {
     getRuns: (workspaceId: string, runIds: string[]) => Promise<Result<{ runs: Record<string, AgentRunHistoryPayload | null> }>>;
     resumeRun: (requestId: string, workspaceId: string, parentRunId: string) => Promise<Result<{ taskId: string; runId: string; parentRunId: string }>>;
     summarizeConversation: (messages: RagChatMessagePayload[], maxChars: number) => Promise<Result<{ answer: string }>>;
+    generateConversationTitle: (userText: string, assistantText: string) => Promise<Result<{ title: string }>>;
     listApprovals: (workspaceId: string) => Promise<Result<AgentPendingFileReview[]>>;
     resolveApproval: (workspaceId: string, approvalId: string, approved: boolean) => Promise<Result<{ applied: boolean }>>;
     runStream: {

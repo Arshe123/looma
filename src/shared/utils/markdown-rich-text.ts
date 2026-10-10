@@ -1,5 +1,6 @@
 import type { JSONContent } from '@tiptap/core'
 import { marked } from 'marked'
+import { normalizeMarkdownNoteLinks } from './markdown-note-links'
 
 type MarkdownAstEditor = {
   getJSON: () => JSONContent
@@ -58,7 +59,7 @@ marked.use({
 
 export const serializeMarkdownAst = (editor: MarkdownAstEditor): string => {
   if (!editor.markdown) throw new Error('Markdown serializer is not initialized.')
-  return editor.markdown.serialize(editor.getJSON())
+  return normalizeMarkdownNoteLinks(editor.markdown.serialize(editor.getJSON()))
 }
 
 const isFenceLine = (line: string) => /^\s*(`{3,}|~{3,})/.exec(line)?.[1]
@@ -66,7 +67,7 @@ const isStandaloneImageLine = (line: string) =>
   /^[\t ]*!\[[^\]\r\n]*\]\([^\r\n]*\)[\t ]*(?:\r?\n)?$/.test(line)
 
 export const prepareMarkdownForRichText = (markdown: string) => {
-  const lines = markdown.match(/.*(?:\r?\n|$)/g)?.filter(Boolean) || []
+  const lines = normalizeMarkdownNoteLinks(markdown).match(/.*(?:\r?\n|$)/g)?.filter(Boolean) || []
   let fence: string | null = null
 
   return lines.map((line, index) => {

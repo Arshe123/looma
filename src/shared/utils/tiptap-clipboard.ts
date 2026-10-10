@@ -7,6 +7,7 @@ import {
   type DroppedFileLike,
 } from './external-file-drop'
 import { formatMarkdownImage } from './tiptap-image-insertion'
+import { normalizeNoteLinkHref } from './markdown-note-links'
 
 type FileTransferLike = {
   types: ArrayLike<string>
@@ -32,7 +33,7 @@ export const shouldReadClipboardImage = (transfer: FileTransferLike | null | und
 
 export const formatMarkdownLink = (label: string, href: string) => {
   const escapedLabel = label.replace(/([\\[\]])/g, '\\$1')
-  return `[${escapedLabel}](${href})`
+  return `[${escapedLabel}](${normalizeNoteLinkHref(href)})`
 }
 
 export const getTiptapSelectionDocument = (state: EditorState): JSONContent | null => {

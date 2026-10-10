@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { renderMarkdown } from '../markdown-renderer'
+import { renderMarkdown, renderMarkdownWithLineData } from '../markdown-renderer'
 
 describe('renderMarkdown note ref links', () => {
+  it('recognizes legacy note destinations containing spaces in both previews', () => {
+    const source = '[国家疾控管理后台](../医渡云相关信息.md#4. 国家疾控管理后台)'
+    for (const html of [renderMarkdown(source), renderMarkdownWithLineData(source, 8)]) {
+      expect(html).toContain('class="looma-note-ref"')
+      expect(html).toContain('#4.%20')
+    }
+  })
   it('tags internal note links with looma-note-ref and data attribute', () => {
     const html = renderMarkdown('[说明](note.md#简介)')
     expect(html).toContain('class="looma-note-ref"')

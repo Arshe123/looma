@@ -47,6 +47,7 @@ import {
 import type { AgentDiffViewState, AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantState, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceTab } from './workspace-types'
 import { getAiAssistantConversationTitle, normalizeAiAssistantSourcePath, sortAiAssistantConversations } from './workspace-ai-utils'
 import { LARGE_NOTE_BYTES, NOTE_INITIAL_CHUNK_BYTES, NOTE_NEXT_CHUNK_BYTES } from '@/shared/utils/markdown-chunks'
+import { normalizeMarkdownNoteLinks } from '@/shared/utils/markdown-note-links'
 export type { AgentDiffViewState, AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, AiAssistantTimelineOutput, AiAssistantTimelineOutputType, AiAssistantTimelineStep, AiAssistantTimelineStepStatus, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceMeta, WorkspaceTab } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
@@ -2560,9 +2561,10 @@ export const useWorkspaceStore = defineStore('workspace', {
         if (!loaded.success) return loaded
       }
       const completeState = this.openedTextFileContents[rel]
-      const next = wasPartial
+      const rawNext = wasPartial
         ? completeState?.content ?? ''
         : content ?? completeState?.content ?? (rel === this.activeFileRelativePath ? this.activeFileContent : '')
+      const next = absPath.toLowerCase().endsWith('.md') ? normalizeMarkdownNoteLinks(rawNext) : rawNext
       if (completeState?.recoveryConflict) {
         const confirmation = await window.electronAPI.app.showMessageBox({
           type: 'warning',

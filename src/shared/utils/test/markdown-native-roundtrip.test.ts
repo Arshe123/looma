@@ -111,6 +111,23 @@ describe('official @tiptap/markdown AST serialization', () => {
 })
 
 describe('prepareMarkdownForRichText', () => {
+  it('loads legacy note references as links and persists a standard destination', () => {
+    const manager = createManager()
+    const source = '[国家疾控管理后台](../医渡云相关信息.md#4. 国家疾控管理后台)'
+    const doc = manager.parse(prepareMarkdownForRichText(source))
+    expect(doc.content?.[0]?.content?.[0]?.marks?.[0]?.type).toBe('link')
+    const saved = serialize(manager, doc)
+    expect(saved).toContain('#4.%20')
+    expect(manager.parse(saved)).toEqual(doc)
+  })
+
+  it('normalizes note link marks inserted directly into the rich-text AST', () => {
+    const manager = createManager()
+    const doc: JSONContent = { type: 'doc', content: [{ type: 'paragraph', content: [{
+      type: 'text', text: '说明', marks: [{ type: 'link', attrs: { href: 'my note.md#A B' } }],
+    }] }] }
+    expect(serialize(manager, doc)).toBe('[说明](my%20note.md#A%20B)')
+  })
   it('separates a standalone image from adjacent body text', () => {
     expect(prepareMarkdownForRichText('![](image.png)\ncaption')).toBe(
       '![](image.png)\n\ncaption',

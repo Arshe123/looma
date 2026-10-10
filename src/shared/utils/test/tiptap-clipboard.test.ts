@@ -12,6 +12,10 @@ import {
   transferContainsClipboardImage,
 } from '../tiptap-clipboard'
 
+it('copies internal note links with standard whitespace escapes', () => {
+  expect(formatMarkdownLink('说明', '../my note.md#A B')).toBe('[说明](../my%20note.md#A%20B)')
+})
+
 const schema = new Schema({
   nodes: {
     doc: { content: 'block+' },

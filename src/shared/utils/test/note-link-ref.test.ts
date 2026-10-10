@@ -29,6 +29,14 @@ describe('parseNoteLinkAnchor', () => {
 })
 
 describe('parseNoteLinkHref', () => {
+  it('decodes a normalized note path once, separately from its heading', () => {
+    expect(parseNoteLinkHref('../%E5%8C%BB%E6%B8%A1%E4%BA%91%20%E4%BF%A1%E6%81%AF.md#4.%20%E5%90%8E%E5%8F%B0', 'docs/current.md')).toEqual({
+      relativePath: '医渡云 信息.md', anchor: { kind: 'heading', text: '4. 后台' },
+    })
+    expect(parseNoteLinkHref('a%2520b%23c.md#A%20B', 'current.md')).toEqual({
+      relativePath: 'a%20b#c.md', anchor: { kind: 'heading', text: 'A B' },
+    })
+  })
   it('parses plain note link', () => {
     expect(parseNoteLinkHref('note.md', 'current.md')).toEqual({
       relativePath: 'note.md',

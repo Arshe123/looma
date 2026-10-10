@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ExternalDocumentData } from '@/shared/types/external-document'
+import { normalizeMarkdownNoteLinks } from '@/shared/utils/markdown-note-links'
 import type { EditorSession } from './workspace-types'
 
 export interface ExternalEditorDocument extends ExternalDocumentData {
@@ -60,9 +61,18 @@ export const useExternalDocumentsStore = defineStore('externalDocuments', () => 
     return serial(id, async () => {
       const doc = get(id)
       if (!doc || closing.has(id) || doc.pending) return false
-      if (doc.content === doc.baseContent) return true
+      const originalContent = doc.content
+      const content = doc.filePath.toLowerCase().endsWith('.md')
+        ? normalizeMarkdownNoteLinks(originalContent)
+        : originalContent
+      if (content === doc.baseContent) {
+        if (content !== originalContent) {
+          doc.content = content
+          await persistDraft(id)
+        }
+        return true
+      }
       if (doc.error && !explicit) return false
-      const content = doc.content
       let expected = doc.baseContent
       doc.saving = true
       try {
@@ -75,6 +85,7 @@ export const useExternalDocumentsStore = defineStore('externalDocuments', () => 
           }
         }
         await api().save(id, content, expected)
+        if (doc.content === originalContent) doc.content = content
         doc.baseContent = content
         doc.error = ''
         await persistDraft(id)

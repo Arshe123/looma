@@ -1,6 +1,7 @@
 import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
 import { isInternalNoteHref } from './note-link-ref'
+import { normalizeMarkdownNoteLinks } from './markdown-note-links'
 import { findMarkdownNoteTitle, readMarkdownNoteStats, noteStatsLabel } from './note-reading-time'
 
 const markdown = new MarkdownIt({
@@ -246,7 +247,7 @@ markdown.renderer.rules.link_open = (tokens, idx, options, env, self) => {
 }
 
 export const renderMarkdown = (content: string, options: { codeBlockCopy?: boolean } = {}) =>
-  markdown.render(content || '', options)
+  markdown.render(normalizeMarkdownNoteLinks(content || ''), options)
 
 /**
  * 渲染 markdown 并携带源码行号信息（data-line 属性）。
@@ -256,14 +257,14 @@ export type NoteTitleMetadata = { line: number; minutes: number | null; words: n
 
 /** Determine eligibility once from the whole loaded document, never per chunk. */
 export const getMarkdownNoteTitleMetadata = (content: string, isPartial: boolean): NoteTitleMetadata | null => {
-  const tokens = markdown.parse(content || '', {})
+  const tokens = markdown.parse(normalizeMarkdownNoteLinks(content || ''), {})
   const line = findMarkdownNoteTitle(tokens)
   return line === null ? null : { line, ...(isPartial ? { minutes: null, words: null } : readMarkdownNoteStats(tokens)) }
 }
 
 export const renderMarkdownWithLineData = (content: string, lineBase: number, noteTitle?: NoteTitleMetadata | null) => {
   const env = { lineBase }
-  const tokens = markdown.parse(content || '', env)
+  const tokens = markdown.parse(normalizeMarkdownNoteLinks(content || ''), env)
   if (noteTitle) {
     const index = tokens.findIndex(token => token.type === 'heading_open' && token.tag === 'h1'
       && token.level === 0 && token.map?.[0] === noteTitle.line - lineBase)

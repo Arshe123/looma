@@ -89,7 +89,8 @@ export const parseNoteLinkHref = (href: string, fromRelativePath: string): NoteL
   const extension = pathPart.split('.').pop()?.toLowerCase() || '';
   if (extension !== 'md' && extension !== 'txt') return null;
 
-  const relativePath = resolveRelativePath(fromRelativePath, pathPart);
+  // Split the fragment before decoding: %23 may belong to the filename.
+  const relativePath = resolveRelativePath(fromRelativePath, decodeAnchorText(pathPart));
   if (!relativePath) return null;
 
   const anchor = hashPart ? parseNoteLinkAnchor(hashPart) : undefined;

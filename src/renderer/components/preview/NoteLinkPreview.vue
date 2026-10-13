@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue'
+import { nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import {
   OPEN_NOTE_REF_EVENT,
@@ -40,6 +40,7 @@ let showTimer: number | null = null
 let hideTimer: number | null = null
 let fetchGeneration = 0
 let suppressedAnchor: HTMLAnchorElement | null = null
+let active = true
 
 const getWorkspaceAbsPath = (relativePath: string) => {
   const ws = workspaceStore.activeWorkspace
@@ -179,6 +180,9 @@ const applyPreview = async (relativePath: string, anchor?: NoteLinkAnchor) => {
 }
 
 const onMouseOver = (event: MouseEvent) => {
+  // Cached editors keep their document listeners, but their relative path
+  // must never resolve links belonging to the currently visible editor.
+  if (!active) return
   if (document.querySelector('[data-looma-editor-context-menu]')) return
   const target = event.target as HTMLElement | null
   const anchorEl = target?.closest?.('a[href]') as HTMLAnchorElement | null
@@ -193,6 +197,7 @@ const onMouseOver = (event: MouseEvent) => {
 
   currentTarget.value = ref
   showTimer = window.setTimeout(() => {
+    if (!anchorEl.isConnected) return
     visible.value = true
     position.value = { x: event.clientX + 14, y: event.clientY + 14 }
     void applyPreview(ref.relativePath, ref.anchor)
@@ -286,15 +291,23 @@ const handleOpenNoteRefEvent = () => {
   closePreview()
 }
 
+const onEditorSelectionChange = () => {
+  if (document.activeElement?.closest('.tiptap')) closePreview()
+}
+
 onMounted(() => {
   document.addEventListener('mouseover', onMouseOver)
   document.addEventListener('mouseout', onMouseOut)
   document.addEventListener('contextmenu', onContextMenu)
   document.addEventListener('pointerdown', onPointerDown, true)
+  document.addEventListener('selectionchange', onEditorSelectionChange)
   window.addEventListener(OPEN_NOTE_REF_EVENT, handleOpenNoteRefEvent)
 })
 
+onActivated(() => { active = true })
+
 onDeactivated(() => {
+  active = false
   // KeepAlive 切走（打开其他笔记）时，确保浮窗不残留
   closePreview()
 })
@@ -306,6 +319,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseout', onMouseOut)
   document.removeEventListener('contextmenu', onContextMenu)
   document.removeEventListener('pointerdown', onPointerDown, true)
+  document.removeEventListener('selectionchange', onEditorSelectionChange)
   window.removeEventListener(OPEN_NOTE_REF_EVENT, handleOpenNoteRefEvent)
 })
 </script>

@@ -15,6 +15,13 @@ const block = (type: string, text = '') => schema.node(type, null, text ? schema
 const md = new MarkdownIt()
 
 describe('reading estimate', () => {
+  it('does not count hidden link destinations or titles in source-backed rich text', () => {
+    const doc = schema.node('doc', null, [block('paragraph', '[显示](内部文件.md "链接标题") **文字**')])
+    expect(reading.readDocumentNoteStats(doc).words).toBe(4)
+    const external = schema.node('doc', null, [block('paragraph', '[显示](https://example.com "链接标题")')])
+    expect(reading.readDocumentNoteStats(external).words).toBe(2)
+  })
+
   it('counts Chinese characters and words, excluding whitespace and punctuation', () => {
     expect(reading.countNoteText('中文𠀀 hello world 123，！')).toEqual({ minutes: 1, words: 6 })
     expect(reading.countNoteText(' \n，。')).toEqual({ minutes: 0, words: 0 })

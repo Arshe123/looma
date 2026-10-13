@@ -19,6 +19,8 @@ app.whenReady().then(async () => {
    await run('split()')
    for(let i=0;i<100 && !await run('!!document.querySelector(".cm-editor")');i++) await wait(100)
    await run('document.fonts.ready'); await wait(500)
+   // Native input and CodeMirror's measured scroll require a visible window.
+   win.show(); win.focus(); await wait(300)
    await run(`focusMiddle('${side}')`); await wait(500)
    const before = await run('positions()')
    await run('startTrace()')

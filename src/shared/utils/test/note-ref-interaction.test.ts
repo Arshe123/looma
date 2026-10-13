@@ -5,16 +5,22 @@ import {
 } from '../note-ref-interaction'
 
 describe('note reference click intent', () => {
-  it('uses a normal click for navigation', () => {
-    expect(getNoteRefClickIntent({ altKey: false })).toBe('navigate')
+  it('uses a normal click for inline source editing', () => {
+    expect(getNoteRefClickIntent({ altKey: false })).toBe('edit-source')
   })
 
   it('uses Alt or Option click for source editing', () => {
     expect(getNoteRefClickIntent({ altKey: true })).toBe('edit-source')
   })
 
-  it('suppresses hover preview while Alt or Option click starts source editing', () => {
+  it('uses Ctrl or Command click for navigation', () => {
+    expect(getNoteRefClickIntent({ ctrlKey: true })).toBe('navigate')
+    expect(getNoteRefClickIntent({ metaKey: true })).toBe('navigate')
+  })
+
+  it('suppresses hover preview when a click starts source editing', () => {
     expect(shouldSuppressNoteRefPreview({ altKey: true })).toBe(true)
-    expect(shouldSuppressNoteRefPreview({ altKey: false })).toBe(false)
+    expect(shouldSuppressNoteRefPreview({ altKey: false })).toBe(true)
+    expect(shouldSuppressNoteRefPreview({ metaKey: true })).toBe(false)
   })
 })

@@ -23,6 +23,7 @@ import {
 } from '@/shared/utils/editor-shortcuts'
 import { getOverlayPositionAtLineNumber } from '@/shared/utils/tiptap-line-numbers'
 import { matchesAppShortcut } from '@/shared/utils/app-shortcuts'
+import { toggleInlineMarkdownFormat } from '@/shared/utils/tiptap-inline-markdown'
 
 const props = defineProps<{
   editor: Editor
@@ -296,12 +297,11 @@ const runInlineMenuShortcut = (editor: Editor, index: number) => {
 const handleConfiguredShortcut = (event: KeyboardEvent, editor: Editor) => {
   const shortcuts = settingsStore.editorShortcuts
   const formatAction = getTextFormatShortcutAction(event, shortcuts, platform)
-  if (formatAction === 'bold') return editor.chain().focus().toggleBold().run()
-  if (formatAction === 'italic') return editor.chain().focus().toggleItalic().run()
-  if (formatAction === 'strike') return editor.chain().focus().toggleStrike().run()
-  if (formatAction === 'inlineCode') return editor.chain().focus().toggleCode().run()
-  if (formatAction === 'highlight') return editor.chain().focus().toggleHighlight().run()
   if (formatAction === 'blocked') return true
+  if (formatAction) {
+    toggleInlineMarkdownFormat(editor, formatAction)
+    return true
+  }
   if (matchesEditorShortcut(event, shortcuts.headingLevelUp, platform)
     && adjustCurrentHeading(editor, 'up')) return true
   if (matchesEditorShortcut(event, shortcuts.headingLevelDown, platform)

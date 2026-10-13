@@ -35,6 +35,7 @@ import {
 } from './tiptap-table-utils'
 import type { MenuAction, MenuActionId, TableMenuActionId } from '../types/MenuAction'
 import { DEFAULT_INLINE_MENU_ACTION_IDS } from '../constants/MenuConst'
+import { toggleInlineMarkdownFormat } from './tiptap-inline-markdown'
 
 const rawIcon = (icon: Component) => markRaw(icon)
 
@@ -54,11 +55,11 @@ export const MENU_ACTIONS: Record<MenuActionId, MenuAction> = {
   image: { id: 'image', kind: 'image', label: '插入图片', icon: rawIcon(ImagePlus) },
   table: { id: 'table', kind: 'tablePicker', label: '表格', icon: rawIcon(Table) },
   horizontalRule: { id: 'horizontalRule', label: '水平分割线', icon: rawIcon(Minus), run: (editor) => editor.chain().focus().setHorizontalRule().run() },
-  bold: { id: 'bold', label: '加粗', icon: rawIcon(Bold), run: (editor) => editor.chain().focus().toggleBold().run() },
-  italic: { id: 'italic', label: '斜体', icon: rawIcon(Italic), run: (editor) => editor.chain().focus().toggleItalic().run() },
-  strike: { id: 'strike', label: '删除线', icon: rawIcon(Strikethrough), run: (editor) => editor.chain().focus().toggleStrike().run() },
-  inlineCode: { id: 'inlineCode', label: '行内代码', icon: rawIcon(CodeXml), run: (editor) => editor.chain().focus().toggleCode().run() },
-  highlight: { id: 'highlight', label: '高亮', icon: rawIcon(Highlighter), run: (editor) => editor.chain().focus().toggleHighlight().run() },
+  bold: { id: 'bold', label: '加粗', icon: rawIcon(Bold), run: (editor) => toggleInlineMarkdownFormat(editor, 'bold') },
+  italic: { id: 'italic', label: '斜体', icon: rawIcon(Italic), run: (editor) => toggleInlineMarkdownFormat(editor, 'italic') },
+  strike: { id: 'strike', label: '删除线', icon: rawIcon(Strikethrough), run: (editor) => toggleInlineMarkdownFormat(editor, 'strike') },
+  inlineCode: { id: 'inlineCode', label: '行内代码', icon: rawIcon(CodeXml), run: (editor) => toggleInlineMarkdownFormat(editor, 'inlineCode') },
+  highlight: { id: 'highlight', label: '高亮', icon: rawIcon(Highlighter), run: (editor) => toggleInlineMarkdownFormat(editor, 'highlight') },
 }
 
 export const TABLE_ACTIONS: Record<TableMenuActionId, MenuAction> = {

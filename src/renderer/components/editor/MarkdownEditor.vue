@@ -316,11 +316,18 @@ watch(
 )
 
 defineExpose({
+  isNavigationReady() {
+    const sourceReady = viewMode.value === 'preview' || !!editorRef.value
+    const previewReady = viewMode.value === 'editor' || !!(props.useChunkedPreview ? chunkedPreviewRef.value : previewRef.value)
+    return sourceReady && previewReady
+  },
   flushPendingContent() {
     const content = previewRef.value?.flushPendingMarkdownEmit?.()
     if (content !== undefined) emit('update:content', content, props.relativeFilePath)
   },
   scrollToHeading(target: MarkdownOutlineItem) {
+    // An explicit jump takes precedence over deferred session restoration.
+    restoreGeneration += 1
     if (viewMode.value !== 'editor') {
       if (props.useChunkedPreview) {
         chunkedPreviewRef.value?.scrollToHeading(target)
@@ -333,6 +340,7 @@ defineExpose({
     }
   },
   scrollToLine(line: number) {
+    restoreGeneration += 1
     if (viewMode.value !== 'editor') {
       if (props.useChunkedPreview) {
         chunkedPreviewRef.value?.scrollToLine(line)

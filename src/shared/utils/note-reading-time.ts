@@ -1,5 +1,7 @@
-import type MarkdownIt from 'markdown-it'
+import MarkdownIt from 'markdown-it'
 import type { Node } from '@tiptap/pm/model'
+
+const inlineReadingParser = new MarkdownIt({ html: false, linkify: false })
 
 const visibleText = (text: string) => text
   .replace(/<!--[\s\S]*?-->/g, ' ')
@@ -42,7 +44,10 @@ export const readDocumentNoteStats = (doc: Node) => {
     if (node.isText) parts.push(node.text ?? '')
     return true
   })
-  return countNoteText(visibleText(parts.join('')))
+  // Rich-text inline syntax remains editable document text. Count its rendered
+  // label, not the hidden destination/title, just as the readonly adapter does.
+  const tokens = inlineReadingParser.parseInline(parts.join(''), {})
+  return countNoteText(visibleText(inlineText(tokens[0]?.children ?? [])))
 }
 
 export const readDocumentReadingMinutes = (doc: Node): number => readDocumentNoteStats(doc).minutes

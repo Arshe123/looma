@@ -31,7 +31,7 @@ import CodeBlockView from './CodeBlockView.vue'
 import LocalImageView from './LocalImageView.vue'
 import ImageInsertDialog from './ImageInsertDialog.vue'
 import NoteRefPicker from './NoteRefPicker.vue'
-import NoteRefSourceEditor from './NoteRefSourceEditor.vue'
+
 import EditorDropAlert from '@/renderer/components/editor/EditorDropAlert.vue'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import { replaceExternalMarkdownContent } from '@/shared/utils/tiptap-content-sync'
@@ -58,10 +58,7 @@ import {
   renderCurrentMarkdownImage,
 } from '@/shared/utils/tiptap-image-insertion'
 import { importImageBatch } from '@/shared/utils/image-import-batch'
-import {
-  handleMarkdownNoteRefEnter,
-  insertMarkdownNoteRefTemplate,
-} from '@/shared/utils/tiptap-note-ref-insertion'
+import { insertMarkdownNoteRefTemplate } from '@/shared/utils/tiptap-note-ref-insertion'
 import { getDroppedFilePaths } from '@/shared/utils/external-file-drop'
 import {
   getTiptapSelectionDocument,
@@ -79,6 +76,7 @@ import {
 import { LineNumbers } from '@/shared/utils/tiptap-line-numbers'
 import { NoteTitle } from '@/shared/utils/tiptap-note-title'
 import { LinkIcons } from '@/shared/utils/tiptap-link-icons'
+import { InlineMarkdown, getInlineMarkdownLinkAtPosition, isInlineMarkdownCodeAtPosition } from '@/shared/utils/tiptap-inline-markdown'
 import { getNoteRefClickIntent } from '@/shared/utils/note-ref-interaction'
 import { ResizableMarkdownImage } from '@/shared/utils/resizable-markdown-image'
 import {
@@ -112,21 +110,18 @@ let pendingCodeHighlightTimer: number | null = null
 let pendingHeadingTarget: MarkdownOutlineItem | null = null
 let pendingHeadingClearTimer: number | null = null
 let scrollSyncFrame: number | null = null
-let noteRefValidationTimer: number | null = null
+
 const markdownSerializationGate = createMarkdownSerializationGate()
 const editorSaveGate = createEditorSaveGate()
 
 const editor = shallowRef<Editor | null>(null)
-const noteRefSourceEditorRef = shallowRef<{
-  dismissForNavigation: () => void
-  openForCurrentSelection: () => void
-} | null>(null)
+
 const imageInsertDialogOpen = shallowRef(false)
 const noteRefPickerState = shallowRef<{ open: boolean; selectedText: string }>({ open: false, selectedText: '' })
 const previewContainerRef = shallowRef<HTMLElement | null>(null)
 const dropErrorMessage = shallowRef('')
 const dropTechnicalDetail = shallowRef('')
-const noteRefValidationMessage = shallowRef('')
+
 const lowlight = createLowlight(common)
 const PREVIEW_IMAGE_SETTLED_EVENT = 'looma:preview-image-settled'
 const HEADING_REANCHOR_WINDOW_MS = 1000
@@ -606,27 +601,31 @@ const publishSelectionFocus = () => {
   if (focus) dispatchEditorFocus({ relativePath: props.relativeFilePath, ...focus })
 }
 
+let pressedLinkHref: string | null = null
+let linkNavigatedOnPointerDown = false
 const handleNoteRefClick = (event: MouseEvent) => {
+  if (linkNavigatedOnPointerDown) {
+    linkNavigatedOnPointerDown = false
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
   const target = event.target as HTMLElement | null
   const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null
-  if (!anchor) return
-  const href = anchor.getAttribute('href') || ''
-
+  // Selecting the label reveals its source and removes the anchor decoration
+  // between pointerdown and click. Keep the original target for this gesture.
+  const href = pressedLinkHref ?? anchor?.getAttribute('href') ?? ''
+  pressedLinkHref = null
+  if (!href) return
+  event.preventDefault()
+  event.stopPropagation()
   // 内部笔记引用：跳转到对应位置
   const ref = parseNoteLinkHref(href, props.relativeFilePath)
+  if (getNoteRefClickIntent(event) === 'edit-source') return
   if (ref) {
     event.preventDefault()
     event.stopPropagation()
-    if (getNoteRefClickIntent(event) === 'edit-source') {
-      const currentEditor = editor.value
-      if (currentEditor && !currentEditor.isDestroyed) {
-        const position = currentEditor.view.posAtDOM(anchor, 0)
-        currentEditor.commands.setTextSelection(position)
-        noteRefSourceEditorRef.value?.openForCurrentSelection()
-      }
-      return
-    }
-    noteRefSourceEditorRef.value?.dismissForNavigation()
+
     if (isExternalDocument) {
       dropErrorMessage.value = '外部文件不使用工作空间笔记导航；请从系统打开目标文件。'
       return
@@ -644,13 +643,25 @@ const handleNoteRefClick = (event: MouseEvent) => {
 }
 
 const handleNoteRefPointerDown = (event: PointerEvent) => {
-  if (event.altKey) return
+  pressedLinkHref = null
+  linkNavigatedOnPointerDown = false
+  if (event.button !== 0) return
   const target = event.target as HTMLElement | null
   const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null
-  if (!anchor) return
-  const href = anchor.getAttribute('href') || ''
-  if (!parseNoteLinkHref(href, props.relativeFilePath)) return
-  noteRefSourceEditorRef.value?.dismissForNavigation()
+  const currentEditor = editor.value
+  if (!currentEditor || currentEditor.isDestroyed) return
+  const position = currentEditor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+  pressedLinkHref = anchor?.getAttribute('href')
+    || (position !== undefined ? getInlineMarkdownLinkAtPosition(currentEditor.state, position)?.href : null)
+    || null
+  // Native click can be cancelled when selection replaces the anchor's DOM.
+  // Modifier navigation runs before native caret placement; plain clicks edit.
+  if (pressedLinkHref && getNoteRefClickIntent(event) === 'navigate') {
+    event.preventDefault()
+    event.stopPropagation()
+    handleNoteRefClick(event)
+    linkNavigatedOnPointerDown = true
+  }
 }
 
 /** 检测输入 [[ 并打开笔记引用选择器（光标前两个字符为 [[，且不在代码块内）。 */
@@ -659,6 +670,7 @@ const maybeOpenNoteRefPicker = (currentEditor: any) => {
   const { state } = currentEditor
   const { $from } = state.selection
   if ($from.parent.type.name.includes('code')) return
+  if (currentEditor.view.composing || isInlineMarkdownCodeAtPosition(state)) return
   const textBefore = $from.parent.textBetween(0, $from.parentOffset, '\n', '')
   if (!textBefore.endsWith('[[')) return
 
@@ -677,14 +689,6 @@ const insertNoteRefLink = (payload: { relativePath: string; href: string; label:
   insertMarkdownNoteRefTemplate(currentEditor, payload.href)
 }
 
-const showNoteRefLabelRequired = () => {
-  noteRefValidationMessage.value = '引用文字不能为空'
-  if (noteRefValidationTimer !== null) window.clearTimeout(noteRefValidationTimer)
-  noteRefValidationTimer = window.setTimeout(() => {
-    noteRefValidationMessage.value = ''
-    noteRefValidationTimer = null
-  }, 1800)
-}
 
 const scrollToTextOffset = (textOffset: number) => {
   const currentEditor = editor.value
@@ -818,6 +822,10 @@ const reanchorPendingHeading = () => {
 
 onMounted(() => {
   editor.value = new Editor({
+    // Inline syntax is document text, never competing stored marks. Keep the
+    // existing block input rules (lists/headings/fences) unchanged.
+    enableInputRules: ['blockquote', 'bulletList', 'orderedList', 'taskItem', 'heading', 'codeBlock', 'horizontalRule'],
+    enablePasteRules: false,
     extensions: [
       StarterKit.configure({
         codeBlock: false,
@@ -825,8 +833,8 @@ onMounted(() => {
         orderedList: { keepMarks: true, keepAttributes: false },
         link: {
           openOnClick: false,
-          autolink: true,
-          linkOnPaste: true,
+          autolink: false,
+          linkOnPaste: false,
           // 仅自动链接带显式协议的 URL，避免 "Agent.md" / "note.md" 这类
           // 文件名被 fuzzy 识别成 http:// 链接。与 markdown-renderer.ts 的
           // linkify.set({ fuzzyLink: false }) 保持一致。
@@ -861,6 +869,7 @@ onMounted(() => {
       LineNumbers,
       NoteTitle,
       LinkIcons,
+      InlineMarkdown,
     ],
     content: prepareMarkdownForRichText(props.content),
     contentType: 'markdown',
@@ -897,9 +906,8 @@ onMounted(() => {
           return changeRichTextIndent(editor.value, event.shiftKey ? 'less' : 'more')
         }
         if (event.key !== 'Enter' || !editor.value) return false
-        return handleMarkdownNoteRefEnter(editor.value, {
-          onEmptyLabel: showNoteRefLabelRequired,
-        }) || renderCurrentMarkdownImage(editor.value)
+        if (event.isComposing || editor.value.view.composing) return false
+        return renderCurrentMarkdownImage(editor.value)
       },
       handleDOMEvents: {
         copy: (_view, event) => handleClipboardCopy(event as ClipboardEvent),
@@ -951,7 +959,7 @@ onBeforeUnmount(() => {
   previewContainerRef.value?.removeEventListener('pointerdown', handleNoteRefPointerDown, true)
   previewContainerRef.value?.removeEventListener('scroll', handlePreviewScroll)
   if (scrollSyncFrame !== null) cancelAnimationFrame(scrollSyncFrame)
-  if (noteRefValidationTimer !== null) window.clearTimeout(noteRefValidationTimer)
+
   clearPendingMarkdownEmit()
   clearPendingAutoSave()
   clearPendingCodeHighlight()
@@ -983,6 +991,9 @@ watch(
     const { from, to } = editor.value.state.selection
     markdownSerializationGate.clear()
     replaceExternalMarkdownContent(editor.value as any, prepareMarkdownForRichText(newContent))
+    // This is now the editor's baseline too. Otherwise A → B → A from the
+    // source pane is mistaken for an echo of the previously emitted A.
+    lastEmittedContent = newContent
     
     // Try to restore selection if possible
     try {
@@ -1043,14 +1054,6 @@ defineExpose({
       @paste="pasteRichTextClipboard().catch(console.error)"
     />
     <TableToolbar v-if="editor" :editor="editor" />
-    <NoteRefSourceEditor v-if="editor" ref="noteRefSourceEditorRef" :editor="editor" />
-    <div
-      v-if="noteRefValidationMessage"
-      class="pointer-events-none fixed left-1/2 top-16 z-[9999] -translate-x-1/2 rounded-lg border border-warning/40 bg-panel px-3 py-2 text-xs font-medium text-text-main shadow-lg"
-      role="alert"
-    >
-      {{ noteRefValidationMessage }}
-    </div>
     <NoteRefPicker
       v-if="noteRefPickerState.open"
       :from-relative-path="props.relativeFilePath"
@@ -1166,6 +1169,15 @@ defineExpose({
 }
 
 .tiptap-preview-container .looma-active-line {
+  background: var(--editor-active-line-bg);
+}
+
+/* Expanded source owns the background; preserve native inline wrapping. */
+.tiptap-preview-container .looma-active-line.looma-inline-expanded-block {
+  background: transparent;
+}
+
+.tiptap-preview-container .looma-inline-expanded-source {
   background: var(--editor-active-line-bg);
 }
 

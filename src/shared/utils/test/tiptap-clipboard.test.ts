@@ -34,6 +34,14 @@ const schema = new Schema({
 })
 
 describe('tiptap clipboard helpers', () => {
+  it('enables source copy for source-backed inline formats without stored marks', () => {
+    const paragraph = schema.nodes.paragraph.create(null, schema.text('**加粗**'))
+    let state = EditorState.create({ schema, doc: schema.nodes.doc.create(null, [paragraph]) })
+    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 1, 7)))
+    expect(selectionHasMarkdownSource(state)).toBe(true)
+    expect(getTiptapClipboardCopyText(state)).toBe('**加粗**')
+  })
+
   it('captures pasted files through the same transfer shape as dropped files', () => {
     const files = [
       { name: 'cover.png', path: '/tmp/cover.png' },

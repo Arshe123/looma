@@ -153,7 +153,7 @@ const openNoteRef = async (event: Event) => {
     const startedAt = Date.now()
     const waitEditor = () => {
       const editor = editorRefs.value[relativePath]
-      if (editor && workspaceStore.openedTextFileContents[relativePath] && !workspaceStore.openedTextFileContents[relativePath].isPartial) {
+      if (editor && editor.isNavigationReady?.() !== false && workspaceStore.openedTextFileContents[relativePath] && !workspaceStore.openedTextFileContents[relativePath].isPartial) {
         resolve()
         return
       }

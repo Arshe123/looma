@@ -16,6 +16,7 @@ import { formatMarkdownLink, selectionHasMarkdownSource } from '@/shared/utils/t
 import { parseNoteLinkHref } from '@/shared/utils/note-link-ref'
 import type { MenuAction } from '@/shared/types/MenuAction'
 import { isMacPlatform } from '@/shared/utils/window-chrome'
+import { getInlineMarkdownLinkAtPosition } from '@/shared/utils/tiptap-inline-markdown'
 
 const props = defineProps<{
   editor: Editor
@@ -117,9 +118,13 @@ const handleContextMenu = (e: MouseEvent) => {
   e.preventDefault()
   const anchorTarget = (e.target as HTMLElement | null)?.closest?.('a[href]') as HTMLAnchorElement | null
   const href = anchorTarget?.getAttribute('href') || ''
-  quickCopyText.value = anchorTarget && parseNoteLinkHref(href, props.relativeFilePath)
-    ? formatMarkdownLink((anchorTarget.textContent || '').trim(), href)
-    : null
+  const sourcePosition = editor.view.posAtCoords({ left: e.clientX, top: e.clientY })?.pos
+  const sourceLink = sourcePosition !== undefined ? getInlineMarkdownLinkAtPosition(editor.state, sourcePosition) : null
+  quickCopyText.value = sourceLink && parseNoteLinkHref(sourceLink.href, props.relativeFilePath)
+    ? sourceLink.source
+    : anchorTarget && parseNoteLinkHref(href, props.relativeFilePath)
+      ? formatMarkdownLink((anchorTarget.textContent || '').trim(), href)
+      : null
   selectContextTarget(editor, e)
   sourceCopyAvailable.value = Boolean(quickCopyText.value) || selectionHasMarkdownSource(editor.state)
 

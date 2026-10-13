@@ -1,6 +1,8 @@
 export type NoteRefClickIntent = 'navigate' | 'edit-source'
 
-export const getNoteRefClickIntent = (event: Pick<MouseEvent, 'altKey'>): NoteRefClickIntent =>
-  event.altKey ? 'edit-source' : 'navigate'
+type LinkModifiers = Partial<Pick<MouseEvent, 'altKey' | 'ctrlKey' | 'metaKey'>>
 
-export const shouldSuppressNoteRefPreview = (event: Pick<MouseEvent, 'altKey'>) => event.altKey
+export const getNoteRefClickIntent = (event: LinkModifiers): NoteRefClickIntent =>
+  event.ctrlKey || event.metaKey ? 'navigate' : 'edit-source'
+
+export const shouldSuppressNoteRefPreview = (event: LinkModifiers) => getNoteRefClickIntent(event) === 'edit-source'

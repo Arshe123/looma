@@ -8,6 +8,7 @@ import {
 } from './external-file-drop'
 import { formatMarkdownImage } from './tiptap-image-insertion'
 import { normalizeNoteLinkHref } from './markdown-note-links'
+import { hasInlineMarkdownSource } from './tiptap-inline-markdown'
 
 type FileTransferLike = {
   types: ArrayLike<string>
@@ -46,6 +47,7 @@ export const getTiptapSelectionDocument = (state: EditorState): JSONContent | nu
 
 export const selectionHasMarkdownSource = (state: EditorState) => {
   if (state.selection.empty) return false
+  if (hasInlineMarkdownSource(state.doc.textBetween(state.selection.from, state.selection.to, '\n', ''))) return true
   let hasMarkdownSyntax = false
   state.selection.content().content.descendants((node) => {
     if (node.isText) {

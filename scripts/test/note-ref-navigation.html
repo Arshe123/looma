@@ -1,0 +1,45 @@
+<!doctype html><html><body style="margin:0"><div id="app" style="height:700px"></div><script type="module">
+import { createApp, h } from 'vue'
+import { createPinia } from 'pinia'
+import MainContent from '/src/renderer/components/MainContent.vue'
+import { useWorkspaceStore } from '/src/renderer/stores/workspace'
+import '/src/renderer/styles/style.css'
+// Memory-only IPC and workspace; no access to user notes or production profile.
+window.reads = []
+window.targetContent = '# 开始\n\n' + Array.from({length:60},(_,i)=>`段落 ${i}\n\n`).join('') + '## 中文 标题\n\n定位内容唯一标记\n\n' + '尾部\n\n'.repeat(30)
+window.files = {
+ 'old/deep/prior.md': '以前的笔记',
+ 'source/start.md': 'a [引用](../targets/目标%20笔记.md#中文%20标题) z\n\n[行引用](../targets/目标%20笔记.md#L123-125)\n\n[未打开](../targets/未打开.md#%E4%B8%AD%E6%96%87%20%E6%A0%87%E9%A2%98)',
+ 'targets/未打开.md': targetContent,
+ 'targets/目标 笔记.md': targetContent,
+}
+const ok = async () => ({success:true})
+window.electronAPI = { platform:'darwin',
+ file:{
+  writeMarkdown:async(path,content)=>{const relative=path.replace('/isolated/','');if(!(relative in files))return {success:false,error:'fixture ENOENT'};files[relative]=content;return {success:true}},
+  readTextChunk:async(path,offset,maxBytes)=>{reads.push({path,offset,maxBytes});const content=files[path.replace('/isolated/','')];return content === undefined ? {success:false,error:'fixture ENOENT'} : {success:true,data:{content,nextOffset:content.length,totalBytes:content.length,hasMore:false}}}
+ },
+ workspace:{saveMeta:ok}, recovery:{read:async()=>({success:true,data:null}),write:ok,remove:ok},
+}
+const pinia = createPinia()
+window.store = useWorkspaceStore(pinia)
+store.workspaces=[{id:'isolated',name:'isolated',path:'/isolated'}]
+store.activeWorkspaceId='isolated'
+for (const [relativePath,content] of Object.entries(files)) store.openedTextFileContents[relativePath]={content,loadedContent:content,isLoading:false,isPartial:false,isLoadingMore:false,loadRequestId:1,totalBytes:content.length,nextOffset:content.length}
+store.openFileTab('old/deep/prior.md')
+window.trace=[]
+const app = createApp({render:()=>h(MainContent)})
+app.mixin({mounted(){
+ const instance=this.$
+ if(this.$options.__name==='MarkdownEditor') {
+  const original=instance.exposed.scrollToHeading
+  instance.exposed.scrollToHeading=(target)=>{trace.push({event:'heading-request',path:this.$props.relativeFilePath,previewReady:!!instance.setupState.previewRef});return original(target)}
+ }
+ if(this.$options.__name==='TiptapPreview') trace.push({event:'preview-mounted',path:this.$props.relativeFilePath})
+}})
+app.use(pinia).mount('#app')
+window.navigations=[]
+window.addEventListener('looma:open-note-ref',event=>navigations.push(event.detail))
+window.editor = () => document.querySelector('.tiptap')?.editor
+window.ready = () => !!editor()
+</script></body></html>

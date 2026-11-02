@@ -1,0 +1,50 @@
+<!doctype html><html><head><meta charset="UTF-8"></head><body style="margin:0"><div id="app" style="height:700px;width:1100px"></div><script type="module">
+import { createApp, h, reactive, ref, nextTick, KeepAlive } from 'vue'
+import { createPinia } from 'pinia'
+import MarkdownEditor from '../MarkdownEditor.vue'
+import { EditorView } from '@codemirror/view'
+import { useWorkspaceStore } from '/src/renderer/stores/workspace'
+import '/src/renderer/styles/style.css'
+window.electronAPI={platform:'darwin',file:{readFileBase64:async()=>({success:false})},app:{openExternal:async url=>{events.links.push(url)}}}
+const pinia=createPinia(), workspace=useWorkspaceStore(pinia)
+window.events={updates:[],saves:[],pending:0,loads:0,loadFrames:[],links:[]}
+window.fullContent='# 分块测试\n\n'+Array.from({length:200},(_,i)=>`## 章节 ${i}\n\n这里是测试正文 **粗体** 和 ==高亮==，用于验证分块编辑、导航和全文保存。`).join('\n\n')
+window.props=reactive({filePath:'',relativeFilePath:'fixture.md',content:fullContent,saveTrigger:0,isPartial:false,isLoading:false,isLoadingMore:false,totalBytes:new Blob([fullContent]).size,useChunkedPreview:true})
+window.failLoad=false;window.releaseLoad=null
+workspace.ensureTextFileFullyLoaded=async(_path,options)=>{
+ events.loads++
+ events.loadFrames.push(window.partialFrames||0)
+ await new Promise(resolve=>window.releaseLoad=resolve)
+ if(options?.shouldContinue && !options.shouldContinue())return {success:false,error:'已停止后台加载'}
+ if(failLoad)return {success:false,error:'测试读取失败'}
+ props.content=fullContent;props.isPartial=false;return {success:true}
+}
+let session
+const documentSession={getSession:()=>session,saveSession:value=>{session={...value,updatedAt:Date.now()}}}
+const component=ref(),visible=ref(true),cacheMode=ref(false)
+const renderEditor=()=>visible.value?h(MarkdownEditor,{...props,documentSession,ref:component,'onUpdate:content':value=>{events.updates.push(value);props.content=value},onSave:value=>events.saves.push(value),onEditPending:()=>events.pending++}):null
+const app=createApp({setup:()=>()=>cacheMode.value?h(KeepAlive,null,{default:renderEditor}):renderEditor()})
+app.use(pinia).mount('#app')
+function chunkInstances(){
+ const found=[]
+ const visit=node=>{if(!node)return;if(node.component){if(node.component.type.__name==='ChunkedMarkdownEditor')found.push(node.component);visit(node.component.subTree)};if(Array.isArray(node.children))node.children.forEach(visit)}
+ visit(component.value?.$?.subTree);return found
+}
+window.chunk=()=>chunkInstances().find(instance=>!instance.props.sourceOnly)?.exposed||chunkInstances()[0]?.exposed
+window.pane=sourceOnly=>chunkInstances().find(instance=>instance.props.sourceOnly===sourceOnly)?.exposed
+window.model=()=>chunkInstances()[0]?.props.documentModel
+window.cm=()=>{const root=document.querySelector('.chunked-markdown-editor .cm-editor');return root?EditorView.findFromDOM(root):null}
+window.ready=()=>!!model()
+window.flush=()=>component.value.flushPendingContent()
+window.start=offset=>chunk().startEditing(offset)
+window.select=(anchor,head)=>chunk().selectSource(anchor,head)
+window.setFixture=async(content,partial=false)=>{flush();await nextTick();window.fullContent=content;props.content=partial?content.slice(0,1000):content;props.isPartial=partial;props.totalBytes=new Blob([content]).size;await nextTick()}
+window.scrollLine=line=>component.value.scrollToLine(line)
+window.saveSession=()=>component.value.saveSnapshot()
+window.restore=async()=>{flush();visible.value=false;await nextTick();visible.value=true;await nextTick()}
+window.getSession=()=>session
+window.hide=async()=>{visible.value=false;await nextTick()}
+window.show=async()=>{visible.value=true;await nextTick()}
+window.enableCache=async()=>{cacheMode.value=true;await nextTick()}
+window.stats=()=>({length:model().length,chunks:model().chunks.length,maxChunk:Math.max(...model().chunks.map(c=>c.to-c.from)),editorViews:document.querySelectorAll('.cm-editor').length,mountedLines:document.querySelectorAll('.cm-line').length,domCharacters:document.querySelector('.chunked-markdown-editor').textContent.length,editorCharacters:cm()?.state.doc.length||0})
+</script></body></html>

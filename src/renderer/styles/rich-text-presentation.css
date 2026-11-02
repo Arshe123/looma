@@ -1,0 +1,121 @@
+/* Shared visual presentation. Source positions and editable DOM remain engine-owned. */
+.tiptap-preview-container .looma-line-number,
+.chunked-markdown-editor:not(.chunked-source-only) .looma-code-line .looma-line-number,
+.chunked-markdown-editor:not(.chunked-source-only) .cm-lineNumbers .cm-gutterElement {
+  min-width: 2.25rem;
+  text-align: center;
+  font-family: var(--font-code);
+  font-size: 0.72rem;
+  line-height: inherit;
+  color: var(--text-subtle);
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+  cursor: default;
+  transform: translateY(0.16rem);
+  transition: opacity 0.12s ease;
+}
+
+.tiptap-preview-container .looma-line-number-active,
+.chunked-markdown-editor:not(.chunked-source-only) .looma-code-line .looma-line-number-active,
+.chunked-markdown-editor:not(.chunked-source-only) .cm-lineNumbers .cm-activeLineGutter {
+  color: var(--text-main);
+  font-weight: 700;
+}
+
+/* CM's gutter is virtualized with its lines, but occupies the same reading column
+   as the PM decorations, not an unrelated strip at the pane's far left. */
+.chunked-markdown-editor:not(.chunked-source-only) .cm-gutters {
+  /* CodeMirror writes sticky inline; retain its virtualized children without
+     reserving a second flex column outside the common reading gutter. */
+  position: absolute !important;
+  left: max(0px, calc((100% - 880px) / 2));
+  margin-left: 0.5rem;
+  z-index: 2;
+  background: transparent;
+  border: 0;
+}
+.chunked-markdown-editor:not(.chunked-source-only) .cm-lineNumbers .cm-gutterElement {
+  padding-left: 0;
+  padding-right: 0;
+  background: transparent;
+}
+
+.tiptap-preview-container .tiptap table td,
+.tiptap-preview-container .tiptap table th,
+.markdown-body.markdown-body table td,
+.markdown-body.markdown-body table th,
+.chunked-markdown-editor:not(.chunked-source-only) .looma-continuous-table-cell {
+  min-width: 7.5rem;
+  border: 1px solid var(--border-soft);
+  padding: 0.5rem 0.65rem;
+  vertical-align: top;
+  white-space: nowrap;
+  box-sizing: border-box;
+  position: relative;
+  background: var(--panel);
+}
+
+.tiptap-preview-container .tiptap table th,
+.chunked-markdown-editor:not(.chunked-source-only) .looma-continuous-table-header .looma-continuous-table-cell {
+  font-weight: bold;
+  text-align: left;
+  background-color: var(--panel-soft);
+}
+
+.tiptap-preview-container .tiptap .tableWrapper,
+.markdown-body.markdown-body .tableWrapper {
+  width: 100%;
+  margin: 0.95em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.tiptap-preview-container .tiptap table,
+.markdown-body.markdown-body table {
+  display: table;
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  table-layout: auto;
+  overflow: visible;
+}
+
+/* A continuous editor cannot nest a second contenteditable/table around source
+   lines. Cells keep engine-owned spans and use the same visual rules above. */
+.chunked-markdown-editor .looma-continuous-table-row {
+  display: table-row;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+.chunked-markdown-editor .cm-line.looma-continuous-table-separator {
+  display: table-row;
+  height: 0;
+  min-height: 0 !important;
+  line-height: 0 !important;
+}
+.chunked-markdown-editor .looma-continuous-table-cell {
+  display: table-cell;
+  overflow-wrap: anywhere;
+}
+/* Only syntax glyphs are blank and zero-advance. Native IME keeps its text
+   node during composition, so other characters must inherit visible body
+   glyphs rather than transparent color/negative spacing from that node. */
+@font-face {
+  font-family: 'Looma Table Syntax';
+  src: url('../assets/fonts/looma-table-syntax.ttf') format('truetype');
+  font-display: block;
+  unicode-range: U+0009, U+0020, U+007C;
+}
+.chunked-markdown-editor .looma-continuous-table-syntax {
+  font-family: 'Looma Table Syntax', var(--font-body);
+  letter-spacing: normal;
+  white-space: pre;
+  color: inherit;
+  caret-color: var(--text-main);
+}
+.chunked-markdown-editor:not(.chunked-source-only) .cm-content {
+  border-collapse: collapse;
+}

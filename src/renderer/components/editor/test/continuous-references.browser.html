@@ -1,0 +1,92 @@
+<!doctype html><html><head><meta charset="UTF-8"></head><body><div id="app"></div><script type="module">
+import { createApp, h, reactive, shallowRef, nextTick } from 'vue'
+import { createPinia } from 'pinia'
+import { EditorState, StateEffect } from '@codemirror/state'
+import { EditorView, Decoration } from '@codemirror/view'
+import { markdown } from '@codemirror/lang-markdown'
+import { syntaxTree, ensureSyntaxTree } from '@codemirror/language'
+import { getContinuousInlineSpans } from '../continuousMarkdownSyntax'
+import { undo, redo } from '@codemirror/commands'
+import ChunkedMarkdownEditor from '../ChunkedMarkdownEditor.vue'
+import TiptapPreview from '../../preview/TiptapPreview.vue'
+import ContinuousNoteRefPicker from '../ContinuousNoteRefPicker.vue'
+import * as references from '../continuousMarkdownReferences'
+import { useWorkspaceStore } from '/src/renderer/stores/workspace'
+import { externalDocumentKey } from '../documentSession'
+import { ChunkedDocument } from '/src/shared/utils/chunked-document'
+import '/src/renderer/styles/style.css'
+import '../continuousMarkdownReferences.css'
+window.electronAPI={platform:'darwin',fs:{listNotes:async workspaceId=>{calls.push(workspaceId);return {success:true,data:['docs/目标 笔记.md','other.txt']}}},file:{readFileBase64:async()=>({success:false})},app:{openExternal:async()=>{}}}
+window.calls=[]
+window.model=new ChunkedDocument('前文 ')
+window.fixture=reactive({content:'前文 ',revision:0,active:true,sourceOnly:false,path:'folder/current.md',workspace:'memory',readonly:false})
+const request=shallowRef(null)
+window.references=references
+window.controller=references.createContinuousMarkdownReferences({
+  enabled:()=>fixture.active&&!fixture.sourceOnly&&!fixture.readonly,
+  identity:()=>({workspaceId:fixture.workspace,fromRelativePath:fixture.path,revision:fixture.revision}),
+  onPickerChange:value=>request.value=value,
+})
+const pinia=createPinia()
+window.mounted=createApp({setup:()=>()=>h('main',{},[
+  h('section',{id:'continuous',style:'width:700px;height:420px'},[h(ChunkedMarkdownEditor,{content:fixture.content,documentModel:model,documentRevision:fixture.revision,filePath:'',relativeFilePath:fixture.path,isPartial:fixture.readonly,sourceOnly:fixture.sourceOnly})]),
+  h('section',{id:'ordinary',style:'width:700px;height:220px'},[h(TiptapPreview,{content:fixture.content,filePath:'',relativeFilePath:fixture.path})]),
+  h(ContinuousNoteRefPicker,{request:request.value,controller}),
+])}).use(pinia).provide(externalDocumentKey,true).mount('#app')
+// Keep the host's picker inactive while exercising the appended controller;
+// the shared picker still reads this real store. Production wiring is tested separately.
+useWorkspaceStore(pinia).activeWorkspaceId='memory'
+window.cm=()=>{const root=document.querySelector('#continuous .cm-editor');return root?EditorView.findFromDOM(root):null}
+window.pm=()=>document.querySelector('#ordinary .tiptap')?.editor
+window.setFixture=async source=>{controller.cancel();model.replaceExternal(source);fixture.content=source;fixture.revision=model.revision;await nextTick()}
+window.snapshot=()=>({source:model.content,selection:cm().state.selection.main.head,request:request.value,calls:[...calls]})
+window.undo=()=>undo(cm());window.redo=()=>redo(cm())
+window.ready=()=>!!cm()&&!!pm()
+window.pickerHandlers=()=>mounted.$.subTree.children[2].component.subTree.props
+window.nextTick=nextTick
+window.selectPayload={relativePath:'docs/目标 笔记.md',href:'WRONG.md',label:'ignored'}
+window.lifecycle=async()=>{
+  const results=[]
+  for(const flag of ['active','sourceOnly','readonly','path','workspace','revision','canonicalRevision','selection']){
+    fixture.active=true;fixture.sourceOnly=false;fixture.readonly=false;fixture.path='folder/current.md';fixture.workspace='memory'
+    await nextTick();controller.cancel();controller.open(cm());await nextTick();await nextTick()
+    const saved=snapshot().request, before=model.content
+    if(flag==='active')fixture.active=false
+    if(flag==='sourceOnly')fixture.sourceOnly=true
+    if(flag==='readonly')fixture.readonly=true
+    if(flag==='path')fixture.path='other/current.md'
+    if(flag==='workspace')fixture.workspace='other'
+    if(flag==='revision')cm().dispatch({changes:{from:0,insert:'revision '}})
+    if(flag==='canonicalRevision')fixture.revision++
+    if(flag==='selection')cm().dispatch({selection:{anchor:0}})
+    await nextTick();controller.refresh();await nextTick()
+    const after=model.content
+    results.push({flag,rejected:!controller.select(saved,selectPayload),unchanged:model.content===after,cancelled:!snapshot().request})
+    await nextTick()
+  }
+  fixture.active=true;fixture.sourceOnly=false;fixture.readonly=false;fixture.path='folder/current.md';fixture.workspace='memory'
+  await nextTick();controller.cancel();await nextTick()
+  return results
+}
+window.renderRuns=async source=>{
+  await setFixture('temporary fixture');await setFixture(source)
+  window.runView?.destroy();document.querySelector('#runs')?.remove()
+  const parent=document.createElement('section');parent.id='runs';parent.className='chunked-markdown-editor';document.body.append(parent)
+  let state=EditorState.create({doc:source,extensions:[markdown()]});ensureSyntaxTree(state,source.length,500);state=state.update({}).state
+  const spans=getContinuousInlineSpans(state.doc,syntaxTree(state),0,source.length)
+  const marks=[]
+  for(const span of spans){
+    if(span.from<span.contentFrom)marks.push(Decoration.replace({}).range(span.from,span.contentFrom))
+    if(span.contentTo<span.to)marks.push(Decoration.replace({}).range(span.contentTo,span.to))
+    if(span.type!=='link')marks.push(Decoration.mark({tagName:span.type==='bold'?'strong':'em'}).range(span.contentFrom,span.contentTo))
+  }
+  for(const run of references.getContinuousReferenceRuns(spans))marks.push(Decoration.mark({tagName:'a',attributes:run.attributes}).range(run.from,run.to))
+  window.runView=new EditorView({state:state.update({effects:StateEffect.appendConfig.of(EditorView.decorations.of(Decoration.set(marks,true)))}).state,parent})
+  return references.getContinuousReferenceAtPosition(state,source.indexOf('引用'))
+}
+window.linkStyles=selector=>[...document.querySelectorAll(selector+' a[data-inline-markdown-link]')].map(a=>{
+  const style=getComputedStyle(a),before=getComputedStyle(a,'::before')
+  return {text:a.textContent,href:a.getAttribute('href'),title:a.getAttribute('title'),ref:a.getAttribute('data-looma-note-ref'),color:style.color,border:style.borderBottomStyle,icon:before.content!=='none',mask:before.maskImage,width:before.width,height:before.height}
+})
+window.install=()=>{cm().dispatch({effects:StateEffect.appendConfig.of(controller.extension)});cm().dispatch({selection:{anchor:cm().state.doc.length}});cm().focus()}
+</script></body></html>

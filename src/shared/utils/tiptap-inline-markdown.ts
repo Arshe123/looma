@@ -1,3 +1,4 @@
+/// <reference lib="es2022.intl" />
 import { Extension, type Editor, type JSONContent } from '@tiptap/core'
 import { Marked, type Token } from 'marked'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
@@ -27,8 +28,9 @@ inlineLexer.use({ extensions: [
       if (!src.startsWith('**') || src.startsWith('***')) return undefined
       const end = src.indexOf('**', 2)
       if (end <= 2 || src[end - 1] === '\\' || src[end + 2] === '*') return undefined
-      if (!/[\p{P}\p{S}]/u.test(src[2]) && !/[\p{P}\p{S}]/u.test(src[end - 1])) return undefined
       const text = src.slice(2, end)
+      const characters = Array.from(text)
+      if (!/[\p{P}\p{S}]/u.test(characters[0]) && !/[\p{P}\p{S}]/u.test(characters[characters.length - 1])) return undefined
       return { type: 'strong', raw: src.slice(0, end + 2), text, tokens: this.lexer.inlineTokens(text) }
     },
   },
@@ -222,7 +224,23 @@ const decorate = (state: EditorState, focused: boolean) => {
             attrs['data-looma-note-ref'] = span.href
           } else if (/^https?:/i.test(span.href ?? '')) attrs.class = 'looma-external-link'
         }
-        decorations.push(Decoration.inline(contentFrom, contentTo, attrs))
+        if (span.type === 'link') {
+          // PM splits overlapping inline decorations into sibling DOM nodes.
+          // Decorate only visible label runs, and give only the first run an
+          // icon; otherwise nested syntax creates empty/duplicate link icons.
+          const nested = spans.filter(child => child !== span && child.from >= span.contentFrom && child.to <= span.contentTo)
+          const boundaries = [...new Set([span.contentFrom, span.contentTo,
+            ...nested.flatMap(child => [child.from, child.contentFrom, child.contentTo, child.to])])].sort((a, b) => a - b)
+          let first = true
+          for (let i = 1; i < boundaries.length; i++) {
+            const left = boundaries[i - 1], right = boundaries[i]
+            if (nested.some(child => left >= child.from && right <= child.contentFrom
+              || left >= child.contentTo && right <= child.to)) continue
+            decorations.push(Decoration.inline(pos + 1 + left, pos + 1 + right,
+              first ? attrs : { ...attrs, 'data-inline-markdown-link-continuation': 'true' }))
+            first = false
+          }
+        } else decorations.push(Decoration.inline(contentFrom, contentTo, attrs))
       }
     }
     return false
@@ -316,8 +334,37 @@ export const createInlineMarkdownPlugin = () => new Plugin<InlineDisplayState>({
   props: {
     decorations: state => inlineMarkdownKey.getState(state)?.decorations,
     handleKeyDown(view, event) {
-      if (view.composing || event.altKey || event.ctrlKey || event.metaKey || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return false
+      if (view.composing || inlineMarkdownKey.getState(view.state)?.composing || event.altKey || event.ctrlKey || event.metaKey) return false
       const { selection } = view.state
+      if (selection.empty && ['Backspace', 'Delete'].includes(event.key)) {
+        const { $from } = selection
+        const parent = $from.parent
+        if (parent.isTextblock && !parent.type.spec.code
+          && inlineMarkdownKey.getState(view.state)?.decorations.find($from.start(), $from.end()).some(d => d.spec.syntax)) {
+          // Native contenteditable deletion may also remove adjacent display:none
+          // source, which PM then accepts as an actual edit. Delete one source
+          // grapheme explicitly while keeping block/atom/selection deletion native.
+          const source = parent.textBetween(0, parent.content.size, '', '\ufffc')
+          const offset = $from.parentOffset
+          const backward = event.key === 'Backspace'
+          const segments = new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(source)
+          let from = offset, to = offset
+          for (const segment of segments) {
+            const end = segment.index + segment.segment.length
+            if (backward && segment.index < offset && end >= offset) { from = segment.index; break }
+            if (!backward && end > offset) { to = end; break }
+          }
+          if (from !== to) {
+            let textOnly = true
+            parent.nodesBetween(from, to, node => { if (!node.isText) textOnly = false })
+            if (textOnly) {
+              view.dispatch(view.state.tr.delete($from.start() + from, $from.start() + to).scrollIntoView())
+              return true
+            }
+          }
+        }
+      }
+      if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return false
       if (!selection.empty && !event.shiftKey) return false
       const next = selection.head + (event.key === 'ArrowLeft' ? -1 : 1)
       const hidden = inlineMarkdownKey.getState(view.state)?.decorations.find(next, next).some(d => d.spec.syntax)

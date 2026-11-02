@@ -1,0 +1,33 @@
+/* Same inline visual box and Lucide masks as ordinary Tiptap references.
+ * Applied only to source-backed link runs, never raw source mode. */
+.chunked-markdown-editor:not(.chunked-source-only) .cm-content a[data-inline-markdown-link] {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+  cursor: text;
+}
+.chunked-markdown-editor .cm-content a.looma-note-ref[data-inline-markdown-link] {
+  border-bottom-style: dotted;
+}
+.chunked-markdown-editor .cm-content a.looma-note-ref::before,
+.chunked-markdown-editor .cm-content a.looma-external-link::before {
+  content: "";
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.2em;
+  vertical-align: -0.12em;
+  background-color: currentColor;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+}
+.chunked-markdown-editor .cm-content a.looma-note-ref::before {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m10 18 3-3-3-3M14 2v4a2 2 0 0 0 2 2h4M4 11V4a2 2 0 0 1 2-2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h7' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.chunked-markdown-editor .cm-content a.looma-external-link::before {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.chunked-markdown-editor .cm-content a[data-inline-markdown-link-continuation]::before {
+  content: none;
+}

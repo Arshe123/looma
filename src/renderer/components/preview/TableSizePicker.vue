@@ -117,6 +117,10 @@ watch(
           'table-size-picker__cell--active': cell.row <= hoverRows && cell.col <= hoverCols,
           'table-size-picker__cell--current': isCurrentSizeCell(cell),
         }"
+        :data-rows="cell.row"
+        :data-columns="cell.col"
+        :data-grid-columns="gridCols"
+        :aria-label="`${cell.row} 行 × ${cell.col} 列`"
         :title="`${cell.row} x ${cell.col}`"
         @mouseenter="setHover(cell.row, cell.col)"
         @focus="setHover(cell.row, cell.col)"

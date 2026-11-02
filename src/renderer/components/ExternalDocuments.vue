@@ -6,12 +6,19 @@ import type { DocumentSession } from './editor/documentSession'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import { matchesAppShortcut } from '@/shared/utils/app-shortcuts'
+import { LARGE_NOTE_BYTES } from '@/shared/utils/markdown-chunks'
 
 const store = useExternalDocumentsStore()
 const settings = useSettingsStore()
 const explanation = ref(localStorage.getItem('looma.externalDocuments.explained') !== '1')
 const editors = new Map<string, InstanceType<typeof MarkdownEditor>>()
 const sessions = new Map<string, DocumentSession>()
+// Latch the engine for an open document; deleting text must not destroy its history.
+const largeFiles = new WeakMap<ExternalEditorDocument, boolean>()
+function largeFileFor(doc: ExternalEditorDocument) {
+  if (!largeFiles.has(doc)) largeFiles.set(doc, new Blob([doc.content]).size >= LARGE_NOTE_BYTES)
+  return largeFiles.get(doc)!
+}
 function sessionFor(doc: ExternalEditorDocument) {
   if (!sessions.has(doc.id)) sessions.set(doc.id, {
     getSession: () => doc.session,
@@ -67,7 +74,7 @@ onUnmounted(() => window.removeEventListener('keydown', keydown, true))
       <div class="flex-1 min-h-0">
         <MarkdownEditor :ref="editor => setEditor(doc.id, editor)" :document-session="sessionFor(doc)"
           :file-path="doc.filePath" relative-file-path="" :content="doc.content" :save-trigger="0"
-          :is-partial="false" :is-loading="false" :is-loading-more="false" :total-bytes="0" :use-chunked-preview="false"
+          :is-partial="false" :is-loading="false" :is-loading-more="false" :total-bytes="0" :use-chunked-preview="largeFileFor(doc)"
           @update:content="content => store.update(doc.id, content)"
           @edit-pending="store.markPending(doc.id)"
           @save="content => { store.update(doc.id, content); store.save(doc.id) }" />

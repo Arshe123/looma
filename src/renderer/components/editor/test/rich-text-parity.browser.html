@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="UTF-8"></head><body style="margin:0"><div id="app"></div><script type="module">
+import { createApp, h, reactive, ref, nextTick, KeepAlive } from 'vue'
+import { createPinia } from 'pinia'
+import { EditorView } from '@codemirror/view'
+import TiptapPreview from '../../preview/TiptapPreview.vue'
+import ChunkedMarkdownEditor from '../ChunkedMarkdownEditor.vue'
+import { ChunkedDocument } from '/src/shared/utils/chunked-document'
+import '/src/renderer/styles/style.css'
+window.electronAPI={platform:'darwin',file:{readFileBase64:async()=>({success:false})},app:{openExternal:async()=>{}}}
+window.source='普通正文\n\n```js\nconst value = "文字";\n```\n\n| 名称 | 数量 |\n| --- | --- |\n| 苹果 | 2 |\n\n末尾'
+window.model=new ChunkedDocument(source)
+window.state=reactive({content:source,revision:0,numbers:true,width:700,zoom:100,sourceOnly:false,active:true})
+const ordinary=ref(),continuous=ref()
+window.events={updates:[],saves:[]}
+createApp({setup:()=>()=>h('main',{style:'display:flex;gap:16px'},[
+ h('section',{id:'ordinary',style:`flex:0 0 ${state.width}px;height:750px;min-width:0;font-size:${state.zoom/100}rem`},[h(TiptapPreview,{ref:ordinary,content:state.content,filePath:'',relativeFilePath:'fixture.md',showLineNumbers:state.numbers,'onUpdate:content':value=>events.updates.push(value),onSave:value=>events.saves.push(value)})]),
+ h('section',{id:'continuous',style:`flex:0 0 ${state.width}px;height:750px;min-width:0;--rich-text-font-size:${state.zoom/100}rem`},[h(KeepAlive,null,{default:()=>state.active?h(ChunkedMarkdownEditor,{ref:continuous,content:state.content,documentModel:model,documentRevision:state.revision,filePath:'',relativeFilePath:'fixture.md',isPartial:false,isLoadingMore:false,totalBytes:0,showLineNumbers:state.numbers,sourceOnly:state.sourceOnly,'onUpdate:content':value=>events.updates.push(value),onSave:value=>events.saves.push(value)}):null})])
+])}).use(createPinia()).mount('#app')
+window.cm=()=>{const root=document.querySelector('#continuous .cm-editor');return root?EditorView.findFromDOM(root):null}
+window.pm=()=>document.querySelector('#ordinary .tiptap')?.editor
+window.ready=()=>!!cm()&&!!pm()
+window.setFixture=async source=>{model.replaceExternal(source);state.content=source;state.revision=model.revision;await nextTick()}
+window.flush=()=>{ordinary.value?.flushPendingMarkdownEmit();continuous.value?.flushPendingMarkdownEmit()}
+</script></body></html>

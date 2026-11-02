@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body><div id="editor" class="markdown-body" style="width:600px"></div><div id="controls"></div><script type="module">
+import { createApp, h, ref } from 'vue'
+import { EditorState } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
+import { markdown } from '@codemirror/lang-markdown'
+import { ChunkedDocument } from '/src/shared/utils/chunked-document'
+import { continuousMarkdown } from '../continuousMarkdown'
+import { createContinuousMediaController, continuousMarkdownMedia } from '../continuousMarkdownMedia'
+import ContinuousMediaControls from '../ContinuousMediaControls.vue'
+import '/src/renderer/styles/style.css'
+window.source='前文\n\n![图](assets/a.png "原题"){width=60%}\n\n后文'
+window.model=new ChunkedDocument(source)
+window.errors=[];window.imports=[];window.copies=[]
+const selectedFile={success:true,data:{relativePath:'assets/选择.png',fileName:'选择.png'}}
+window.electronAPI={platform:'darwin',file:{selectAndCopyImage:async()=>window.deferFileImport?new Promise(resolve=>{window.finishFileImport=()=>resolve(selectedFile)}):selectedFile},fs:{importImage:async(...args)=>{imports.push(args);return {success:true,data:{relativePath:'assets/粘贴.png',fileName:'粘贴.png'}}},importClipboardImage:async()=>({success:true,data:{relativePath:'assets/截图.png',fileName:'截图.png'}}),clipboardReadFiles:async()=>({success:true,data:[]})}}
+let view;let identity={}
+window.media=createContinuousMediaController({view:()=>view,session:()=>({identity,revision:model.revision,filePath:'/isolated/note.md',relativeFilePath:'note.md',workspaceId:'isolated',editable:true,sourceOnly:false}),api:electronAPI,reportError:(...args)=>errors.push(args),setBusy:()=>{},writeText:async text=>copies.push(text)})
+const svg='data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><rect width="400" height="200" fill="green"/></svg>')
+view=new EditorView({parent:document.querySelector('#editor'),state:EditorState.create({doc:model.text,extensions:[markdown(),continuousMarkdown({contextAt:at=>model.contextAt(at),resolveImage:async()=>svg,metadata:()=>null}),continuousMarkdownMedia(media)]}),dispatchTransactions:transactions=>{for(const tr of transactions){if(tr.docChanged){const changes=[];tr.changes.iterChanges((from,to,a,b,text)=>changes.push({from,to,insert:text.toString()}));model.applyChanges(changes,{anchor:tr.state.selection.main.anchor,head:tr.state.selection.main.head})}view.update([tr])}}})
+window.cm=()=>view
+window.reset=()=>{identity={};model.replaceExternal(source);model.select(0);view.update([view.state.update({changes:{from:0,to:view.state.doc.length,insert:model.text},selection:{anchor:0}})])}
+window.undo=()=>{model.undo();view.update([view.state.update({changes:{from:0,to:view.state.doc.length,insert:model.text},selection:model.selection})])}
+const controls=ref();const controlsApp=createApp({setup:()=>()=>h(ContinuousMediaControls,{ref:controls,controller:media,filePath:'/isolated/note.md'})});controlsApp.mount('#controls')
+window.openDialog=()=>controls.value.openDialog()
+window.unmountControls=()=>controlsApp.unmount()
+window.ready=true
+</script></body></html>

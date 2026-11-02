@@ -2445,7 +2445,10 @@ export const useWorkspaceStore = defineStore('workspace', {
       const requestId = state.loadRequestId
       const offset = state.nextOffset
       state.isLoadingMore = true
-      const result = await window.electronAPI.file.readTextChunk(absPath, offset, NOTE_NEXT_CHUNK_BYTES)
+      const result = await window.electronAPI.file.readTextChunk(absPath, offset, NOTE_NEXT_CHUNK_BYTES).catch((error: unknown) => {
+        console.error('加载剩余笔记内容失败', error)
+        return { success: false as const, error: '加载剩余笔记内容失败，请重试。' }
+      })
       const current = this.openedTextFileContents[rel]
       if (!current || current.loadRequestId !== requestId || this.activeWorkspaceId !== workspaceId || this.resolveAbsolutePath(rel) !== absPath) {
         return { success: true as const }
@@ -2473,8 +2476,9 @@ export const useWorkspaceStore = defineStore('workspace', {
       return result
     },
 
-    async ensureTextFileFullyLoaded(relativePath: string) {
+    async ensureTextFileFullyLoaded(relativePath: string, options: { shouldContinue?: () => boolean } = {}) {
       const rel = normalizeDir(relativePath)
+      const workspaceId = this.activeWorkspaceId
       let state = this.openedTextFileContents[rel]
       if (!state) {
         const initial = await this.loadTextFileContent(rel)
@@ -2482,7 +2486,13 @@ export const useWorkspaceStore = defineStore('workspace', {
         state = this.openedTextFileContents[rel]
       }
 
+      const requestId = state?.loadRequestId
+      const canContinue = () => options.shouldContinue?.() !== false
+        && this.activeWorkspaceId === workspaceId
+        && this.openedTextFileContents[rel]?.loadRequestId === requestId
+      const stopped = () => ({ success: false as const, error: '笔记已切换或关闭，已停止后台加载。' })
       while (state?.isPartial) {
+        if (!canContinue()) return stopped()
         if (state.isLoading || state.isLoadingMore) {
           await new Promise<void>((resolve) => setTimeout(resolve, 16))
         } else {
@@ -2491,6 +2501,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         }
         state = this.openedTextFileContents[rel]
       }
+      if (!canContinue()) return stopped()
       if (state?.saveError && !state.content && !state.loadedContent) {
         return { success: false as const, error: state.saveError }
       }

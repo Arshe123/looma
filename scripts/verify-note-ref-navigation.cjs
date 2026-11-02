@@ -10,6 +10,12 @@ const wait = (ms = 250) => new Promise(resolve => setTimeout(resolve, ms))
 app.whenReady().then(async () => {
  const win = new BrowserWindow({width:1100,height:850,show:false,webPreferences:{backgroundThrottling:false}})
  const run = code => win.webContents.executeJavaScript(code)
+ // Target the isolated renderer rather than an OS pointer left by an earlier window.
+ const mouse = async event => {
+  const type = {mouseMove:'mouseMoved',mouseDown:'mousePressed',mouseUp:'mouseReleased'}[event.type]
+  const modifiers = (event.modifiers || []).reduce((mask,key)=>mask|({meta:4,control:2,shift:8,alt:1}[key]||0),0)
+  await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent',{type,x:event.x,y:event.y,button:event.button||'none',clickCount:event.clickCount||0,modifiers})
+ }
  const focusWindow = async () => {
   for(let attempt=0;attempt<20;attempt++) {
    app.focus({steal:true}); win.focus()
@@ -21,6 +27,7 @@ app.whenReady().then(async () => {
  win.webContents.on('console-message', (_e, level, message) => { if(level >= 2) console.log('renderer:',message) })
  try {
   await win.loadURL('http://127.0.0.1:5189/scripts/test/note-ref-navigation.html')
+  win.webContents.debugger.attach('1.3')
   for(let i=0;i<100 && !await run('window.ready?.()');i++) await wait(100)
   assert.ok(await run('ready()'))
   win.show(); app.focus({steal:true}); win.focus(); await wait(500)
@@ -32,15 +39,15 @@ app.whenReady().then(async () => {
   await wait(300)
   const point = await run(`(()=>{const a=document.querySelector('.tiptap a');const r=a.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()`)
   // A previous run may leave the native pointer at this exact link position.
-  win.webContents.sendInputEvent({type:'mouseMove',x:2,y:2})
+  await mouse({type:'mouseMove',x:2,y:2})
   await wait(100)
-  win.webContents.sendInputEvent({type:'mouseMove',...point})
+  await mouse({type:'mouseMove',...point})
   await wait(600)
   const hover = await run(`({cards:[...document.querySelectorAll('.looma-note-preview')].map(el=>el.textContent),reads,href:document.querySelector('.tiptap a').getAttribute('href')})`)
   console.log('HOVER',JSON.stringify(hover))
   // Run navigation even if hover is broken to capture both user symptoms.
-  win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point,modifiers:['meta']})
-  win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point,modifiers:['meta']})
+  await mouse({type:'mouseDown',button:'left',clickCount:1,...point,modifiers:['meta']})
+  await mouse({type:'mouseUp',button:'left',clickCount:1,...point,modifiers:['meta']})
   await wait(1200)
   const navigation = await run(`(()=>{const e=document.querySelector('.tiptap'),h=e.querySelector('h2'),pane=e.closest('.overflow-y-auto');return {trace,navigations,active:store.activeFileRelativePath,top:pane?.scrollTop,headingTop:h?.getBoundingClientRect().top,paneTop:pane?.getBoundingClientRect().top}})()`)
   console.log('NAVIGATION',JSON.stringify(navigation))
@@ -61,11 +68,13 @@ app.whenReady().then(async () => {
   await wait(300)
   const linkPoint = async index => run(`(()=>{const r=document.querySelectorAll('.tiptap a')[${index}].getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()`)
   const linePoint = await linkPoint(1)
-  win.webContents.sendInputEvent({type:'mouseMove',...linePoint})
+  await mouse({type:'mouseMove',x:2,y:2})
+  await wait(100)
+  await mouse({type:'mouseMove',...linePoint})
   await wait(500)
   assert.equal(await run('document.querySelectorAll(".looma-note-preview").length'),1,'reactivated source owns exactly one preview')
-  win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...linePoint,modifiers:['meta']})
-  win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...linePoint,modifiers:['meta']})
+  await mouse({type:'mouseDown',button:'left',clickCount:1,...linePoint,modifiers:['meta']})
+  await mouse({type:'mouseUp',button:'left',clickCount:1,...linePoint,modifiers:['meta']})
   await wait(1000)
   assert.deepEqual(await run('navigations.at(-1).anchor'),{kind:'line-range',start:123,end:125})
   const lineTop = await run(`document.querySelector('.tiptap').closest('.overflow-y-auto').scrollTop`)
@@ -76,7 +85,7 @@ app.whenReady().then(async () => {
   await focusWindow()
   await run('editor().commands.setTextSelection(1);editor().view.focus()')
   await wait(300)
-  win.webContents.sendInputEvent({type:'mouseMove',...await linkPoint(2)})
+  await mouse({type:'mouseMove',...await linkPoint(2)})
   await wait(600)
   assert.deepEqual(await run('reads'),[{path:'/isolated/targets/未打开.md',offset:0,maxBytes:262144}],'uncached hover reads the exact resolved target once')
   assert.equal(await run('document.querySelectorAll(".looma-note-preview").length'),1)
@@ -85,13 +94,13 @@ app.whenReady().then(async () => {
   for(const [mode,chunked] of [['editor',false],['split',false],['preview',true]]) {
    await run(`(()=>{const path='targets/'+${JSON.stringify(mode)}+'-'+${chunked}+'.md';store.openedTextFileContents[path]={content:targetContent,loadedContent:targetContent,isLoading:false,isPartial:false,isLoadingMore:false,loadRequestId:1,useChunkedPreview:${chunked}};store.fileSessions[path]={markdown:{viewMode:${JSON.stringify(mode)},splitRatio:0.5}};window.dispatchEvent(new CustomEvent('looma:open-note-ref',{detail:{relativePath:path,anchor:{kind:'line',line:123}}}))})()`)
    await wait(1400)
-   const positions = await run(`({source:document.querySelector('.cm-scroller')?.scrollTop,rich:document.querySelector('.tiptap')?.closest('.overflow-y-auto')?.scrollTop,chunked:document.querySelector('.chunked-markdown')?.parentElement.scrollTop})`)
+   const positions = await run(`({source:document.querySelector('.cm-scroller')?.scrollTop,rich:document.querySelector('.tiptap')?.closest('.overflow-y-auto')?.scrollTop,chunked:document.querySelector('.chunked-markdown-editor .cm-scroller')?.scrollTop})`)
    console.log('MODE',mode,chunked,positions)
    if(mode!=='preview') assert.ok(positions.source>1000,'source view receives line navigation after mounting')
    if(mode==='split') assert.ok(positions.rich>1000,'split preview also receives line navigation')
    if(chunked) assert.ok(positions.chunked>1000,'chunked preview receives line navigation after mounting')
   }
   console.log('PASS first-open source/split/chunked navigation readiness')
-  win.destroy();fs.rmSync(profile,{recursive:true,force:true});app.exit(0)
+  win.webContents.debugger.detach();win.destroy();fs.rmSync(profile,{recursive:true,force:true});app.exit(0)
  } catch(error) {console.error(error);win.destroy();fs.rmSync(profile,{recursive:true,force:true});app.exit(1)}
 })

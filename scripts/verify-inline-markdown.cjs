@@ -50,7 +50,7 @@ app.whenReady().then(async () => {
     console.log('PASS real caret boundary entry/exit, delimiter deletion, incomplete save, undo, zero display events')
 
     const fixture = async source => {
-      win.focus()
+      app.focus({ steal: true }); win.focus()
       await wait(200)
       await run(`setFixture(${JSON.stringify(source)})`)
       await wait(350)

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { Editor } from '@tiptap/vue-3'
-import { Plus } from 'lucide-vue-next'
+import MenuPlusButton from './menus/MenuPlusButton.vue'
+import QuickMenuPresentation from './menus/QuickMenuPresentation.vue'
 import { isInTable } from '@tiptap/pm/tables'
-import TableSizePicker from './TableSizePicker.vue'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import {
   insertTableWithSize,
@@ -60,6 +60,16 @@ const defaultMenuItems = computed(() =>
 const tableMenuItems = getTableMenuActions()
 
 const activeMenuItems = computed(() => menuMode.value === 'table' ? tableMenuItems : defaultMenuItems.value)
+
+const presentationItems = computed(() => activeMenuItems.value.map((item, index) => ({
+  id: item.id, label: item.label, icon: item.icon,
+  shortcut: menuMode.value === 'default' && index < 9 && settingsStore.editorShortcuts.inlineMenuSlots[index]?.enabled
+    ? formatEditorShortcut(settingsStore.editorShortcuts.inlineMenuSlots[index], platform) : undefined,
+})))
+const handlePresentationAction = (id: string) => {
+  const item = activeMenuItems.value.find(item => item.id === id)
+  if (item) handleFormatAction(item)
+}
 
 const getCurrentMenuMode = (editor: Editor) => isInTable(editor.state) ? 'table' : 'default'
 
@@ -481,48 +491,18 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="menuContainerRef">
-    <!-- "+" Button -->
-    <button
-      v-if="menuVisible"
-      id="inline-menu-button"
-      class="absolute flex items-center justify-center w-6 h-6 rounded-full bg-panel-soft hover:bg-accent-soft text-text-muted transition-colors z-10"
+    <MenuPlusButton
+      v-if="menuVisible" id="inline-menu-button" class="absolute"
       :style="{ top: `${buttonPosition.top}px`, left: `${buttonPosition.left}px` }"
       @click="togglePanel()"
-    >
-      <Plus :size="14" />
-    </button>
-
-    <!-- Floating Panel -->
-    <div
-      v-if="panelVisible"
-      id="inline-panel"
-      class="absolute w-56 bg-panel border border-border-soft rounded-lg shadow-xl z-20 py-1 overflow-y-auto max-h-[220px]"
+    />
+    <QuickMenuPresentation
+      v-if="panelVisible" id="inline-panel" class="absolute"
       :style="{ top: `${panelPosition.top}px`, left: `${panelPosition.left}px` }"
-    >
-      <div
-        v-for="(item, index) in activeMenuItems"
-        :key="item.id"
-        class="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-colors"
-        :class="{
-          'bg-accent-soft text-accent': index === selectedIndex,
-          'text-text-main hover:bg-accent-soft/50': index !== selectedIndex
-        }"
-        @click="handleFormatAction(item)"
-        @mouseenter="selectedIndex = index"
-      >
-        <component :is="item.icon" :size="16" />
-        <span class="min-w-0 flex-1 truncate">{{ item.label }}</span>
-        <span
-          v-if="menuMode === 'default' && index < 9 && settingsStore.editorShortcuts.inlineMenuSlots[index]?.enabled"
-          class="shrink-0 rounded border border-border-soft bg-panel-soft px-1.5 py-0.5 text-[9px] text-text-muted"
-        >
-          {{ formatEditorShortcut(settingsStore.editorShortcuts.inlineMenuSlots[index], platform) }}
-        </span>
-      </div>
-
-      <div v-if="menuMode === 'default' && tablePickerVisible" class="px-3 py-2">
-        <TableSizePicker @select="handleTableSizeSelect" />
-      </div>
-    </div>
+      :items="presentationItems" :selected-index="selectedIndex"
+      :table-picker-visible="menuMode === 'default' && tablePickerVisible"
+      @action="handlePresentationAction" @hover="selectedIndex = $event"
+      @table-size="handleTableSizeSelect"
+    />
   </div>
 </template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import '@/renderer/styles/reading-area.css'
+import '@/renderer/styles/rich-text-presentation.css'
 import { resolveMarkdownImagePath } from '@/shared/utils/markdown-image-path'
 import '@/renderer/styles/note-title.css'
 import { externalDocumentKey } from '../editor/documentSession'
@@ -1133,6 +1134,10 @@ defineExpose({
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
+.tiptap [data-inline-markdown-link-continuation]::before {
+  content: none;
+}
+
 /* ---- Tiptap 行号 ---- */
 .tiptap-preview-container .ProseMirror {
   position: relative;
@@ -1143,30 +1148,12 @@ defineExpose({
 .tiptap-preview-container .looma-line-number {
   position: absolute;
   left: 0.5rem;
-  min-width: 2.25rem;
-  text-align: center;
-  font-family: var(--font-code);
-  font-size: 0.72rem;
-  line-height: inherit;
-  color: var(--text-subtle);
-  white-space: nowrap;
-  user-select: none;
-  -webkit-user-select: none;
-  pointer-events: none;
-  cursor: default;
-  /* 小字号的视觉中心原先比正文偏上，向下微调后与正文行盒居中。 */
-  transform: translateY(0.16rem);
-  transition: opacity 0.12s ease;
 }
 
 .tiptap-preview-container.line-numbers-hidden .looma-line-number {
   visibility: hidden;
 }
 
-.tiptap-preview-container .looma-line-number-active {
-  color: var(--text-main);
-  font-weight: 700;
-}
 
 .tiptap-preview-container .looma-active-line {
   background: var(--editor-active-line-bg);
@@ -1369,38 +1356,8 @@ defineExpose({
   height: 0;
   pointer-events: none;
 }
-.tiptap .tableWrapper,
-.markdown-body .tableWrapper {
-  width: 100%;
-  margin: 0.95em 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-}
 
-.tiptap table,
-.markdown-body table {
-  width: max-content;
-  min-width: 100%;
-  margin: 0;
-  border-collapse: collapse;
-  table-layout: auto;
-  overflow: visible;
-}
 
-.tiptap table td,
-.tiptap table th,
-.markdown-body table td,
-.markdown-body table th {
-  min-width: 7.5rem;
-  border: 1px solid var(--border-soft);
-  padding: 0.5rem 0.65rem;
-  vertical-align: top;
-  white-space: nowrap;
-  box-sizing: border-box;
-  position: relative;
-  background: var(--panel);
-}
 
 .tiptap table td p,
 .tiptap table th p,
@@ -1409,11 +1366,7 @@ defineExpose({
   margin: 0;
   white-space: inherit;
 }
-.tiptap table th {
-  font-weight: bold;
-  text-align: left;
-  background-color: var(--panel-soft);
-}
+
 .tiptap table .selectedCell::after {
   content: "";
   position: absolute;

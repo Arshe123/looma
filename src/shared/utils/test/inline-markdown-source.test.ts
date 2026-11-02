@@ -3,6 +3,7 @@ import { MarkdownManager } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 import { getSchema } from '@tiptap/core'
 import { EditorState, TextSelection } from '@tiptap/pm/state'
+import type { EditorView } from '@tiptap/pm/view'
 import { undoDepth, history, undo, redo } from '@tiptap/pm/history'
 import { ResizableMarkdownImage } from '../resizable-markdown-image'
 import { InlineMarkdown, createInlineMarkdownPlugin, inlineMarkdownKey, getInlineMarkdownSpans, hasInlineMarkdownSource, getInlineMarkdownLinkAtPosition, isInlineMarkdownCodeAtPosition, toggleInlineMarkdownFormat } from '../tiptap-inline-markdown'
@@ -83,6 +84,44 @@ describe('source format commands and lookup', () => {
 })
 
 describe('permanent inline Markdown source', () => {
+  it('renders emoji-boundary bold with UTF-16 source positions intact', () => {
+    const source = '后续我在**🚨监控告警-海南监测系统-一期&二期**群 @ 她说明了排查结论'
+    const from = source.indexOf('**')
+    const to = source.lastIndexOf('**') + 2
+    expect(getInlineMarkdownSpans(source)).toContainEqual({
+      from, to, type: 'bold', contentFrom: from + 2, contentTo: to - 2,
+    })
+    expect(fixture(source).state.doc.textContent).toBe(source)
+  })
+
+  it.each(['右', '。', ' ', '🚨', 'e\u0301', '👨‍👩‍👧‍👦'])('deletes only the adjacent grapheme %s while syntax is hidden', text => {
+    const link = '[**症候群监测信息子系统**](../医渡云相关信息.md#6.%20症候群监测信息子系统)'
+    const source = `a ${link}${text}侧 **其他** z`
+    const editor = fixture(source, 1 + 'a '.length + link.length + text.length)
+    const plugin = createInlineMarkdownPlugin()
+    const view = { ...editor.view, get state() { return editor.state }, composing: false } as unknown as EditorView
+    expect(plugin.props.handleKeyDown!.call(plugin, view, { key: 'Backspace' } as KeyboardEvent)).toBe(true)
+    expect(editor.state.doc.textContent).toBe(`a ${link}侧 **其他** z`)
+    expect(undoDepth(editor.state)).toBe(1)
+  })
+
+  it('does not override composition, modified deletion or selected-range deletion', () => {
+    const editor = fixture('a [引用](note.md)右侧 z', 18)
+    const plugin = createInlineMarkdownPlugin()
+    let composing = false
+    const view = { ...editor.view, get state() { return editor.state }, get composing() { return composing } } as unknown as EditorView
+    for (const modifier of ['altKey', 'ctrlKey', 'metaKey'] as const) {
+      const event: Partial<KeyboardEvent> = { key: 'Backspace', [modifier]: true }
+      expect(plugin.props.handleKeyDown!.call(plugin, view, event as KeyboardEvent)).toBe(false)
+    }
+    composing = true
+    expect(plugin.props.handleKeyDown!.call(plugin, view, { key: 'Backspace' } as KeyboardEvent)).toBe(false)
+    composing = false
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 17, 18)))
+    expect(plugin.props.handleKeyDown!.call(plugin, view, { key: 'Backspace' } as KeyboardEvent)).toBe(false)
+    expect(undoDepth(editor.state)).toBe(0)
+  })
+
   it('keeps structural image, break and HTML parsing delegated to Tiptap', () => {
     const extensions = [StarterKit, ResizableMarkdownImage]
     const md = new MarkdownManager({ extensions: [...extensions, InlineMarkdown] })

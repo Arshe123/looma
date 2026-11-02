@@ -1,0 +1,296 @@
+/* One palette for native source decorations and rich-text code nodes. */
+:root {
+  --looma-code-foreground: #263241;
+  --looma-code-background: #f7f9fc;
+  --looma-code-keyword: #7c3aed;
+  --looma-code-string: #15803d;
+  --looma-code-title: #2563eb;
+  --looma-code-number: #b45309;
+  --looma-code-comment: #6b7280;
+}
+
+[data-theme="dark"], .dark {
+  --looma-code-foreground: #d6e2f0;
+  --looma-code-background: #0f1720;
+  --looma-code-keyword: #c678dd;
+  --looma-code-string: #98c379;
+  --looma-code-title: #61afef;
+  --looma-code-number: #d19a66;
+  --looma-code-comment: #9ca3af;
+}
+
+.code-block-syntax .hljs-keyword,
+.looma-continuous-code-token.hljs-keyword,
+.code-block-syntax .hljs-selector-tag,
+.looma-continuous-code-token.hljs-selector-tag,
+.code-block-syntax .hljs-built_in,
+.looma-continuous-code-token.hljs-built_in {
+  color: var(--looma-code-keyword);
+}
+
+.code-block-syntax .hljs-string,
+.looma-continuous-code-token.hljs-string,
+.code-block-syntax .hljs-attr,
+.looma-continuous-code-token.hljs-attr,
+.code-block-syntax .hljs-regexp,
+.looma-continuous-code-token.hljs-regexp {
+  color: var(--looma-code-string);
+}
+
+.code-block-syntax .hljs-title,
+.looma-continuous-code-token.hljs-title,
+.code-block-syntax .hljs-function,
+.looma-continuous-code-token.hljs-function,
+.code-block-syntax .hljs-name,
+.looma-continuous-code-token.hljs-name {
+  color: var(--looma-code-title);
+}
+
+.code-block-syntax .hljs-number,
+.looma-continuous-code-token.hljs-number,
+.code-block-syntax .hljs-literal,
+.looma-continuous-code-token.hljs-literal,
+.code-block-syntax .hljs-symbol,
+.looma-continuous-code-token.hljs-symbol {
+  color: var(--looma-code-number);
+}
+
+.code-block-syntax .hljs-comment,
+.looma-continuous-code-token.hljs-comment,
+.code-block-syntax .hljs-quote,
+.looma-continuous-code-token.hljs-quote {
+  color: var(--looma-code-comment);
+  font-style: italic;
+}
+
+.tiptap .code-block-shell,
+.markdown-body .code-block-shell {
+  margin: 0.95em 0;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  color: var(--looma-code-foreground);
+  background: var(--looma-code-background);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--border-soft) 55%, transparent);
+}
+
+.code-block-floating-copy {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: min(7.5rem, calc(100% - 1.1rem));
+  min-width: 3.75rem;
+  height: 1.65rem;
+  padding: 0 0.55rem;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 5px;
+  color: var(--looma-code-foreground);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.25;
+  opacity: 0;
+  outline: none;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease, transform 120ms ease, border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.tiptap .code-block-shell:hover .code-block-floating-copy,
+.markdown-body .code-block-shell:hover .code-block-floating-copy,
+.tiptap .code-block-shell:focus-within .code-block-floating-copy,
+.markdown-body .code-block-shell:focus-within .code-block-floating-copy,
+.looma-continuous-code-toolbar.is-block-hovered .code-block-floating-copy,
+.looma-continuous-code-toolbar:focus-within .code-block-floating-copy,
+.code-block-floating-copy:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.code-block-floating-copy:hover,
+.code-block-floating-copy:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.code-block-copy-language,
+.code-block-copy-action,
+.code-block-copy-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.code-block-copy-action {
+  display: none;
+}
+
+.code-block-floating-copy:hover .code-block-copy-language,
+.code-block-floating-copy:focus-visible .code-block-copy-language {
+  display: none;
+}
+
+.code-block-floating-copy:hover .code-block-copy-action,
+.code-block-floating-copy:focus-visible .code-block-copy-action {
+  display: inline;
+}
+
+.code-block-floating-copy.is-copied {
+  border-color: color-mix(in srgb, var(--success, #16a34a) 45%, #c3ceda);
+  color: var(--success, #16a34a);
+}
+
+.code-block-floating-copy.is-failed {
+  border-color: color-mix(in srgb, var(--danger, #dc2626) 45%, #c3ceda);
+  color: var(--danger, #dc2626);
+}
+
+.tiptap .code-block-shell pre.code-block-body,
+.markdown-body .code-block-shell pre.code-block-body {
+  margin: 0;
+  min-height: 2.75rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* 左侧间距由 code-block-content 统一管理，避免与代码行号 gutter 重复叠加。 */
+  padding: 0.85rem 5.75rem 0.85rem 0;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  font-family: var(--font-code);
+  font-size: 0.92em;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.tiptap .code-block-content,
+.markdown-body .code-block-content {
+  display: block;
+  margin: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  tab-size: 2;
+  white-space: pre !important;
+}
+
+.tiptap .code-block-content:empty::before {
+  content: "\200b";
+}
+
+.tiptap .code-block-content br.ProseMirror-trailingBreak {
+  display: inline;
+}
+
+[data-theme="dark"] .code-block-floating-copy,
+.dark .code-block-floating-copy {
+  border-color: rgba(148, 163, 184, 0.36);
+  color: #d6e2f0;
+  background: rgba(15, 23, 32, 0.82);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.24);
+}
+
+[data-theme="dark"] .code-block-floating-copy:hover,
+.dark .code-block-floating-copy:hover,
+[data-theme="dark"] .code-block-floating-copy:focus-visible,
+.dark .code-block-floating-copy:focus-visible {
+  color: #8fb7ff;
+  background: rgba(23, 32, 43, 0.96);
+}
+
+/* Source lines stay native and viewport-bounded; only presentation is shared. */
+/* Only identified blocks own borders; parser-pending literal fallback lines
+   must not render an uncapped partial shell. */
+.cm-editor .cm-line.looma-code-line.looma-continuous-code-block {
+  color: var(--looma-code-foreground);
+  background: var(--looma-code-background);
+  font-family: var(--font-code);
+  font-size: 0.92em;
+  line-height: 1.55;
+  border-inline: 1px solid var(--border-soft);
+  position: relative;
+  padding-inline: 2.25rem 1rem;
+}
+
+.cm-editor .cm-line.looma-code-block-start {
+  position: relative;
+  border-top: 1px solid var(--border-soft);
+  border-radius: 8px 8px 0 0;
+}
+
+.cm-editor .cm-line.looma-code-block-end {
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 0 0 8px 8px;
+}
+
+/* Content-bearing boundary lines need the same vertical inset as ordinary
+   code bodies; hidden fence lines already provide their own spacer. */
+.cm-editor .cm-line.looma-code-block-start:not(.looma-code-fence-start) {
+  padding-top: 0.85rem;
+}
+.cm-editor .cm-line.looma-code-block-end:not(.looma-code-fence-end) {
+  padding-bottom: 0.85rem;
+}
+
+/* Collapse only fully hidden fence lines, never indented or unclosed code content. */
+.cm-editor .cm-line.looma-code-fence-start,
+.cm-editor .cm-line.looma-code-fence-end {
+  height: 0.85rem;
+  min-height: 0;
+  line-height: 0;
+  font-size: 0;
+}
+.cm-editor .cm-line.looma-code-block-start.looma-code-block-end { border-radius: 8px; }
+.looma-continuous-code-toolbar {
+  display: inline-flex;
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  z-index: 2;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  max-width: calc(100% - 1.1rem);
+  font: 12px var(--font-ui);
+  user-select: none;
+}
+
+.looma-continuous-code-toolbar .code-block-copy-host { display: contents; }
+
+.looma-continuous-code-toolbar .code-block-floating-copy {
+  position: static;
+  flex-shrink: 0;
+}
+
+.cm-editor .cm-content .cm-line.looma-code-line .looma-continuous-code-line-number {
+  position: absolute;
+  left: 0.25rem;
+  min-width: 1.5rem;
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+.looma-continuous-code-toolbar label[hidden] { display: none; }
+
+.looma-continuous-code-toolbar select {
+  max-width: 12em;
+  color: var(--looma-code-foreground);
+  background: var(--looma-code-background);
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  font: inherit;
+}
+

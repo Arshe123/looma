@@ -59,6 +59,44 @@ describe('workspace large note loading', () => {
     expect(readTextChunk).toHaveBeenCalledTimes(2)
   })
 
+  it('stops background completion between chunks when its editor closes', async () => {
+    let active = true
+    const readTextChunk = vi.fn()
+      .mockResolvedValueOnce({ success: true, data: { content: 'first', offset: 0, nextOffset: 5, totalBytes: 600000, done: false } })
+      .mockImplementationOnce(async () => {
+        active = false
+        return { success: true, data: { content: 'second', offset: 5, nextOffset: 11, totalBytes: 600000, done: false } }
+      })
+      .mockResolvedValue({ success: true, data: { content: 'last', offset: 11, nextOffset: 15, totalBytes: 600000, done: true } })
+    ;(window as any).electronAPI = { file: { readTextChunk } }
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    await store.loadTextFileContent('large.md')
+    const result = await store.ensureTextFileFullyLoaded('large.md', { shouldContinue: () => active })
+    expect(result.success).toBe(false)
+    expect(readTextChunk).toHaveBeenCalledTimes(2)
+    expect(store.openedTextFileContents['large.md']).toMatchObject({ content: 'firstsecond', isPartial: true })
+    expect(store.isFileDirty('large.md')).toBe(false)
+  })
+
+  it('allows retry when a background chunk request rejects', async () => {
+    const readTextChunk = vi.fn()
+      .mockResolvedValueOnce({ success: true, data: { content: 'first', offset: 0, nextOffset: 5, totalBytes: 600000, done: false } })
+      .mockRejectedValueOnce(new Error('连接中断'))
+      .mockResolvedValueOnce({ success: true, data: { content: 'last', offset: 5, nextOffset: 9, totalBytes: 600000, done: true } })
+    ;(window as any).electronAPI = { file: { readTextChunk } }
+    const store = useWorkspaceStore()
+    store.workspaces = [workspace]
+    store.activeWorkspaceId = workspace.id
+    await store.loadTextFileContent('large.md')
+    const failure = await store.ensureTextFileFullyLoaded('large.md')
+    expect(failure.success).toBe(false)
+    expect(store.openedTextFileContents['large.md'].isLoadingMore).toBe(false)
+    expect((await store.ensureTextFileFullyLoaded('large.md')).success).toBe(true)
+    expect(store.openedTextFileContents['large.md']).toMatchObject({ content: 'firstlast', loadedContent: 'firstlast', isPartial: false })
+  })
+
   it('refreshes a clean cached note only after a filesystem change event', async () => {
     let fsListener: ((payload: { workspaceId: string; event: string; relativePath: string; origin?: 'editor' | 'external' }) => void) | undefined
     const readTextChunk = vi.fn()

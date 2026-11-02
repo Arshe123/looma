@@ -1,0 +1,170 @@
+// Isolated real large-file editor; Vite --mode test on port 5189.
+const { app, BrowserWindow } = require('electron')
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const os = require('node:os')
+const directory = fs.mkdtempSync(path.join(os.homedir(), '.hermes/cache/scratch/looma-chunked-blocks-'))
+app.setPath('userData', path.join(directory, 'profile'))
+const wait = (ms = 150) => new Promise(resolve => setTimeout(resolve, ms))
+app.whenReady().then(async () => {
+  const win = new BrowserWindow({ width: 1100, height: 850, show: true, webPreferences: { backgroundThrottling: false } })
+  const run = code => win.webContents.executeJavaScript(code)
+  const errors = []
+  win.webContents.on('console-message', (_event, level, message) => { if (level >= 3) errors.push(message) })
+  const until = async (code, label) => { for (let i = 0; i < 100; i++) { if (await run(code)) return; await wait(70) } throw new Error(`Timeout: ${label}`) }
+  const focus = async () => { for (let i = 0; i < 25; i++) { app.focus({ steal: true }); win.focus(); await run('cm().focus()'); await wait(60); if (await run('cm().hasFocus && document.hasFocus()')) return } throw new Error('native editor focus failed') }
+  const key = async (keyCode, modifiers = []) => { await focus(); win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers }); await wait(200) }
+  const fixture = async source => { await run(`setFixture(${JSON.stringify(source)})`); await wait(1100); await run('start(0)'); await focus(); await wait() }
+  const exact = async source => assert.equal(await run('model().content'), source, 'canonical source is exact')
+  const clickPoint = async point => {
+    // A fixture swap can reuse the same screen coordinates. Re-enter so the
+    // hover-only copy badge actually receives mouseover before the click.
+    await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 700 })
+    await wait(50)
+    await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+    await wait(150)
+    for (const type of ['mousePressed', 'mouseReleased']) await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type, button: 'left', clickCount: 1, ...point })
+    await wait(200)
+  }
+  const click = async selector => clickPoint(await run(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`))
+  try {
+    await win.loadURL('http://127.0.0.1:5189/src/renderer/components/editor/test/chunked-editor.browser.html')
+    await until('window.ready?.() && !!cm()', 'continuous editor mounted')
+    await run('document.fonts.ready'); await focus(); win.webContents.debugger.attach('1.3')
+    await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
+    await win.webContents.debugger.sendCommand('Page.bringToFront')
+
+    const table = '# 表格\n\n| 名称 | 数值 |\n| :--- | ---: |\n| **粗体** | 2 |\n| | 空 |\n\n末尾'
+    await fixture(table)
+    await until('document.querySelectorAll(".looma-continuous-table-row").length === 3', 'table rows rendered')
+    assert.equal(await run('document.querySelectorAll(".looma-continuous-table-cell").length'), 6, 'nested formatting must not split a cell into duplicate boxes')
+    const geometry = await run('[...document.querySelectorAll(".looma-continuous-table-cell")].map(el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,width:r.width}})')
+    assert.ok(geometry.every(cell => cell.width > 100))
+    assert.ok(Math.abs(geometry[0].left - geometry[2].left) < 1 && Math.abs(geometry[1].left - geometry[3].left) < 1, 'columns align across rows')
+    assert.equal(geometry[0].top, geometry[1].top, 'cells stay in one row')
+    const revision = await run('model().revision')
+    const caret = table.indexOf('粗体') + 1
+    await clickPoint(await run(`(()=>{const r=cm().coordsAtPos(${caret});return {x:r.left+1,y:(r.top+r.bottom)/2}})()`))
+    assert.equal(await run('model().revision'), revision, `native click is display-only: ${await run('JSON.stringify({source:model().content,selection:model().selection,updates:events.updates,pending:events.pending})')}`)
+    const clicked = await run('model().selection.head')
+    await win.webContents.debugger.sendCommand('Input.insertText', { text: '新' })
+    const editedTable = table.slice(0, clicked) + '新' + table.slice(clicked)
+    await exact(editedTable)
+    await key('z', ['meta']); await exact(table)
+    await run(`select(${caret})`); await key('Tab')
+    await exact(table)
+    assert.ok(await run(`model().selection.head > ${table.indexOf('| 2 |')}`), 'Tab navigates to the next cell without indenting source')
+    await key('Tab', ['shift'])
+    await exact(table)
+    fs.writeFileSync(path.join(directory, 'table.png'), (await win.webContents.capturePage()).toPNG())
+    console.log('PASS aligned table, nested/empty cells, native cell click/input, Tab navigation and undo')
+
+    const tasks = '> - [ ] 未完成\n>   - [X] 子任务\n\n尾部 **格式**'
+    await fixture(tasks)
+    assert.equal(await run('document.querySelectorAll("input.looma-continuous-task").length'), 2)
+    const beforeTask = await run('model().revision')
+    await click('input.looma-continuous-task')
+    const checked = tasks.replace('[ ]', '[x]')
+    await exact(checked)
+    assert.equal(await run('model().revision'), beforeTask + 1)
+    await key('z', ['meta']); await exact(tasks)
+    await key('z', ['meta', 'shift']); await exact(checked)
+    await until('events.saves.at(-1) === model().content', 'task change autosaved')
+    fs.writeFileSync(path.join(directory, 'task.md'), await run('events.saves.at(-1)'))
+    assert.equal(fs.readFileSync(path.join(directory, 'task.md'), 'utf8'), checked)
+    await run(`setFixture(${JSON.stringify(checked)},true)`); await wait(400)
+    assert.ok(await run('[...document.querySelectorAll("input.looma-continuous-task")].every(el=>el.disabled)'), 'partial-load controls are disabled')
+    await run('props.isPartial=false'); await wait(400)
+    assert.ok(await run('[...document.querySelectorAll("input.looma-continuous-task")].every(el=>!el.disabled)'), 'full-load completion re-enables controls without needing focus or edits')
+    console.log('PASS nested task toggle changes one source byte, one undo/redo, autosave and partial read-only guard')
+
+    for (const [source, suffix] of [['- 一级\n  - 二级', '\n  - '], ['- [x] 已完成', '\n- [ ] '], ['> > 引用', '\n> > ']]) {
+      await fixture(source); await run(`select(${source.length})`); await key('Return')
+      await exact(source + suffix)
+      await key('z', ['meta']); await exact(source)
+    }
+    await fixture('- 一级\n  - 二级')
+    await run('select(model().length)'); await key('Tab')
+    await exact('- 一级\n    - 二级')
+    await key('Tab', ['shift']); await exact('- 一级\n  - 二级')
+    console.log('PASS nested list/task/quote continuation, indentation and reversible source edits')
+
+    const title = 'Setext 标题\n======\n\n正文内容\n\n二级标题\n------'
+    await fixture(title)
+    await until('!!document.querySelector(".looma-note-reading-time")', 'Setext article stats')
+    assert.ok(await run('!!document.querySelector(".looma-continuous-h1") && !!document.querySelector(".looma-continuous-h2")'))
+    assert.ok(await run('document.querySelector(".looma-note-reading-time").textContent.includes("共")'))
+    await exact(title)
+    const navigation = title + '\n\n' + '正文\n\n'.repeat(160) + '底部标题\n------\n\n' + '尾部\n\n'.repeat(50)
+    await fixture(navigation)
+    const targetLine = navigation.slice(0, navigation.lastIndexOf('底部标题')).split('\n').length
+    await run(`scrollLine(${targetLine})`); await wait(400)
+    assert.ok(await run(`(()=>{const el=document.querySelector('[data-line="${targetLine}"]'),r=cm().scrollDOM.getBoundingClientRect();return !!el && Math.abs(el.getBoundingClientRect().top-r.top)<60})()`), 'Setext heading source-line navigation is accurate')
+    console.log('PASS Setext H1/H2, reading stats, unchanged source and actual target geometry')
+
+    const literal = '普通软换行\n下一行\n\n硬换行  \n下一行\n\n---\n\n<div onclick="window.evil=1">\n**原样文字**\n<script>window.evil=1</script>\n</div>'
+    await fixture(literal)
+    assert.ok(await run('!!document.querySelector(".looma-continuous-rule")'))
+    assert.equal(await run('window.evil'), undefined)
+    assert.equal(await run('document.querySelector(".cm-content script,.cm-content [onclick]")'), null)
+    assert.ok(await run('[...document.querySelectorAll(".looma-continuous-html-source")].some(el=>el.textContent.includes("**原样文字**"))'))
+    await exact(literal)
+    assert.equal(await run('document.querySelectorAll(".cm-editor").length'), 1)
+    console.log('PASS horizontal rule, source-line breaks, literal non-executable HTML and one shared editor')
+
+    const code = '```js title="keep"\nconst value = "**字面内容** <tag>";\n```\n\n末尾'
+    await fixture(code)
+    await until('document.querySelectorAll(".looma-continuous-code-toolbar").length === 1', 'code toolbar')
+    await wait(500)
+    assert.equal(await run('document.querySelectorAll(".looma-continuous-code-toolbar").length'), 1, 'replaced fences must not make the toolbar oscillate with visibleRanges')
+    assert.ok(await run('!!document.querySelector(".looma-continuous-code-token.hljs-keyword")'), 'code syntax is highlighted')
+    assert.equal(await run('document.querySelector(".looma-continuous-bold")'), null, 'code content stays literal')
+    await run('window.copiedCode=[];Object.defineProperty(navigator.clipboard,"writeText",{configurable:true,value:async text=>copiedCode.push(text)})')
+    const codeRevision = await run('model().revision')
+    await click('.looma-continuous-code-toolbar button')
+    assert.deepEqual(await run('copiedCode'), ['const value = "**字面内容** <tag>";\n'], 'actual copy button supplies exact code to an isolated clipboard sink')
+    assert.equal(await run('model().revision'), codeRevision)
+    await run('document.querySelector(".looma-continuous-code-toolbar select").value="python";document.querySelector(".looma-continuous-code-toolbar select").dispatchEvent(new Event("change",{bubbles:true}))')
+    await wait(250)
+    await exact(code.replace('```js title', '```python title'))
+    await key('z', ['meta']); await exact(code)
+    const codeCaret = code.indexOf('value') + 2
+    await run(`select(${codeCaret})`); await focus()
+    await win.webContents.debugger.sendCommand('Input.insertText', { text: '新' })
+    await exact(code.slice(0, codeCaret) + '新' + code.slice(codeCaret))
+    await key('z', ['meta']); await exact(code)
+    const lightKeyword = await run('getComputedStyle(document.querySelector(".looma-continuous-code-token.hljs-keyword")).color')
+    await run('document.documentElement.dataset.theme="dark"'); await wait(350)
+    assert.notEqual(await run('getComputedStyle(document.querySelector(".looma-continuous-code-token.hljs-keyword")).color'), lightKeyword, 'highlight colors follow the application theme, not an unset CodeMirror dark facet')
+    await run('document.documentElement.dataset.theme="light"'); await wait(350)
+    fs.writeFileSync(path.join(directory, 'code.png'), (await win.webContents.capturePage()).toPNG())
+    console.log('PASS code highlighting, literal content, exact copy-button payload, source-only language edit and native input/undo')
+
+    const quotedCode = '> ```js\n> const a = 1;\n> const b = 2;\n> ```'
+    await fixture(quotedCode)
+    await until('document.querySelectorAll(".looma-continuous-code-toolbar").length === 1', 'quoted code toolbar')
+    assert.equal(await run('cm().contentDOM.textContent.includes("> ")'), false, 'structural quote prefixes are not literal code')
+    await click('.looma-continuous-code-toolbar button')
+    assert.equal(await run('copiedCode[copiedCode.length-1]'), 'const a = 1;\nconst b = 2;\n')
+    await run('document.querySelector(".looma-continuous-code-toolbar select").value="python";document.querySelector(".looma-continuous-code-toolbar select").dispatchEvent(new Event("change",{bubbles:true}))')
+    await wait(250); await exact(quotedCode.replace('```js', '```python'))
+    await key('z', ['meta']); await exact(quotedCode)
+
+    await run(`setFixture(${JSON.stringify(code)},true)`); await wait(400)
+    await until('document.querySelector(".looma-continuous-code-toolbar select")?.disabled', 'read-only language selector')
+    await run('document.querySelector(".looma-continuous-code-toolbar select").value="python";document.querySelector(".looma-continuous-code-toolbar select").dispatchEvent(new Event("change",{bubbles:true}))')
+    await exact(code)
+    await click('.looma-continuous-code-toolbar button')
+    assert.equal(await run('copiedCode[copiedCode.length-1]'), 'const value = "**字面内容** <tag>";\n', 'copy remains available while partial source is read-only')
+    await run('props.isPartial=false'); await wait(400)
+    assert.equal(await run('document.querySelector(".looma-continuous-code-toolbar select").disabled'), false, 'completion immediately restores language editing')
+    console.log('PASS nested code containers, exact multi-line copy and loading/read-only language guard')
+    assert.deepEqual(errors, [])
+    console.log('REPORT', directory)
+    win.webContents.debugger.detach(); win.destroy(); fs.rmSync(path.join(directory, 'profile'), { recursive: true, force: true }); app.exit(0)
+  } catch (error) {
+    console.error(error); console.error('Renderer errors:', errors)
+    win.destroy(); fs.rmSync(path.join(directory, 'profile'), { recursive: true, force: true }); app.exit(1)
+  }
+})

@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="UTF-8"></head><body style="margin:0"><div id="app" style="height:700px;width:1100px"></div><script type="module">
+import {createApp,h,reactive,ref,nextTick} from 'vue'
+import {createPinia} from 'pinia'
+import MarkdownEditor from '/src/renderer/components/editor/MarkdownEditor.vue'
+import {EditorView} from '@codemirror/view'
+import {historyField} from '@codemirror/commands'
+import '/src/renderer/styles/style.css'
+window.electronAPI={platform:'darwin',file:{readFileBase64:async()=>({success:false})},app:{openExternal:async()=>{throw Error('external access forbidden')}}}
+const props=reactive({filePath:'',relativeFilePath:'endurance-fixture.md',content:'isolated baseline\n\n正文',saveTrigger:0,isPartial:false,isLoading:false,isLoadingMore:false,totalBytes:0,useChunkedPreview:true})
+const component=ref();let session,updates=0,saves=0
+const documentSession={getSession:()=>session,saveSession:v=>{session={...v}}}
+createApp({setup:()=>()=>h(MarkdownEditor,{...props,documentSession,ref:component,'onUpdate:content':v=>{updates++;props.content=v},onSave:()=>{saves++}})}).use(createPinia()).mount('#app')
+function instances(){const a=[];function visit(n){if(!n)return;if(n.component){if(n.component.type.__name==='ChunkedMarkdownEditor')a.push(n.component);visit(n.component.subTree)}if(Array.isArray(n.children))n.children.forEach(visit)}visit(component.value?.$?.subTree);return a}
+window.model=()=>instances()[0]?.props.documentModel
+window.cm=()=>{const el=document.querySelector('.chunked-markdown-editor .cm-editor');return el?EditorView.findFromDOM(el):null}
+window.ready=()=>!!model()
+window.start=p=>instances()[0]?.exposed.startEditing(p)
+window.setFixture=async s=>{component.value.flushPendingContent();await nextTick();props.content=s;props.totalBytes=new Blob([s]).size;await nextTick()}
+window.enduranceStats=()=>{const d=model(),hist=d.state.field(historyField),count=events=>events.reduce((n,e)=>n+(e.changes?.inserted||[]).reduce((a,t)=>a+t.length,0),0);return {length:d.length,revision:d.revision,retainedRevisionChanges:d.revisionChanges.length,historyDone:hist.done.length,historyUndone:hist.undone.length,doneInverseInsertedUtf16:count(hist.done),undoneInverseInsertedUtf16:count(hist.undone),historyRepresentation:'inverse ChangeSet inserted Text lengths; not a retained-byte or snapshot count',mountedLines:document.querySelectorAll('.cm-line').length,editorViews:document.querySelectorAll('.cm-editor').length,updates,saves,panesEqual:cm().state.doc.eq(d.text)}}
+</script></body></html>

@@ -1,0 +1,12 @@
+/* Same CellSelection overlay token and geometry as ordinary Tiptap tables. */
+.looma-continuous-table-cell.selectedCell { position: relative; }
+.looma-continuous-table-cell.selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  pointer-events: none;
+}
+.looma-table-rectangle-selection { caret-color: transparent; }
+.looma-table-rectangle-selection .looma-continuous-table-syntax { caret-color: transparent; }

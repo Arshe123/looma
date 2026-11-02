@@ -1,13 +1,8 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Editor } from '@tiptap/vue-3'
-import {
-  Copy,
-  TableProperties,
-  Trash2,
-} from 'lucide-vue-next'
 import { findTable, isInTable, TableMap } from '@tiptap/pm/tables'
-import TableSizePicker from './TableSizePicker.vue'
+import TableToolbarPresentation from './menus/TableToolbarPresentation.vue'
 import {
   copyCurrentTable,
   resizeCurrentTable,
@@ -208,71 +203,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div
-    v-if="visible"
-    ref="toolbarRef"
-    class="table-toolbar"
-    :style="{ top: `${position.top}px`, left: `${position.left}px` }"
-    @mouseenter="isHoveringTable = true"
-    @mouseleave="isHoveringTable = false; hideIfIdle()"
-  >
-    <button type="button" title="调整表格大小" @click="toggleSizePicker">
-      <TableProperties :size="15" />
-    </button>
-    <button type="button" title="复制表格" @click="runAction(() => copyCurrentTable(editor))">
-      <Copy :size="15" />
-    </button>
-    <button type="button" title="删除表格" @click="runAction(() => editor.chain().focus().deleteTable().run())">
-      <Trash2 :size="15" />
-    </button>
-
-    <div v-if="sizePickerVisible" class="table-toolbar__picker">
-      <TableSizePicker
-        mode="resize"
-        :current-rows="currentTableSize.rows"
-        :current-cols="currentTableSize.cols"
-        @select="handleResize"
-      />
-    </div>
+  <div v-if="visible" ref="toolbarRef" class="absolute z-30" :style="{ top: `${position.top}px`, left: `${position.left}px` }"
+    @mouseenter="isHoveringTable = true" @mouseleave="isHoveringTable = false; hideIfIdle()">
+    <TableToolbarPresentation :size-picker-visible="sizePickerVisible" :current-table-size="currentTableSize"
+      @size="toggleSizePicker" @copy="runAction(() => copyCurrentTable(editor))"
+      @delete="runAction(() => editor.chain().focus().deleteTable().run())" @resize="handleResize" />
   </div>
 </template>
-
-<style scoped>
-.table-toolbar {
-  position: absolute;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  gap: 0.2rem;
-  padding: 0.25rem;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--panel);
-  box-shadow: 0 14px 36px rgb(0 0 0 / 14%);
-}
-
-.table-toolbar button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.8rem;
-  height: 1.8rem;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  color: var(--text-muted);
-  background: transparent;
-  transition: color 100ms ease, background 100ms ease, border-color 100ms ease;
-}
-
-.table-toolbar button:hover {
-  border-color: var(--border-soft);
-  color: var(--text-main);
-  background: var(--accent-soft);
-}
-
-.table-toolbar__picker {
-  position: absolute;
-  top: calc(100% + 0.35rem);
-  left: 0;
-}
-</style>

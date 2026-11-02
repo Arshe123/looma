@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defineAsyncComponent, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, provide, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, provide, ref, shallowRef, watch } from 'vue'
 import { externalDocumentKey, type DocumentSession } from './documentSession'
 import { Columns, Edit3, Eye } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
@@ -7,13 +7,16 @@ import { useSettingsStore } from '@/renderer/stores/settings'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import type TiptapPreviewComponent from '../preview/TiptapPreview.vue'
 import type EditorComponent from './Editor.vue'
+import type ChunkedEditorComponent from './ChunkedMarkdownEditor.vue'
+import { ChunkedDocument } from '@/shared/utils/chunked-document'
+import { normalizeMarkdownNoteLinks } from '@/shared/utils/markdown-note-links'
 import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
 import { isPrimaryModifierPressed } from '@/shared/utils/platform-shortcuts'
 import { getNextRichTextZoom } from '@/shared/utils/rich-text-zoom'
 
 const Editor = defineAsyncComponent(() => import('./Editor.vue'))
 const TiptapPreview = defineAsyncComponent(() => import('../preview/TiptapPreview.vue'))
-const ChunkedMarkdownPreview = defineAsyncComponent(() => import('../preview/ChunkedMarkdownPreview.vue'))
+const ChunkedMarkdownEditor = defineAsyncComponent(() => import('./ChunkedMarkdownEditor.vue'))
 const NoteLinkPreview = defineAsyncComponent(() => import('../preview/NoteLinkPreview.vue'))
 
 const props = defineProps<{
@@ -47,10 +50,43 @@ const settingsStore = useSettingsStore()
 const viewMode = ref<'split' | 'editor' | 'preview'>('preview')
 const splitRatio = ref(0.5)
 const splitContainerRef = ref<HTMLElement | null>(null)
-const editorRef = ref<InstanceType<typeof EditorComponent> | null>(null)
+const editorRef = ref<InstanceType<typeof EditorComponent> | InstanceType<typeof ChunkedEditorComponent> | null>(null)
 const previewRef = ref<InstanceType<typeof TiptapPreviewComponent> | null>(null)
-const chunkedPreviewRef = ref<any>(null)
+const chunkedPreviewRef = ref<InstanceType<typeof ChunkedEditorComponent> | null>(null)
 const isPreparingFullContent = ref(false)
+const isBackgroundLoading = ref(false)
+const fullContentError = ref('')
+const useChunkedEditor = computed(() => props.useChunkedPreview)
+// Both panes and all modes share one source document and undo history.
+const chunkDocument = shallowRef<ChunkedDocument | null>(null)
+const chunkRevision = ref(0)
+let lastPublishedChunkContent: string | undefined
+const getEditablePreview = () => useChunkedEditor.value ? chunkedPreviewRef.value : previewRef.value
+const getSourceChunkEditor = () => useChunkedEditor.value ? editorRef.value as InstanceType<typeof ChunkedEditorComponent> | null : null
+const handleChunkContent = (content: string) => {
+  lastPublishedChunkContent = content
+  emit('update:content', content, props.relativeFilePath)
+}
+const handleChunkSave = (content: string) => {
+  handleChunkContent(content)
+  emit('save', content, props.relativeFilePath)
+}
+const handleChunkChange = () => { chunkRevision.value = chunkDocument.value?.revision ?? 0 }
+watch(useChunkedEditor, enabled => {
+  if (enabled && !chunkDocument.value) chunkDocument.value = new ChunkedDocument(props.content)
+}, { immediate: true })
+watch(() => props.content, content => {
+  const document = chunkDocument.value
+  if (!document || content === lastPublishedChunkContent || content === document.content) return
+  if (content === normalizeMarkdownNoteLinks(document.content)) document.reconcileSavedContent(content)
+  else document.replaceExternal(content)
+  handleChunkChange()
+})
+let fullContentPreparation: Promise<boolean> | null = null
+let fullContentRequest = 0
+let backgroundLoadFrame = 0
+let editorActive = true
+let activationGeneration = 0
 const zoomIndicatorVisible = ref(false)
 let isResizingSplit = false
 let previousBodyCursor = ''
@@ -70,7 +106,8 @@ const clampSplitRatio = (ratio: number) => Math.min(Math.max(ratio, 0.2), 0.8)
 
 const saveMarkdownSession = (skipSaveMeta = false) => {
   if (!props.documentSession && workspaceStore.isWorkspaceTransitioning) return
-  const existing = getSession()?.markdown
+  const session = getSession()
+  const existing = session?.markdown
   saveSession({
     markdown: {
       viewMode: viewMode.value,
@@ -78,6 +115,7 @@ const saveMarkdownSession = (skipSaveMeta = false) => {
       editorScroll: existing?.editorScroll,
       previewScroll: existing?.previewScroll,
     },
+    ...(session?.codemirror ? { codemirror: session.codemirror } : {}),
   }, skipSaveMeta)
 }
 
@@ -93,7 +131,7 @@ const getMarkdownSnapshot = () => {
 
 const saveSnapshot = (skipSaveMeta = false) => {
   if (!props.documentSession && workspaceStore.isWorkspaceTransitioning) return
-  const cmSnap = editorRef.value?.getSnapshot()
+  const cmSnap = editorRef.value?.getSnapshot() || chunkedPreviewRef.value?.getSnapshot()
   saveSession({
     markdown: getMarkdownSnapshot(),
     ...(cmSnap ? { codemirror: cmSnap } : {}),
@@ -130,12 +168,26 @@ const restoreSnapshot = async (focusVisibleEditor = false) => {
       if (viewMode.value !== 'editor' && previewScroll) {
         applyRenderedPreviewScrollState(previewScroll)
       }
+      if (viewMode.value === 'preview' && useChunkedEditor.value && session.codemirror) {
+        chunkedPreviewRef.value?.applySnapshot(session.codemirror)
+      }
       if (focusVisibleEditor && viewMode.value === 'preview') {
-        previewRef.value?.focus?.()
+        getEditablePreview()?.focus?.()
       }
     })
   })
 }
+
+watch(chunkedPreviewRef, preview => {
+  if (!preview || viewMode.value !== 'preview') return
+  const session = getSession()
+  const generation = restoreGeneration
+  void nextTick(() => {
+    if (generation !== restoreGeneration || preview !== chunkedPreviewRef.value) return
+    if (session?.codemirror) preview.applySnapshot(session.codemirror)
+    if (session?.markdown?.previewScroll) preview.applyScrollState(session.markdown.previewScroll)
+  })
+})
 
 const stopSplitResize = () => {
   if (!isResizingSplit) return
@@ -178,7 +230,7 @@ const withScrollSync = (fn: () => void) => {
 }
 
 const getCurrentScrollState = () => {
-  const previewState = props.useChunkedPreview
+  const previewState = useChunkedEditor.value
     ? chunkedPreviewRef.value?.getScrollState?.()
     : previewRef.value?.getScrollState?.()
   if (viewMode.value === 'preview') return previewState
@@ -192,7 +244,7 @@ const syncVisibleViewsFrom = (state?: ScrollSyncState | null) => {
       editorRef.value?.applyScrollState?.(state)
     }
     if (viewMode.value !== 'editor') {
-      if (props.useChunkedPreview) chunkedPreviewRef.value?.applyScrollState?.(state)
+      if (useChunkedEditor.value) chunkedPreviewRef.value?.applyScrollState?.(state)
       else previewRef.value?.applyScrollState?.(state)
     }
   })
@@ -201,7 +253,7 @@ const syncVisibleViewsFrom = (state?: ScrollSyncState | null) => {
 const syncSplitScrollFromEditor = (state: ScrollSyncState) => {
   if (viewMode.value !== 'split' || Date.now() < ignoreEditorScrollUntil) return
   ignorePreviewScrollUntil = Date.now() + SCROLL_SYNC_GUARD_MS
-  if (props.useChunkedPreview) chunkedPreviewRef.value?.applyScrollState?.(state)
+  if (useChunkedEditor.value) chunkedPreviewRef.value?.applyScrollState?.(state)
   else previewRef.value?.applyScrollState?.(state)
 }
 
@@ -211,13 +263,13 @@ const syncSplitScrollFromPreview = (state: ScrollSyncState) => {
   editorRef.value?.applyScrollState?.(state)
 }
 
-const getRenderedPreviewScrollState = () => props.useChunkedPreview
+const getRenderedPreviewScrollState = () => useChunkedEditor.value
   ? chunkedPreviewRef.value?.getScrollState?.()
   : previewRef.value?.getScrollState?.()
 
 const applyRenderedPreviewScrollState = (state?: ScrollSyncState | null) => {
   if (!state) return
-  if (props.useChunkedPreview) chunkedPreviewRef.value?.applyScrollState?.(state)
+  if (useChunkedEditor.value) chunkedPreviewRef.value?.applyScrollState?.(state)
   else previewRef.value?.applyScrollState?.(state)
 }
 
@@ -248,13 +300,70 @@ const handleRichTextZoomWheel = (event: WheelEvent) => {
   })
 }
 
+const prepareFullContent = (background = false) => {
+  if (fullContentPreparation) {
+    if (!background) isPreparingFullContent.value = true
+    return fullContentPreparation
+  }
+  const request = ++fullContentRequest
+  const relativePath = props.relativeFilePath
+  const filePath = props.filePath
+  const shouldContinue = () => editorActive && request === fullContentRequest
+    && props.relativeFilePath === relativePath && props.filePath === filePath
+  isPreparingFullContent.value = !background
+  isBackgroundLoading.value = background
+  fullContentError.value = ''
+  fullContentPreparation = (async () => {
+    try {
+      const result = await workspaceStore.ensureTextFileFullyLoaded(relativePath, { shouldContinue })
+      if (!shouldContinue()) return false
+      if (!result.success) fullContentError.value = result.error || '无法加载完整笔记，请重试。'
+      return result.success
+    } catch (error) {
+      if (!shouldContinue()) return false
+      fullContentError.value = `无法加载完整笔记：${error instanceof Error ? error.message : '读取失败'}。请重试。`
+      return false
+    } finally {
+      if (request === fullContentRequest) {
+        isPreparingFullContent.value = false
+        isBackgroundLoading.value = false
+        fullContentPreparation = null
+      }
+    }
+  })()
+  return fullContentPreparation
+}
+
+const cancelBackgroundLoad = () => {
+  if (backgroundLoadFrame) cancelAnimationFrame(backgroundLoadFrame)
+  backgroundLoadFrame = 0
+  fullContentRequest++
+  fullContentPreparation = null
+  isPreparingFullContent.value = false
+  isBackgroundLoading.value = false
+}
+const queueBackgroundLoad = () => {
+  if (backgroundLoadFrame) cancelAnimationFrame(backgroundLoadFrame)
+  backgroundLoadFrame = 0
+  const canStart = () => editorActive && useChunkedEditor.value && props.isPartial && !props.isLoading
+    && !!(chunkedPreviewRef.value || getSourceChunkEditor()) && !fullContentPreparation && !fullContentError.value
+  if (!canStart()) return
+  // Give the mounted first screen a paint opportunity before reading the rest.
+  backgroundLoadFrame = requestAnimationFrame(() => {
+    backgroundLoadFrame = requestAnimationFrame(() => {
+      backgroundLoadFrame = 0
+      if (canStart()) void prepareFullContent(true)
+    })
+  })
+}
+watch([useChunkedEditor, () => props.isPartial, () => props.isLoading, chunkedPreviewRef, editorRef], queueBackgroundLoad, { flush: 'post' })
+
 const setViewMode = async (nextMode: 'split' | 'editor' | 'preview') => {
   if (viewMode.value === nextMode) return
+  getEditablePreview()?.flushPendingMarkdownEmit?.()
+  getSourceChunkEditor()?.flushPendingMarkdownEmit?.()
   if (nextMode !== 'preview' && (props.isPartial || props.isLoading)) {
-    isPreparingFullContent.value = true
-    const result = await workspaceStore.ensureTextFileFullyLoaded(props.relativeFilePath)
-    isPreparingFullContent.value = false
-    if (!result.success) return
+    if (!await prepareFullContent()) return
   }
   const state = getCurrentScrollState()
   viewMode.value = nextMode
@@ -263,22 +372,30 @@ const setViewMode = async (nextMode: 'split' | 'editor' | 'preview') => {
   })
 }
 
+const requestChunkEdit = async (offset: number) => {
+  const generation = activationGeneration
+  const relativePath = props.relativeFilePath
+  if ((props.isPartial || props.isLoading) && !await prepareFullContent()) return
+  await nextTick()
+  if (!editorActive || generation !== activationGeneration || relativePath !== props.relativeFilePath) return
+  void chunkedPreviewRef.value?.startEditing(offset)
+}
+
 onMounted(async () => {
   const session = getSession()
   if (session) {
     if (session.markdown?.viewMode) viewMode.value = session.markdown.viewMode
     if (typeof session.markdown?.splitRatio === 'number') splitRatio.value = clampSplitRatio(session.markdown.splitRatio)
     if (viewMode.value !== 'preview' && (props.isPartial || props.isLoading)) {
-      isPreparingFullContent.value = true
-      const result = await workspaceStore.ensureTextFileFullyLoaded(props.relativeFilePath)
-      isPreparingFullContent.value = false
-      if (!result.success) viewMode.value = 'preview'
+      if (!await prepareFullContent()) viewMode.value = 'preview'
     }
   }
   void restoreSnapshot(false)
 })
 
 onActivated(() => {
+  editorActive = true
+  queueBackgroundLoad()
   if (!hasActivatedOnce) {
     hasActivatedOnce = true
     return
@@ -287,10 +404,16 @@ onActivated(() => {
 })
 
 onDeactivated(() => {
+  editorActive = false
+  activationGeneration++
+  cancelBackgroundLoad()
   restoreGeneration += 1
 })
 
 onUnmounted(() => {
+  editorActive = false
+  activationGeneration++
+  cancelBackgroundLoad()
   stopSplitResize()
   if (zoomIndicatorTimer !== null) window.clearTimeout(zoomIndicatorTimer)
 })
@@ -305,8 +428,9 @@ watch(
     if (props.isPartial || props.isLoading) {
       const result = await workspaceStore.ensureTextFileFullyLoaded(props.relativeFilePath)
       if (!result.success) return
+      await nextTick()
     }
-    const flushedContent = previewRef.value?.flushPendingMarkdownEmit?.()
+    const flushedContent = getEditablePreview()?.flushPendingMarkdownEmit?.() ?? getSourceChunkEditor()?.flushPendingMarkdownEmit?.()
     emit(
       'save',
       flushedContent ?? (props.documentSession ? props.content : workspaceStore.openedTextFileContents[props.relativeFilePath]?.content) ?? props.content,
@@ -318,18 +442,18 @@ watch(
 defineExpose({
   isNavigationReady() {
     const sourceReady = viewMode.value === 'preview' || !!editorRef.value
-    const previewReady = viewMode.value === 'editor' || !!(props.useChunkedPreview ? chunkedPreviewRef.value : previewRef.value)
+    const previewReady = viewMode.value === 'editor' || !!(useChunkedEditor.value ? chunkedPreviewRef.value : previewRef.value)
     return sourceReady && previewReady
   },
   flushPendingContent() {
-    const content = previewRef.value?.flushPendingMarkdownEmit?.()
+    const content = getEditablePreview()?.flushPendingMarkdownEmit?.() ?? getSourceChunkEditor()?.flushPendingMarkdownEmit?.()
     if (content !== undefined) emit('update:content', content, props.relativeFilePath)
   },
   scrollToHeading(target: MarkdownOutlineItem) {
     // An explicit jump takes precedence over deferred session restoration.
     restoreGeneration += 1
     if (viewMode.value !== 'editor') {
-      if (props.useChunkedPreview) {
+      if (useChunkedEditor.value) {
         chunkedPreviewRef.value?.scrollToHeading(target)
       } else {
         previewRef.value?.scrollToHeading(target)
@@ -342,7 +466,7 @@ defineExpose({
   scrollToLine(line: number) {
     restoreGeneration += 1
     if (viewMode.value !== 'editor') {
-      if (props.useChunkedPreview) {
+      if (useChunkedEditor.value) {
         chunkedPreviewRef.value?.scrollToLine(line)
       } else {
         previewRef.value?.scrollToLine(line)
@@ -366,7 +490,30 @@ defineExpose({
       :class="viewMode === 'split' ? 'shrink-0' : 'flex-1'"
       :style="viewMode === 'split' ? { flexBasis: `${splitRatio * 100}%` } : undefined"
     >
+      <ChunkedMarkdownEditor
+        v-if="useChunkedEditor && chunkDocument"
+        ref="editorRef"
+        :content="props.content"
+        :document-model="chunkDocument"
+        :document-revision="chunkRevision"
+        :file-path="props.filePath"
+        :relative-file-path="props.relativeFilePath"
+        :is-partial="isPartial"
+        :is-loading-more="isLoadingMore"
+        :is-loading-full-content="isPreparingFullContent || isBackgroundLoading"
+        :total-bytes="totalBytes"
+        :source-only="true"
+        :show-line-numbers="settingsStore.showLineNumbers"
+        :scroll-sync-enabled="viewMode === 'split'"
+        @update:content="handleChunkContent"
+        @save="handleChunkSave"
+        @document-change="handleChunkChange"
+        @edit-pending="emit('edit-pending', props.relativeFilePath)"
+        @request-edit="requestChunkEdit"
+        @scroll-sync="syncSplitScrollFromEditor"
+      />
       <Editor
+        v-else
         ref="editorRef"
         :initialContent="props.content"
         :filePath="props.filePath"
@@ -400,16 +547,25 @@ defineExpose({
       <div v-if="isLoading" class="h-full flex items-center justify-center text-sm text-text-muted">
         正在加载笔记首屏内容...
       </div>
-      <ChunkedMarkdownPreview
-        v-else-if="useChunkedPreview"
+      <ChunkedMarkdownEditor
+        v-else-if="useChunkedEditor && chunkDocument"
         ref="chunkedPreviewRef"
+        :document-model="chunkDocument"
+        :document-revision="chunkRevision"
         :scroll-sync-enabled="viewMode === 'split'"
         :content="props.content"
         :filePath="props.filePath"
         :relativeFilePath="props.relativeFilePath"
         :isPartial="isPartial"
         :isLoadingMore="isLoadingMore"
+        :is-loading-full-content="isPreparingFullContent || isBackgroundLoading"
         :totalBytes="totalBytes"
+        :show-line-numbers="settingsStore.showLineNumbers"
+        @update:content="handleChunkContent"
+        @save="handleChunkSave"
+        @document-change="handleChunkChange"
+        @edit-pending="emit('edit-pending', props.relativeFilePath)"
+        @request-edit="requestChunkEdit"
         @load-more="emit('load-more')"
         @scroll-sync="syncSplitScrollFromPreview"
       />
@@ -425,6 +581,14 @@ defineExpose({
         @edit-pending="emit('edit-pending', props.relativeFilePath)"
         @scroll-sync="syncSplitScrollFromPreview"
       />
+    </div>
+
+    <div v-if="isPreparingFullContent || fullContentError" class="absolute top-3 left-1/2 -translate-x-1/2 z-20 rounded-lg border border-border-soft bg-panel/95 px-4 py-2 text-sm text-text-muted" role="status">
+      <template v-if="fullContentError">
+        {{ fullContentError }}
+        <button class="ml-2 text-accent" @click="prepareFullContent()">重试</button>
+      </template>
+      <template v-else>正在加载完整笔记，完成后即可编辑…</template>
     </div>
 
     <div class="absolute bottom-6 right-6 flex items-center gap-1 bg-panel/90 backdrop-blur-xs p-1.5 rounded-xl border border-border-soft shadow-lg z-20">

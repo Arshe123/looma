@@ -16,7 +16,7 @@ describe('rich-text code block layout', () => {
   })
 
   it('uses one compact left gutter for code content and line numbers', () => {
-    const codeBlock = readSource('src/renderer/components/preview/CodeBlockView.vue')
+    const codeBlock = readSource('src/renderer/components/shared/code-block-presentation.css')
     const preview = readSource('src/renderer/components/preview/TiptapPreview.vue')
 
     expect(codeBlock).toContain('padding: 0.85rem 5.75rem 0.85rem 0;')

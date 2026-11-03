@@ -424,6 +424,19 @@ const sourceForSerialization = (node: JSONContent): JSONContent => {
   return node.content ? { ...node, content: node.content.map(sourceForSerialization) } : node
 }
 
+// Only delegate structures whose supported attributes survive conversion.
+// Unknown tags and custom attributes are source, not disposable HTML markup.
+const isSupportedHtmlStructure = (source: string): boolean => {
+  const html = source.trim()
+  if (/^<br\s*\/?>$/i.test(html)) return true
+  const image = /^<img((?:\s+(?:src|alt|title)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))+)\s*\/?>$/i.exec(html)
+  if (!image) return false
+  const attributes = Array.from(image[1].matchAll(/\s+(src|alt|title)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi))
+  const names = attributes.map(attribute => attribute[1].toLowerCase())
+  const src = attributes.find(attribute => attribute[1].toLowerCase() === 'src')
+  return new Set(names).size === names.length && !!src && !!(src[2] ?? src[3] ?? src[4]).trim()
+}
+
 export const InlineMarkdown = Extension.create({
   name: 'loomaInlineMarkdown',
   addExtensions: () => [Extension.create({
@@ -434,6 +447,17 @@ export const InlineMarkdown = Extension.create({
     // doc itself is constructed by the manager, not emitted by marked.
     parseMarkdown: (token, helpers) => helpers.createNode('doc', {}, helpers.parseChildren(token.tokens ?? [])),
     renderMarkdown: (node, helpers) => helpers.renderChildren((node.content ?? []).map(sourceForSerialization), '\n\n'),
+  }), Extension.create({
+    name: 'loomaHtmlSource',
+    markdownTokenName: 'html',
+    priority: 1000,
+    parseMarkdown: (token, helpers) => {
+      const source = token.raw ?? token.text ?? ''
+      if (isSupportedHtmlStructure(source)) return null
+      // Block HTML bypasses the inline tokenizer. Keep its literal contents in
+      // a paragraph; structural separators are supplied by the block renderer.
+      return helpers.createNode('paragraph', {}, [helpers.createTextNode(source.replace(/(?:\r?\n)+$/, ''))])
+    },
   })],
   renderMarkdown: node => node.text ?? '',
   addProseMirrorPlugins: () => [createInlineMarkdownPlugin()],
@@ -459,7 +483,8 @@ export const InlineMarkdown = Extension.create({
       if (!token) return undefined
       sourceRemaining -= token.raw.length
       // Keep structural inline nodes and block parsing owned by Tiptap.
-      if (['image', 'br', 'html'].includes(token.type)) return undefined
+      if (['image', 'br'].includes(token.type)
+        || (token.type === 'html' && isSupportedHtmlStructure(token.raw))) return undefined
       return { type: 'loomaInlineSource', raw: token.raw, text: resolvedInlineSource(token) }
     },
   },

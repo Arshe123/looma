@@ -122,13 +122,12 @@ describe('permanent inline Markdown source', () => {
     expect(undoDepth(editor.state)).toBe(0)
   })
 
-  it('keeps structural image, break and HTML parsing delegated to Tiptap', () => {
+  it('keeps structural images and breaks delegated to Tiptap', () => {
     const extensions = [StarterKit, ResizableMarkdownImage]
     const md = new MarkdownManager({ extensions: [...extensions, InlineMarkdown] })
     expect(md.parse('![图](image.png "title"){width=60%}').content?.[0]).toMatchObject({ type: 'image', attrs: { src: 'image.png', title: 'title', widthPercent: 60 } })
     expect(md.parse('a  \nb').content?.[0]?.content?.map(node => node.type)).toEqual(['text', 'hardBreak', 'text'])
-    // MarkdownManager's node-environment HTML fallback keeps these tags as
-    // text; browser HTML parsing remains covered by the Electron harness.
+    // Unsupported HTML is literal source in both Node and the browser.
     expect(getSchema(extensions).nodeFromJSON(md.parse('a <span>plain</span> z')).textContent).toBe('a <span>plain</span> z')
     for (const source of ['![图](image.png "title"){width=60%}', 'a  \nb', '# heading\n\n> quote\n\n- item\n\n```html\n<literal>&\n```']) {
       let saved = source
@@ -137,6 +136,32 @@ describe('permanent inline Markdown source', () => {
         saved = md.serialize(md.parse(saved))
         expect(md.parse(saved)).toEqual(original)
       }
+    }
+  })
+
+  it.each([
+    'tune2fs -l <dev>',
+    '/proc/<PID>/cgroup',
+    '<dev>',
+    '<custom>保留内容</custom>',
+    '<div data-note="original">\n原始内容\n</div>',
+    '前文\n\n<div>\n原文 **内容**\n</div>\n\n后文',
+    '前 <span class="custom">原文</span> 后',
+    '前 <!-- 注释 --> 后',
+    '未闭合 <dev',
+    'a <br class="custom"> b',
+    '<img src="image.png" data-custom="keep">',
+    '<img alt=" src=missing">',
+    '<img src="">',
+    '<img src="first.png" src="second.png">',
+  ])('preserves unsupported HTML source across repeated roundtrips: %s', source => {
+    const md = manager()
+    let saved = source
+    for (let round = 0; round < 3; round++) {
+      const parsed = md.parse(saved)
+      expect(() => getSchema([StarterKit]).nodeFromJSON(parsed).check()).not.toThrow()
+      saved = md.serialize(parsed)
+      expect(saved.trimEnd()).toBe(source)
     }
   })
 

@@ -49,6 +49,8 @@ export interface OpenTextFileState {
   recoveryRevision?: string
   recoveryConflict?: boolean
   hasPendingEditorChanges?: boolean
+  editRevision?: number
+  saveConfirmationDismissed?: boolean
 }
 
 export type AiAssistantMessageRole = 'assistant' | 'user' | 'system'

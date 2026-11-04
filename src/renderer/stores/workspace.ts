@@ -48,6 +48,7 @@ import type { AgentDiffViewState, AiAssistantConversation, AiAssistantMessage, A
 import { getAiAssistantConversationTitle, normalizeAiAssistantSourcePath, sortAiAssistantConversations } from './workspace-ai-utils'
 import { LARGE_NOTE_BYTES, NOTE_INITIAL_CHUNK_BYTES, NOTE_NEXT_CHUNK_BYTES } from '@/shared/utils/markdown-chunks'
 import { normalizeMarkdownNoteLinks } from '@/shared/utils/markdown-note-links'
+import type { Result } from '@/shared/types/Result'
 export type { AgentDiffViewState, AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, AiAssistantTimelineOutput, AiAssistantTimelineOutputType, AiAssistantTimelineStep, AiAssistantTimelineStepStatus, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceMeta, WorkspaceTab } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
@@ -55,6 +56,7 @@ let pendingConfirmationResolve: ((confirmed: boolean) => void) | null = null
 const DRAFT_RECOVERY_DEBOUNCE_MS = 300
 const draftRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const pendingExternalTextRefreshes = new Set<string>()
+const textFileSaves = new WeakMap<object, Map<string, { content: string | undefined; revision: number | undefined; promise: Promise<Result<void>> }>>()
 let draftRecoveryRevisionCounter = 0
 
 const draftRecoveryKey = (workspaceId: string, relativePath: string) => `${workspaceId}\u0000${relativePath}`
@@ -2289,10 +2291,10 @@ export const useWorkspaceStore = defineStore('workspace', {
           'edit-pending': (): void => {
             if (isCurrent()) this.markTextFileEditPending(rel)
           },
-          save: async (content: string): Promise<void> => {
+          save: async (content: string, _relativePath?: string, explicit = false): Promise<void> => {
             if (!isCurrent()) return
             this.setActiveFileContent(content, rel)
-            await this.saveActiveFileContent(content, rel)
+            await this.saveActiveFileContent(content, rel, { automatic: !explicit })
           },
           'load-more': (): void => {
             if (isCurrent()) void this.loadNextTextFileChunk(rel)
@@ -2325,6 +2327,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         isSaving: existing?.isSaving ?? false,
         saveError: existing?.saveError ?? '',
         hasPendingEditorChanges: false,
+        editRevision: (existing?.editRevision ?? 0) + (existing?.content !== content ? 1 : 0),
+        saveConfirmationDismissed: existing?.content === content ? existing?.saveConfirmationDismissed : false,
       }
       this.scheduleDraftRecovery(rel)
     },
@@ -2334,6 +2338,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       const state = this.openedTextFileContents[rel]
       if (!state || state.isPartial) return
       state.hasPendingEditorChanges = true
+      state.editRevision = (state.editRevision ?? 0) + 1
+      state.saveConfirmationDismissed = false
       this.retainTab(getFileTabId(rel))
     },
 
@@ -2558,39 +2564,116 @@ export const useWorkspaceStore = defineStore('workspace', {
       return result
     },
 
-    async saveActiveFileContent(content?: string, relativePath?: string) {
+    async saveActiveFileContent(content?: string, relativePath?: string, options: { automatic?: boolean } = {}): Promise<Result<void>> {
+      const rel = normalizeDir(relativePath ?? this.activeFileRelativePath)
+      const workspaceId = this.activeWorkspaceId
+      const requestId = this.openedTextFileContents[rel]?.loadRequestId
+      const revision = this.openedTextFileContents[rel]?.editRevision
+      const snapshotContent = this.openedTextFileContents[rel]?.content
+      const key = JSON.stringify([workspaceId, rel, requestId])
+      let saves = textFileSaves.get(this)
+      if (!saves) { saves = new Map(); textFileSaves.set(this, saves) }
+      const next = content ?? this.openedTextFileContents[rel]?.content
+      const previous = saves.get(key)
+      if (previous) {
+        if (previous.content === next && previous.revision === revision) return previous.promise
+        await previous.promise
+        if (this.activeWorkspaceId !== workspaceId
+          || !this.openedTextFileContents[rel]
+          || this.openedTextFileContents[rel].loadRequestId !== requestId
+          || this.openedTextFileContents[rel].editRevision !== revision
+          || this.openedTextFileContents[rel].content !== snapshotContent) {
+          return { success: false, error: '笔记已更新或关闭，已取消旧版本保存。' }
+        }
+        return this.saveActiveFileContent(content, rel, options)
+      }
+      let resolve!: (result: Result<void>) => void
+      const promise = new Promise<Result<void>>(done => { resolve = done })
+      saves.set(key, { content: next, revision, promise })
+      const isCurrent = () => this.activeWorkspaceId === workspaceId
+        && Boolean(this.openedTextFileContents[rel])
+        && this.openedTextFileContents[rel].loadRequestId === requestId
+      if (isCurrent()) this.openedTextFileContents[rel].isSaving = true
+      const complete = async () => {
+        if (isCurrent()) this.openedTextFileContents[rel].isSaving = false
+        const refreshKey = workspaceId ? draftRecoveryKey(workspaceId, rel) : ''
+        if (isCurrent() && refreshKey && pendingExternalTextRefreshes.delete(refreshKey)) {
+          await this.refreshOpenTextFileContentFromDisk(rel).catch(() => {})
+        }
+        saves.delete(key)
+      }
+      void this.performTextFileSave(content, rel, options).then(
+        async result => { await complete(); resolve(result) },
+        async error => {
+          const message = `保存失败：${error instanceof Error ? error.message : String(error)}`
+          if (isCurrent()) this.openedTextFileContents[rel].saveError = message
+          await complete()
+          resolve({ success: false, error: message })
+        },
+      )
+      return promise
+    },
+
+    async performTextFileSave(content?: string, relativePath?: string, options: { automatic?: boolean } = {}): Promise<Result<void>> {
       const rel = normalizeDir(relativePath ?? this.activeFileRelativePath)
       const absPath = this.resolveAbsolutePath(rel)
+      const workspaceId = this.activeWorkspaceId
       if (!absPath) return { success: true as const }
       if (!isSupportedPath(absPath)) return { success: true as const }
       if (!isEditableTextPath(absPath)) return { success: true as const } // Don't save media files
       
       const currentState = this.openedTextFileContents[rel]
+      const requestId = currentState?.loadRequestId
+      const isCurrent = () => this.activeWorkspaceId === workspaceId
+        && this.resolveAbsolutePath(rel) === absPath
+        && Boolean(this.openedTextFileContents[rel])
+        && this.openedTextFileContents[rel].loadRequestId === requestId
+      const superseded = (): Result<void> => ({ success: false, error: '笔记已更新或关闭，已取消旧版本保存。' })
       const wasPartial = Boolean(currentState?.isPartial)
       if (wasPartial) {
         const loaded = await this.ensureTextFileFullyLoaded(rel)
-        if (!loaded.success) return loaded
+        if (!loaded.success) return { success: false, error: loaded.error }
       }
+      if (!isCurrent()) return superseded()
       const completeState = this.openedTextFileContents[rel]
+      if (options.automatic && completeState.saveConfirmationDismissed) {
+        return { success: false, error: '已暂停本次自动保存，请手动保存重试。' }
+      }
+      const snapshotContent = completeState.content
+      const snapshotRevision = completeState.editRevision
+      const isSnapshotCurrent = () => isCurrent()
+        && this.openedTextFileContents[rel].content === snapshotContent
+        && this.openedTextFileContents[rel].editRevision === snapshotRevision
+        && !this.openedTextFileContents[rel].hasPendingEditorChanges
+      if (!isSnapshotCurrent()) return superseded()
       const rawNext = wasPartial
         ? completeState?.content ?? ''
         : content ?? completeState?.content ?? (rel === this.activeFileRelativePath ? this.activeFileContent : '')
       const next = absPath.toLowerCase().endsWith('.md') ? normalizeMarkdownNoteLinks(rawNext) : rawNext
+      let expectedContent = completeState?.loadedContent
       if (completeState?.recoveryConflict) {
-        const confirmation = await window.electronAPI.app.showMessageBox({
-          type: 'warning',
-          title: '检测到外部修改',
-          message: `${pathBase(rel)} 在 Looma 关闭期间被其他程序修改。是否用恢复的未保存内容覆盖磁盘文件？`,
-          buttons: ['覆盖磁盘文件', '取消'],
-          defaultId: 1,
-          cancelId: 1,
-        })
-        if (confirmation.response !== 0) {
-          return { success: false as const, error: '已取消覆盖外部修改的文件' }
+        const disk = await window.electronAPI.file.readMarkdown(absPath)
+        if (!isSnapshotCurrent()) return superseded()
+        if (!disk.success || disk.data === undefined) return { success: false, error: disk.error || '无法读取磁盘文件，请重试。' }
+        expectedContent = disk.data
+        // A previous write may have succeeded before its acknowledgement was lost.
+        if (disk.data !== next) {
+          const confirmation = await window.electronAPI.app.showMessageBox({
+            type: 'warning',
+            title: '检测到外部修改',
+            message: `${pathBase(rel)} 的磁盘内容与当前编辑的保存基线不同。是否用当前未保存内容覆盖磁盘文件？`,
+            buttons: ['覆盖磁盘文件', '取消'],
+            defaultId: 1,
+            cancelId: 1,
+          })
+          if (!isSnapshotCurrent()) return superseded()
+          if (confirmation.response !== 0) {
+            this.openedTextFileContents[rel].saveConfirmationDismissed = true
+            return { success: false as const, error: '已取消覆盖外部修改的文件' }
+          }
         }
-        completeState.recoveryConflict = false
       }
-      const isClearingNonEmptyFile = next.length === 0 && Boolean(completeState?.loadedContent.length)
+      const isClearingNonEmptyFile = next.length === 0 && Boolean(expectedContent?.length)
       if (isClearingNonEmptyFile) {
         const confirmation = await window.electronAPI.app.showMessageBox({
           type: 'warning',
@@ -2600,7 +2683,9 @@ export const useWorkspaceStore = defineStore('workspace', {
           defaultId: 1,
           cancelId: 1,
         })
+        if (!isSnapshotCurrent()) return superseded()
         if (confirmation.response !== 0) {
+          this.openedTextFileContents[rel].saveConfirmationDismissed = true
           return { success: false as const, error: '已取消清空笔记' }
         }
       }
@@ -2612,10 +2697,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         saveError: '',
       }
 
-      const workspaceId = this.activeWorkspaceId
-      const externalRefreshKey = workspaceId ? draftRecoveryKey(workspaceId, rel) : ''
       const savingRevision = await this.persistDraftRecoveryNow(rel)
-      const expectedContent = completeState?.loadedContent
+      if (!isCurrent()) return superseded()
       const r = isClearingNonEmptyFile
         ? await window.electronAPI.file.writeMarkdown(
             absPath,
@@ -2624,15 +2707,15 @@ export const useWorkspaceStore = defineStore('workspace', {
             { allowEmptyContent: true },
           )
         : await window.electronAPI.file.writeMarkdown(absPath, next, expectedContent)
+      if (!isCurrent()) return superseded()
       const latestState = this.openedTextFileContents[rel]
       if (!r.success) {
-        if (externalRefreshKey) pendingExternalTextRefreshes.delete(externalRefreshKey)
         this.openedTextFileContents[rel] = {
           ...latestState,
           content: latestState?.content ?? next,
           loadedContent: latestState?.loadedContent ?? '',
-          isSaving: false,
-          saveError: r.error || 'Failed to save file',
+          isSaving: true,
+          saveError: r.error || '保存文件失败，请重试。',
           recoveryConflict: r.errorCode === 'FILE_CHANGED_ON_DISK' || latestState?.recoveryConflict,
         }
 
@@ -2644,23 +2727,17 @@ export const useWorkspaceStore = defineStore('workspace', {
         ...latestState,
         content: latestContent,
         loadedContent: next,
-        isSaving: false,
+        isSaving: true,
         saveError: '',
         recoveryRevision: stillDirty ? latestState?.recoveryRevision : undefined,
-        recoveryConflict: stillDirty ? latestState?.recoveryConflict : false,
+        recoveryConflict: false,
+        saveConfirmationDismissed: false,
       }
 
       if (workspaceId && savingRevision) {
         await window.electronAPI.draftRecovery?.remove(workspaceId, rel, savingRevision).catch(() => {})
       }
-      if (stillDirty) this.scheduleDraftRecovery(rel)
-      if (
-        externalRefreshKey
-        && pendingExternalTextRefreshes.delete(externalRefreshKey)
-        && this.activeWorkspaceId === workspaceId
-      ) {
-        await this.refreshOpenTextFileContentFromDisk(rel)
-      }
+      if (stillDirty && isCurrent()) this.scheduleDraftRecovery(rel)
       return r
     },
 

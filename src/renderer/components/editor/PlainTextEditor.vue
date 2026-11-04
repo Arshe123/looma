@@ -13,7 +13,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:content', value: string, relativePath: string): void
-  (e: 'save', value: string, relativePath: string): void
+  (e: 'save', value: string, relativePath: string, explicit?: boolean): void
 }>()
 
 const workspaceStore = useWorkspaceStore()
@@ -95,7 +95,7 @@ watch(
 watch(
   () => props.saveTrigger,
   () => {
-    emit('save', localContent.value, props.relativeFilePath)
+    emit('save', localContent.value, props.relativeFilePath, true)
   },
 )
 

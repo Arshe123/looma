@@ -305,6 +305,7 @@ const createEditor = () => {
       // Auto-save logic: after 1s of stopping input
       if (saveTimeout) clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => {
+        saveTimeout = null;
         emit('save', content);
       }, 1000);
     }
@@ -313,6 +314,10 @@ const createEditor = () => {
   const domEventHandlers = EditorView.domEventHandlers({
     blur: () => {
       if (!editor) return;
+      if (saveTimeout) {
+        clearTimeout(saveTimeout);
+        saveTimeout = null;
+      }
       const content = editor.state.doc.toString();
       emit('save', content);
     },

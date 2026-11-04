@@ -34,7 +34,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:content', value: string, relativePath: string): void
-  (e: 'save', value: string, relativePath: string): void
+  (e: 'save', value: string, relativePath: string, explicit?: boolean): void
   (e: 'load-more'): void
   (e: 'edit-pending', relativePath: string): void
 }>()
@@ -435,6 +435,7 @@ watch(
       'save',
       flushedContent ?? (props.documentSession ? props.content : workspaceStore.openedTextFileContents[props.relativeFilePath]?.content) ?? props.content,
       props.relativeFilePath,
+      true,
     )
   },
 )

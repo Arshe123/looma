@@ -9,7 +9,7 @@ const textState = (content: string) => ({
 })
 const setup = (writeMarkdown: ReturnType<typeof vi.fn>, showMessageBox = vi.fn().mockResolvedValue({ response: 1 })) => {
   (window as any).electronAPI = {
-    file: { writeMarkdown }, app: { showMessageBox },
+    file: { writeMarkdown, readMarkdown: vi.fn().mockResolvedValue({ success: true, data: 'external change' }) }, app: { showMessageBox },
     draftRecovery: { save: vi.fn().mockResolvedValue({ success: true }), remove: vi.fn().mockResolvedValue({ success: true }) },
   }
   const store = useWorkspaceStore()
@@ -34,7 +34,7 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers() })
 
 describe('workspace per-file save serialization', () => {
-  it('waits for the preceding save and takes the newest live content and disk baseline', async () => {
+  it('cancels an obsolete queued snapshot, preserves newer input and saves it with the latest baseline', async () => {
     const entered = barrier(), release = barrier()
     let disk = 'saved'
     const write = vi.fn(async (_file: string, content: string, expected: string) => {
@@ -47,12 +47,16 @@ describe('workspace per-file save serialization', () => {
     store.setActiveFileContent('first', 'note.md')
     const first = store.saveActiveFileContent('first', 'note.md')
     await entered.promise
+    store.setActiveFileContent('second', 'note.md')
     const second = store.saveActiveFileContent('second', 'note.md')
     store.setActiveFileContent('third', 'note.md')
     expect(write).toHaveBeenCalledTimes(1)
     release.resolve()
     expect((await first).success).toBe(true)
-    expect((await second).success).toBe(true)
+    expect((await second).success).toBe(false)
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(store.openedTextFileContents['note.md']).toMatchObject({ content: 'third', loadedContent: 'first' })
+    expect((await store.saveActiveFileContent('third', 'note.md')).success).toBe(true)
     expect(write.mock.calls.map(call => call.slice(1))).toEqual([['first', 'saved'], ['third', 'first']])
     expect(disk).toBe('third')
     expect(store.openedTextFileContents['note.md']).toMatchObject({ content: 'third', loadedContent: 'third', isSaving: false, saveError: '' })
@@ -69,6 +73,7 @@ describe('workspace per-file save serialization', () => {
     store.setActiveFileContent('first', 'note.md')
     const first = store.saveActiveFileContent('first', 'note.md')
     await entered.promise
+    store.setActiveFileContent('second', 'note.md')
     const second = store.saveActiveFileContent('second', 'note.md')
     release.resolve()
     expect((await first).success).toBe(false)
@@ -104,8 +109,61 @@ describe('workspace per-file save serialization', () => {
     store.openedTextFileContents['note.md'] = { ...textState('reopened'), loadRequestId: 2 }
     release.resolve()
     await first
-    expect(await queued).toEqual({ success: false, error: '笔记已切换或关闭，已取消排队的保存。' })
+    expect(await queued).toEqual({ success: false, error: '笔记已更新或关闭，已取消旧版本保存。' })
     expect(write).toHaveBeenCalledTimes(1)
     expect(store.openedTextFileContents['note.md']).toEqual({ ...textState('reopened'), loadRequestId: 2 })
+  })
+
+  it('saves a still-current queued snapshot after its predecessor updates the baseline', async () => {
+    const entered = barrier(), release = barrier()
+    let disk = 'saved'
+    const write = vi.fn(async (_file: string, content: string, expected: string) => {
+      expect(expected).toBe(disk)
+      if (content === 'first') { entered.resolve(); await release.promise }
+      disk = content
+      return { success: true }
+    })
+    const store = setup(write)
+    store.setActiveFileContent('first', 'note.md')
+    const first = store.saveActiveFileContent('first', 'note.md')
+    await entered.promise
+    store.setActiveFileContent('second', 'note.md')
+    const second = store.saveActiveFileContent('second', 'note.md')
+    expect(write).toHaveBeenCalledTimes(1)
+    release.resolve()
+    expect((await first).success).toBe(true)
+    expect((await second).success).toBe(true)
+    expect(write.mock.calls.map(call => call.slice(1))).toEqual([['first', 'saved'], ['second', 'first']])
+    expect(disk).toBe('second')
+  })
+
+  it('does not swallow an explicit retry overlapping an automatically paused save', async () => {
+    const confirm = vi.fn().mockResolvedValue({ response: 1 })
+    const write = vi.fn()
+    const store = setup(write, confirm)
+    store.setActiveFileContent('', 'note.md')
+    store.openedTextFileContents['note.md'].saveConfirmationDismissed = true
+    const automatic = store.saveActiveFileContent('', 'note.md', { automatic: true })
+    const explicit = store.saveActiveFileContent('', 'note.md')
+    expect((await automatic).success).toBe(false)
+    expect((await explicit).success).toBe(false)
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(write).not.toHaveBeenCalled()
+  })
+
+  it('does not carry an old saving flag to a moved file or let the old callback modify it', async () => {
+    const entered = barrier(), release = barrier()
+    const write = vi.fn(async () => { entered.resolve(); await release.promise; return { success: true } })
+    const store = setup(write)
+    store.setActiveFileContent('draft', 'note.md')
+    const saving = store.saveActiveFileContent('draft', 'note.md')
+    await entered.promise
+    store.remapOpenedTextFileStates([{ from: 'note.md', to: 'renamed.md' }])
+    expect(store.openedTextFileContents['renamed.md'].isSaving).toBe(false)
+    release.resolve()
+    expect((await saving).success).toBe(false)
+    expect(store.openedTextFileContents['renamed.md']).toMatchObject({ content: 'draft', loadedContent: 'saved', isSaving: false })
+    expect((await store.saveActiveFileContent('draft', 'renamed.md')).success).toBe(true)
+    expect(store.openedTextFileContents['renamed.md'].loadedContent).toBe('draft')
   })
 })

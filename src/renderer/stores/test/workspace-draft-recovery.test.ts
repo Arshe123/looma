@@ -165,7 +165,7 @@ describe('workspace draft recovery', () => {
     const writeMarkdown = vi.fn()
     ;(window as any).electronAPI = {
       app: { showMessageBox: vi.fn().mockResolvedValue({ response: 1 }) },
-      file: { writeMarkdown },
+      file: { writeMarkdown, readMarkdown: vi.fn().mockResolvedValue({ success: true, data: 'external change' }) },
       draftRecovery: {
         save: vi.fn().mockResolvedValue({ success: true }),
         remove: vi.fn().mockResolvedValue({ success: true }),

@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.id }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-x64
+            runner: windows-2022
+            platform: win32
+            arch: x64
+          - id: macos-arm64
+            runner: macos-15
+            platform: darwin
+            arch: arm64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.23.4
+          architecture: ${{ matrix.arch }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.21
+          enable-cache: true
+          cache-dependency-glob: looma-agent-service/requirements.txt
+      - name: Prepare isolated scratch directory
+        run: node scripts/ci-release.mjs prepare
+      - name: Install native Python
+        run: uv python install 3.12
+      - name: Verify native toolchain
+        run: node scripts/ci-release.mjs environment --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Check release metadata consistency
+        run: node scripts/ci-release.mjs version
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run check
+      - name: Unit and integration tests
+        run: npx --no-install vitest run --reporter=default --reporter=junit --outputFile=out/ci-tests.xml
+      - name: Build application
+        run: npm run build
+      - name: Retain test report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-tests-${{ matrix.id }}
+          path: out/ci-tests.xml
+          if-no-files-found: warn
+          retention-days: 14

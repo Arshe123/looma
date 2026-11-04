@@ -1,0 +1,180 @@
+name: Release
+
+on:
+  push:
+    tags: ['[0-9]*.[0-9]*.[0-9]*']
+
+permissions:
+  contents: read
+
+# Serialize releases across versions; never interrupt an upload in progress.
+concurrency:
+  group: looma-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.repository == 'Arshe123/looma'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.23.4
+          package-manager-cache: false
+      - name: Validate stable tag, versions, release notes and main ancestry
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/ci-release.mjs version --tag="$RELEASE_TAG" --check-main
+
+  build:
+    name: Build (${{ matrix.id }})
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-x64
+            runner: windows-2022
+            platform: win32
+            arch: x64
+            script: make:win
+            certificate: WIN_CSC_LINK
+            certificate_password: WIN_CSC_KEY_PASSWORD
+          - id: macos-arm64
+            runner: macos-15
+            platform: darwin
+            arch: arm64
+            script: make:mac
+            certificate: MAC_CSC_LINK
+            certificate_password: MAC_CSC_KEY_PASSWORD
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.23.4
+          architecture: ${{ matrix.arch }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.11.21
+          enable-cache: false
+      - name: Prepare isolated scratch directory
+        run: node scripts/ci-release.mjs prepare
+      - name: Install native Python
+        run: uv python install 3.12
+      - name: Verify native toolchain
+        run: node scripts/ci-release.mjs environment --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run check
+      - name: Unit and integration tests
+        run: npx --no-install vitest run --reporter=default --reporter=junit --outputFile=out/ci-tests.xml
+      - name: Build native installer without publishing
+        env:
+          BUILD_SCRIPT: ${{ matrix.script }}
+          BUILD_PLATFORM: ${{ matrix.platform }}
+          BUILD_ARCH: ${{ matrix.arch }}
+          REQUIRE_SIGNING: ${{ vars.REQUIRE_SIGNING }}
+          CSC_LINK: ${{ secrets[matrix.certificate] }}
+          CSC_KEY_PASSWORD: ${{ secrets[matrix.certificate_password] }}
+          APPLE_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          set -euo pipefail
+          options=()
+          if [[ "$REQUIRE_SIGNING" == "true" ]]; then
+            if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
+              echo '::error::Strict signing requires the platform signing certificate and password.'
+              exit 1
+            fi
+            options+=(--config.forceCodeSigning=true)
+            if [[ "$BUILD_PLATFORM" == "darwin" ]]; then
+              if [[ -z "$APPLE_ID" || -z "$APPLE_APP_SPECIFIC_PASSWORD" || -z "$APPLE_TEAM_ID" ]]; then
+                echo '::error::Strict macOS signing requires Apple notarization credentials.'
+                exit 1
+              fi
+              options+=(--config.mac.notarize=true)
+            fi
+          else
+            echo '::warning::Strict distribution signing is disabled; artifacts are not certified as signed/notarized.'
+          fi
+          npm run "$BUILD_SCRIPT" -- --publish never "--$BUILD_ARCH" "${options[@]}"
+      - name: Verify packaged architecture, sidecar and signing policy
+        env:
+          REQUIRE_SIGNING: ${{ vars.REQUIRE_SIGNING }}
+        run: node scripts/ci-release.mjs verify-package --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - name: Collect and verify release payload
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: node scripts/release-artifacts.mjs collect --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --version "$RELEASE_VERSION" --source out/make --destination out/ci-artifacts/${{ matrix.id }}
+      - name: Retain verified release payload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.id }}
+          path: out/ci-artifacts/${{ matrix.id }}/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Retain test report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-tests-${{ matrix.id }}
+          path: out/ci-tests.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  publish:
+    name: Verify all assets and publish once
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.23.4
+          package-manager-cache: false
+      - name: Install validation dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-windows-x64
+          path: out/release-assets
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-macos-arm64
+          path: out/release-assets
+      - name: Verify both manifests, update metadata and every payload hash
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: node scripts/release-artifacts.mjs verify --version "$RELEASE_VERSION" --source out/release-assets
+      - name: Create or resume draft, verify remote assets, then publish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: node scripts/publish-release.mjs --version "$RELEASE_VERSION" --source out/release-assets

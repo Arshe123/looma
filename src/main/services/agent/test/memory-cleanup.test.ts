@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { AgentMemoryStore } from '../AgentMemoryStore'
+import { directorySymlink, fileSymlinkSkipReason } from '../../test/symlink'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
@@ -38,18 +39,26 @@ it('binds cleanup confirmation to exact bytes even for corrupted UTF-8 records',
   await fs.writeFile(path.join(directory, name), Buffer.from([0xfe]))
   await expect(store.cleanup(selection, preview.token)).rejects.toThrow('重新预览')
 })
-it('rejects stale previews, foreign scope arguments, and symlink records or roots', async () => {
-  const { root, store } = await setup()
+it('rejects stale previews and foreign scope arguments', async () => {
+  const { store } = await setup()
   const selection = { history: true, snapshots: false, user: false }
   const preview = await store.previewCleanup(selection)
   await store.save('user', 'new fact', (await store.read('user')).revision)
   await expect(store.cleanup(selection, preview.token)).rejects.toThrow('重新预览')
   await expect(store.previewCleanup({ ...selection, path: '../' } as typeof selection)).rejects.toThrow('范围无效')
+})
+it.skipIf(!!fileSymlinkSkipReason)('rejects symlink cleanup records', async () => {
+  const { root, store } = await setup()
+  const selection = { history: true, snapshots: false, user: false }
   const [record] = await fs.readdir(path.join(root, 'user-history'))
   await fs.unlink(path.join(root, 'user-history', record))
-  await fs.symlink(path.join(root, 'soul.md'), path.join(root, 'user-history', record))
+  await fs.symlink(path.join(root, 'soul.md'), path.join(root, 'user-history', record), 'file')
   await expect(store.previewCleanup(selection)).rejects.toThrow('链接')
-  const linked = `${root}-link`; roots.push(linked); await fs.symlink(root, linked)
+})
+it('rejects symlink cleanup roots', async () => {
+  const { root } = await setup()
+  const selection = { history: true, snapshots: false, user: false }
+  const linked = `${root}-link`; roots.push(linked); await directorySymlink(root, linked)
   await expect(new AgentMemoryStore(linked).previewCleanup(selection)).rejects.toThrow('链接')
 })
 it('previews exact managed records then clears user/history/snapshots without backing up forgotten data', async () => {

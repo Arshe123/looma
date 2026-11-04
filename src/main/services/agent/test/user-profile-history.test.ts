@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { AgentMemoryStore } from '../AgentMemoryStore'
+import { directorySymlink, fileSymlinkSkipReason } from '../../test/symlink'
 
 const roots: string[] = []
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
@@ -51,32 +52,36 @@ it('isolates corrupt history without leaking its content and still restores heal
   expect(await fs.readFile(path.join(root, 'user-history', `${damaged}.json`), 'utf8')).toBe('{SECRET broken')
 })
 
-it('keeps fully damaged pages and cursors stable without pruning, including unsafe record files', async () => {
-  const { root, store } = await setup()
-  for (let i = 0; i < 23; i++) await store.save('user', `v${i}`, (await store.read('user')).revision)
-  const first = await store.listUserHistory()
-  const second = await store.listUserHistory(first.nextCursor)
-  const ids = [...first.entries, ...second.entries].map(entry => entry.id)
-  const directory = path.join(root, 'user-history')
-  for (const id of ids) await fs.writeFile(path.join(directory, `${id}.json`), '{SECRET')
-  await fs.writeFile(path.join(directory, `${ids[1]}.json`), 'x'.repeat(100000))
-  await fs.rm(path.join(directory, `${ids[2]}.json`))
-  await fs.symlink(path.join(root, 'user.md'), path.join(directory, `${ids[2]}.json`))
-  await fs.writeFile(path.join(directory, 'unsafe-id.json'), 'SECRET')
-  const damagedFirst = await store.listUserHistory()
-  const damagedSecond = await store.listUserHistory(damagedFirst.nextCursor)
-  expect(damagedFirst.entries).toHaveLength(20)
-  expect(damagedFirst.nextCursor).toBe(first.nextCursor)
-  expect(damagedSecond.nextCursor).toBeUndefined()
-  const entries = [...damagedFirst.entries, ...damagedSecond.entries]
-  expect(entries.map(entry => entry.id)).toEqual(ids)
-  expect(entries.every(entry => entry.status === 'invalid')).toBe(true)
-  expect(JSON.stringify(entries)).not.toContain('SECRET')
-  const current = await store.read('user')
-  for (const id of [...ids, 'unsafe-id']) await expect(store.restoreUserHistory(id, current.revision)).rejects.toThrow()
-  expect(await store.read('user')).toEqual(current)
-  expect(await fs.readdir(directory)).toHaveLength(24)
-})
+for (const withFileSymlink of [false, true]) {
+  it.skipIf(withFileSymlink && !!fileSymlinkSkipReason)(`keeps fully damaged pages and cursors stable without pruning (${withFileSymlink ? 'file symlink' : 'corrupt and oversized records'})`, async () => {
+    const { root, store } = await setup()
+    for (let i = 0; i < 23; i++) await store.save('user', `v${i}`, (await store.read('user')).revision)
+    const first = await store.listUserHistory()
+    const second = await store.listUserHistory(first.nextCursor)
+    const ids = [...first.entries, ...second.entries].map(entry => entry.id)
+    const directory = path.join(root, 'user-history')
+    for (const id of ids) await fs.writeFile(path.join(directory, `${id}.json`), '{SECRET')
+    await fs.writeFile(path.join(directory, `${ids[1]}.json`), 'x'.repeat(100000))
+    if (withFileSymlink) {
+      await fs.rm(path.join(directory, `${ids[2]}.json`))
+      await fs.symlink(path.join(root, 'user.md'), path.join(directory, `${ids[2]}.json`), 'file')
+    }
+    await fs.writeFile(path.join(directory, 'unsafe-id.json'), 'SECRET')
+    const damagedFirst = await store.listUserHistory()
+    const damagedSecond = await store.listUserHistory(damagedFirst.nextCursor)
+    expect(damagedFirst.entries).toHaveLength(20)
+    expect(damagedFirst.nextCursor).toBe(first.nextCursor)
+    expect(damagedSecond.nextCursor).toBeUndefined()
+    const entries = [...damagedFirst.entries, ...damagedSecond.entries]
+    expect(entries.map(entry => entry.id)).toEqual(ids)
+    expect(entries.every(entry => entry.status === 'invalid')).toBe(true)
+    expect(JSON.stringify(entries)).not.toContain('SECRET')
+    const current = await store.read('user')
+    for (const id of [...ids, 'unsafe-id']) await expect(store.restoreUserHistory(id, current.revision)).rejects.toThrow()
+    expect(await store.read('user')).toEqual(current)
+    expect(await fs.readdir(directory)).toHaveLength(24)
+  }, 30_000) // Real repeated fsync/restore work, not an editor performance budget.
+}
 
 it('surfaces directory enumeration permission errors instead of a healthy empty page', async () => {
   const { store } = await setup()
@@ -148,7 +153,7 @@ it('rechecks live authorization after a durable backup before writing current', 
   expect((await store.listUserHistory()).entries[0].source).toBe('agent')
 })
 
-it('rejects traversal, corrupt content/revisions, oversized files and symlinks without changing current', async () => {
+it('rejects traversal, corrupt content/revisions and oversized files without changing current', async () => {
   const { root, store } = await setup()
   const saved = await store.save('user', 'current', (await store.read('user')).revision)
   const id = (await store.listUserHistory()).entries[0].id
@@ -164,8 +169,16 @@ it('rejects traversal, corrupt content/revisions, oversized files and symlinks w
   }
   await fs.writeFile(file, 'x'.repeat(100000))
   await expect(store.readUserHistory(id)).rejects.toThrow('损坏')
+  expect(await store.read('user')).toEqual(saved)
+})
+
+it.skipIf(!!fileSymlinkSkipReason)('rejects symlink history records without changing current', async () => {
+  const { root, store } = await setup()
+  const saved = await store.save('user', 'current', (await store.read('user')).revision)
+  const id = (await store.listUserHistory()).entries[0].id
+  const file = path.join(root, 'user-history', `${id}.json`)
   await fs.rm(file)
-  await fs.symlink(path.join(root, 'user.md'), file)
+  await fs.symlink(path.join(root, 'user.md'), file, 'file')
   await expect(store.restoreUserHistory(id, saved.revision)).rejects.toThrow('损坏')
   expect(await store.read('user')).toEqual(saved)
 })
@@ -193,7 +206,7 @@ it('rejects a symlinked history directory before saving or restoring', async () 
   const saved = await store.save('user', 'current', (await store.read('user')).revision)
   const id = (await store.listUserHistory()).entries[0].id
   await fs.rename(path.join(root, 'user-history'), path.join(root, 'other'))
-  await fs.symlink(path.join(root, 'other'), path.join(root, 'user-history'))
+  await directorySymlink(path.join(root, 'other'), path.join(root, 'user-history'))
   await expect(store.listUserHistory()).rejects.toThrow('历史')
   await expect(store.restoreUserHistory(id, saved.revision)).rejects.toThrow('历史')
   await expect(store.save('user', 'unsafe', saved.revision)).rejects.toThrow('历史')

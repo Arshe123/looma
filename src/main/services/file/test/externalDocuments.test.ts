@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { ExternalDocuments } from '../externalDocuments'
+import { fileSymlinkSkipReason } from '../../test/symlink'
 
 const roots: string[] = []
 it('transfers ownership without deleting drafts or overwriting conflicting disk content', async () => {
@@ -39,21 +40,35 @@ it('recovers dirty drafts independently, protects disk conflicts, and forgets no
   expect(await restarted.recoveryPaths()).toEqual([])
   await expect(restarted.save(doc.id, 3, 'x', '# Changed elsewhere')).rejects.toThrow('授权')
 })
-it('requires a baseline for every save and refuses a replaced symlink target', async () => {
-  const { root, file, service } = await fixture()
+it('requires a baseline for every save', async () => {
+  const { file, service } = await fixture()
   const doc = await service.open(file, 1)
   await expect(service.save(doc.id, 1, 'bad', undefined as unknown as string)).rejects.toThrow('基线')
+  expect(await fs.readFile(file, 'utf8')).toBe('# Original')
+})
+it.skipIf(!!fileSymlinkSkipReason)('refuses a replaced symlink target', async () => {
+  const { root, file, service } = await fixture()
+  const doc = await service.open(file, 1)
   const other = path.join(root, 'other.md')
   await fs.writeFile(other, '# Original')
   await fs.rm(file)
-  await fs.symlink(other, file)
+  await fs.symlink(other, file, 'file')
   await expect(service.save(doc.id, 1, 'bad', '# Original')).rejects.toThrow('路径')
   expect(await fs.readFile(other, 'utf8')).toBe('# Original')
 })
-it('opens canonical identities once and only permits the owning renderer to save the original', async () => {
+it('opens the same identity once and only permits the owning renderer to save the original', async () => {
+  const { root, file, service } = await fixture()
+  const first = await service.open(file, 1)
+  expect((await service.open(file, 1)).id).toBe(first.id)
+  await expect(service.save(first.id, 2, '# denied', '# Original')).rejects.toThrow('授权')
+  await service.save(first.id, 1, '# Edited', '# Original')
+  expect(await fs.readFile(file, 'utf8')).toBe('# Edited')
+  expect(await fs.readdir(root)).not.toContain('.looma')
+})
+it.skipIf(!!fileSymlinkSkipReason)('opens a file symlink alias as the same canonical identity', async () => {
   const { root, file, service } = await fixture()
   const alias = path.join(root, 'alias.md')
-  await fs.symlink(file, alias)
+  await fs.symlink(file, alias, 'file')
   const first = await service.open(file, 1)
   expect((await service.open(alias, 1)).id).toBe(first.id)
   await expect(service.save(first.id, 2, '# denied', '# Original')).rejects.toThrow('授权')

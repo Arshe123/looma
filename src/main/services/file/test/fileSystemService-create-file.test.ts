@@ -1,12 +1,13 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fileSystemService } from '../fileSystemService'
 
 const tempDirectories: string[] = []
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(tempDirectories.splice(0).map(directory => fs.rm(directory, { recursive: true, force: true })))
 })
 
@@ -31,6 +32,42 @@ describe('fileSystemService.createFile', () => {
 
     expect(result).toMatchObject({ success: false, errorCode: 'TARGET_EXISTS' })
     expect(await fs.readFile(path.join(directory, 'daily.md'), 'utf8')).toBe('keep')
+  })
+
+  it('removes its own new file when writing fails, using handle-based identity for rollback', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'looma-create-file-'))
+    tempDirectories.push(directory)
+    const open = fs.open.bind(fs)
+    vi.spyOn(fs, 'open').mockImplementationOnce(async (...args) => {
+      const handle = await open(...args)
+      vi.spyOn(handle, 'writeFile').mockRejectedValueOnce(new Error('disk full'))
+      return handle
+    })
+
+    const result = await fileSystemService.createFile(directory, '', 'daily.md', 'content')
+
+    expect(result).toMatchObject({ success: false, error: '创建文件失败: disk full' })
+    await expect(fs.lstat(path.join(directory, 'daily.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('keeps a substituted path intact when creation verification fails', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'looma-create-file-'))
+    tempDirectories.push(directory)
+    const file = path.join(directory, 'daily.md')
+    const moved = path.join(directory, 'created.md')
+    const open = fs.open.bind(fs)
+    vi.spyOn(fs, 'open').mockImplementationOnce(async (...args) => {
+      const handle = await open(...args)
+      await fs.rename(file, moved)
+      await fs.writeFile(file, 'unrelated')
+      return handle
+    })
+
+    const result = await fileSystemService.createFile(directory, '', 'daily.md', 'template')
+
+    expect(result).toMatchObject({ success: false, errorCode: 'PATH_TRAVERSAL' })
+    expect(await fs.readFile(file, 'utf8')).toBe('unrelated')
+    expect(await fs.readFile(moved, 'utf8')).toBe('')
   })
 
   it('rejects a parent directory symlink that escapes the workspace', async () => {

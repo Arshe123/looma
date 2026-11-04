@@ -5,8 +5,9 @@ import { ensureSyntaxTree } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { EditorState } from '@codemirror/state'
 import { buildContinuousCodeDecorations, buildContinuousCodePlan } from '../continuousMarkdownCode'
+import { parsedMarkdownState } from './parsed-markdown-state'
 
-const state = (doc: string) => EditorState.create({ doc, extensions: [markdown()] })
+const state = (doc: string) => parsedMarkdownState(EditorState.create({ doc, extensions: [markdown()] }))
 function lines(s: EditorState, from = 0, to = s.doc.length) {
   const result: { line: number; classes: string; block: string }[] = []
   buildContinuousCodeDecorations(s, [{ from, to }], false).between(0, s.doc.length, (at, _to, decoration) => {

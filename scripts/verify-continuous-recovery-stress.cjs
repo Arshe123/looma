@@ -7,9 +7,39 @@ const os = require('node:os')
 const assert = require('node:assert/strict')
 const crypto = require('node:crypto')
 const { pathToFileURL } = require('node:url')
-const { spawn } = require('node:child_process')
+const { spawn, spawnSync } = require('node:child_process')
 const { performance } = require('node:perf_hooks')
 const electron = require('electron')
+const children = new Set()
+let failureReportPath, failureReport
+let exiting = false
+function killChild(child) {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return
+  if (process.platform === 'win32') {
+    const killed = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { encoding: 'utf8', windowsHide: true })
+    if (killed.error || killed.status !== 0) {
+      console.error('Child tree termination failed', child.pid, killed.error || killed.stderr)
+      child.kill('SIGKILL')
+    }
+  } else child.kill('SIGKILL')
+}
+function fatal(error) {
+  if (exiting) return
+  exiting = true
+  console.error(error?.stack || error)
+  try {
+    for (const child of children) {
+      try { killChild(child) } catch (killError) { console.error('Could not terminate child', child.pid, killError) }
+    }
+    if (failureReportPath) fs.writeFileSync(failureReportPath, JSON.stringify({ ...failureReport, success: false, error: String(error?.stack || error) }, null, 2))
+  } catch (reportError) { console.error('Could not write failure report', reportError) }
+  finally {
+    // Catch startup/report failures without Electron dialogs or a live main process.
+    try { electron.app.exit(1) } finally { process.exit(1) }
+  }
+}
+process.on('uncaughtException', fatal)
+process.on('unhandledRejection', fatal)
 const repo = path.resolve(__dirname, '..')
 const childStage = process.env.LOOMA_RECOVERY_STAGE
 const hash = value => crypto.createHash('sha256').update(value).digest('hex')
@@ -19,13 +49,17 @@ async function until(check, label, timeout = 35000) {
   while (Date.now() < deadline) { if (await check()) return; await wait(25) }
   throw new Error('Timeout: ' + label)
 }
+async function main() {
 if (!childStage) {
-  const root = fs.mkdtempSync(path.join(os.homedir(), '.hermes/cache/scratch/looma-recovery-stress-'))
+  fs.mkdirSync(os.tmpdir(), { recursive: true })
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looma-recovery-stress-'))
+  failureReportPath = path.join(root, 'report.json')
   const baseline = path.join(root, 'baseline')
   fs.mkdirSync(baseline)
   for (const dir of ['dist', 'dist-electron', 'resources']) fs.cpSync(path.join(repo, dir), path.join(baseline, dir), { recursive: true })
   // The build may resolve optional node externals relative to its own directory.
-  fs.symlinkSync(path.join(repo, 'node_modules'), path.join(baseline, 'node_modules'), 'dir')
+  fs.symlinkSync(path.join(repo, 'node_modules'), path.join(baseline, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir')
+  assert.ok(fs.lstatSync(path.join(baseline, 'node_modules')).isSymbolicLink(), 'baseline dependency link must be a real directory link')
   fs.writeFileSync(path.join(baseline, 'package.json'), '{"type":"module"}')
   for (const dir of ['appData', 'userData', 'sessionData', 'workspace']) fs.mkdirSync(path.join(root, dir))
   const metadata = path.join(root, 'appData/workspace-meta/looma')
@@ -41,34 +75,43 @@ if (!childStage) {
   fs.writeFileSync(path.join(root, 'original.md'), source)
   const report = { root, baseline: { mainSha256: hash(fs.readFileSync(path.join(baseline, 'dist-electron/index.js'))), rendererIndexSha256: hash(fs.readFileSync(path.join(baseline, 'dist/index.html'))), bytes: Buffer.byteLength(source) }, stages: [], qualifications: ['Cold Electron processes, NOT cold OS disk cache; no purge/sudo.', 'CDP text input in show:false windows; not native OS/IME acceptance.', 'Concurrent-save case inserts a 650ms scheduling gate before the ORIGINAL real file:writeMarkdown listener; no filesystem/API substitute.', 'Abnormal renderer/window destruction and forced child exit; not power-loss durability.', 'Short bounded stress run; not a long-duration memory-leak certification.'] }
   report.baseline.shape = shape
+  report.baseline.dependencyLinkType = process.platform === 'win32' ? 'junction' : 'dir'
+  report.qualifications.push('Automated hidden-window regression only; Windows uses a real directory junction, not native desktop acceptance.')
+  failureReport = report
   report.baseline.characters = source.length
   console.log('ARTIFACTS', root)
-  ;(async () => {
+  return (async () => {
     for (const stage of ['cold', 'crash', 'recover', 'conflict']) {
       if (stage === 'conflict') fs.appendFileSync(path.join(root, 'workspace/stress.md'), '\nEXTERNAL-DISK-CHANGE\n')
-      const outcome = await new Promise(resolve => {
+      const outcome = await new Promise((resolve, reject) => {
         const child = spawn(process.execPath, [__filename], { cwd: repo, env: { ...process.env, LOOMA_RECOVERY_STAGE: stage, LOOMA_RECOVERY_ROOT: root }, stdio: ['ignore', 'pipe', 'pipe'] })
+        children.add(child)
         let output = ''; child.stdout.on('data', data => { output += data; process.stdout.write(data) }); child.stderr.on('data', data => { output += data; process.stderr.write(data) })
-        const timer = setTimeout(() => child.kill('SIGKILL'), 100000)
-        child.on('exit', (code, signal) => { clearTimeout(timer); resolve({ code, signal, output }) })
+        let timedOut = false
+        const timer = setTimeout(() => { timedOut = true; console.error('Stage watchdog: terminating child tree', stage, child.pid); killChild(child) }, 100000)
+        child.once('error', error => { clearTimeout(timer); children.delete(child); reject(error) })
+        child.once('close', (code, signal) => { clearTimeout(timer); children.delete(child); resolve({ code, signal, output, timedOut }) })
       })
       const stagePath = path.join(root, `${stage}.json`)
       const result = fs.existsSync(stagePath) ? JSON.parse(fs.readFileSync(stagePath, 'utf8')) : { stage, success: false, error: 'No stage report' }
-      report.stages.push({ ...result, exitCode: outcome.code, signal: outcome.signal })
+      report.stages.push({ ...result, exitCode: outcome.code, signal: outcome.signal, timedOut: outcome.timedOut })
       fs.writeFileSync(path.join(root, 'report.json'), JSON.stringify(report, null, 2))
       assert.equal(result.success, true, `${stage}: ${result.error || outcome.output.slice(-2000)}`)
+      assert.equal(outcome.timedOut, false, `${stage} timed out`)
       assert.equal(outcome.code, stage === 'crash' ? 73 : 0, `${stage} exit`)
     }
     report.success = true
     fs.writeFileSync(path.join(root, 'report.json'), JSON.stringify(report, null, 2))
     console.log('PASS real frozen production cold/progressive/save/in-flight-input/crash-draft/restart/conflict; REPORT', path.join(root, 'report.json'))
     electron.app.exit(0)
-  })().catch(error => { report.success = false; report.error = String(error.stack); fs.writeFileSync(path.join(root, 'report.json'), JSON.stringify(report, null, 2)); console.error(error, 'REPORT', path.join(root, 'report.json')); electron.app.exit(1) })
+  })()
 } else {
   const { app, BrowserWindow, ipcMain, dialog } = electron
   const root = process.env.LOOMA_RECOVERY_ROOT
   const started = performance.now(), cpu = process.cpuUsage()
   const result = { stage: childStage, pid: process.pid, success: false, ipc: [], samples: [], dialogs: [], errors: [] }
+  failureReportPath = path.join(root, `${childStage}.json`)
+  failureReport = result
   const note = path.join(root, 'workspace/stress.md')
   for (const key of ['appData', 'userData', 'sessionData']) app.setPath(key, path.join(root, key))
   delete process.env.VITE_DEV_SERVER_URL
@@ -84,6 +127,10 @@ if (!childStage) {
     const item = { channel, startedMs: performance.now() - started }
     const relevant = /readTextChunk|writeMarkdown|draftRecovery/i.test(channel)
     if (relevant) result.ipc.push(item)
+    if (channel === 'file:writeMarkdown') {
+      item.contentSha256 = hash(args[1])
+      item.expectedSha256 = typeof args[2] === 'string' ? hash(args[2]) : null
+    }
     if (channel === 'file:writeMarkdown' && gateNext) {
       gateNext = false; gateEntered = true
       const gateStart = performance.now()
@@ -92,7 +139,14 @@ if (!childStage) {
       item.minimumGateDelayMs = 650
     }
     const begin = performance.now()
-    try { const value = await listener(event, ...args); item.handlerMs = performance.now() - begin; item.success = value?.success; return value }
+    try {
+      const value = await listener(event, ...args)
+      item.handlerMs = performance.now() - begin
+      item.success = value?.success
+      if (value?.errorCode) item.errorCode = value.errorCode
+      if (value?.error) item.error = value.error
+      return value
+    }
     catch (error) { item.error = String(error); throw error }
   })
   app.on('web-contents-created', (_e, wc) => wc.on('console-message', (_event, level, message) => { if (level >= 3) result.errors.push(message) }))
@@ -105,7 +159,7 @@ if (!childStage) {
     app.exit(error ? 1 : code)
   }
   const watchdog = setTimeout(() => finish(new Error('Stage watchdog')), 90000)
-  ;(async () => {
+  return (async () => {
     const mainPath = path.join(root, 'baseline/dist-electron/index.js')
     const built = fs.readFileSync(mainPath, 'utf8'), pattern = /new ([A-Za-z_$][\w$]*)\(\{\s*width:/g
     assert.equal([...built.matchAll(pattern)].length, 1)
@@ -164,13 +218,23 @@ if (!childStage) {
       await insert('DURING-SAVE-B')
       await until(async () => (await state()).content.includes('DURING-SAVE-B'), 'continued native input reached real store')
       assert.equal((await state()).saving, true)
-      await wait(650); releaseGate()
-      await until(async () => !(await state()).saving, 'older save callback')
+      // Freeze the following real write too: otherwise polling can miss the
+      // interval between queued saves and inspect the already-saved B snapshot.
+      const releaseOlderWrite = releaseGate
+      gateNext = true
+      gateEntered = false
+      await wait(650); releaseOlderWrite()
+      await until(() => gateEntered, 'following real write handler in flight')
       const after = await state()
       assert.ok(after.content.includes('DURING-SAVE-B'), 'older save completion cannot replace newer input')
       assert.ok(!after.base.includes('DURING-SAVE-B'), 'base is exactly snapshot written, not newer input')
+      assert.equal(after.base, fs.readFileSync(note, 'utf8'), 'completed snapshot matches actual disk bytes')
       assert.equal(after.dirty, true)
+      assert.equal(result.ipc.filter(item => item.channel === 'file:writeMarkdown').at(-1).expectedSha256, hash(after.base), 'queued save uses the completed snapshot as its CAS baseline')
+      result.followingWriteSchedulingGate = true
+      releaseGate()
       await until(() => fs.readFileSync(note, 'utf8').includes('DURING-SAVE-B'), 'newer input eventually saved')
+      await until(async () => !(await state()).saving, 'following save completion')
       const final = fs.readFileSync(note, 'utf8')
       assert.equal(final.replace('FIRST-INPUT-真实', '').replace('SAVE-SNAPSHOT-A', '').replace('DURING-SAVE-B', ''), original)
       fs.writeFileSync(path.join(root, 'saved-baseline.md'), final)
@@ -216,3 +280,6 @@ if (!childStage) {
     result.success = true; clearTimeout(watchdog); console.log('PASS', childStage, 'pid', process.pid); finish()
   })().catch(error => { clearTimeout(watchdog); console.error(error); finish(error) })
 }
+}
+// Catch even synchronous failures before either stage's asynchronous body.
+Promise.resolve().then(main).catch(fatal)

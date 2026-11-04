@@ -1,10 +1,11 @@
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { AgentMemoryStore } from '../AgentMemoryStore'
 import { aiService, type AgentStreamEvent } from '../../ai/AIService'
+import { preparePythonDriver, pythonDriverEnv, pythonServiceRoot } from './python-driver-runtime'
 
 const roots: string[] = []
 it('opens independent server-bound workspace and profile capabilities with live switches', async () => {
@@ -127,6 +128,10 @@ it.each(['done', 'error'])('drains an in-flight memory receipt before forwarding
   expect((await new AgentMemoryStore(root).read('user')).content).toBe('真实保存')
 })
 
+describe('real Python memory bridge', () => {
+  let python: Awaited<ReturnType<typeof preparePythonDriver>>
+  beforeAll(async () => { python = await preparePythonDriver() }, 200_000)
+
 for (const protocol of ['ollama', 'openai']) {
   it.each([[true, false], [false, false], [true, true], [false, true]])(`runs real Python ${protocol} tools through AIService with maintenance=%s workspace=%s`, async (enabled, workspaceScope) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'profile-e2e-'))
@@ -144,14 +149,13 @@ for (const protocol of ['ollama', 'openai']) {
       const body = JSON.parse(init.body as string)
       bridgeUrl = body[`${prefix}_bridge`].url
       expect(JSON.stringify(body)).not.toContain(root)
-      const cwd = path.resolve('looma-agent-service')
       const output = await new Promise<string>((resolve, reject) => {
-        const child = spawn(path.join(cwd, '.venv/bin/python'), ['-m', 'test.user_profile_bridge_driver'], { cwd, env: { ...process.env, TMPDIR: os.tmpdir() } })
+        const child = spawn(python.command, [...python.args, '-m', 'test.user_profile_bridge_driver'], { cwd: pythonServiceRoot, env: pythonDriverEnv(), windowsHide: true })
         let stdout = ''; let stderr = ''
         child.stdout.on('data', chunk => { stdout += chunk })
         child.stderr.on('data', chunk => { stderr += chunk })
         child.once('error', reject)
-        child.once('close', code => code === 0 ? resolve(stdout) : reject(new Error(stderr + stdout)))
+        child.once('close', code => code === 0 ? resolve(stdout) : reject(new Error(`Python bridge driver exited with code ${code}:\n${stderr}${stdout}`)))
         child.stdin.end(JSON.stringify({ ...body, _protocol: protocol, _scope: workspaceScope ? 'workspace' : 'user' }))
       })
       return new Response(output, { headers: { 'Content-Type': 'application/x-ndjson' } })
@@ -191,3 +195,4 @@ for (const protocol of ['ollama', 'openai']) {
     await expect(realFetch(bridgeUrl, { method: 'POST' })).rejects.toThrow()
   }, 60_000)
 }
+})

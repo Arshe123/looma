@@ -11,6 +11,7 @@ import {
   type NoteTemplateStore,
 } from '../../../shared/utils/note-template'
 import { fileSystemService } from '../file/fileSystemService'
+import { readRegularFileIdentity, sameFileIdentity } from '../file/fileIdentity'
 
 const emptyStore = (): NoteTemplateStore => ({ schemaVersion: 1, revision: 0, templates: [] })
 
@@ -240,12 +241,8 @@ export const createNoteTemplateService = (storePath: string, options: NoteTempla
           await writeStore(nextStore)
         } catch (error) {
           try {
-            const currentStat = await fs.lstat(rollbackTarget.path)
-            if (currentStat.isSymbolicLink()
-              || !currentStat.isFile()
-              || currentStat.dev !== rollbackTarget.dev
-              || currentStat.ino !== rollbackTarget.ino
-              || currentStat.birthtimeMs !== rollbackTarget.birthtimeMs) {
+            const currentStat = await readRegularFileIdentity(rollbackTarget.path)
+            if (!sameFileIdentity(currentStat, rollbackTarget)) {
               throw new Error('刚创建的文件路径已发生变化。')
             }
             await (options.unlink ?? fs.unlink)(rollbackTarget.path)

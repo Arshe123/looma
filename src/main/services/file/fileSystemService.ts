@@ -7,6 +7,7 @@ import type { WebContents } from 'electron'
 import type { Result } from '../../../shared/types/Result'
 import { withFileWriteLock } from './fileWriteLock'
 import { fileService } from './fileService'
+import { readRegularFileIdentity, sameFileIdentity, type FileIdentity } from './fileIdentity'
 
 export type WatchState = {
   workspacePath: string
@@ -403,22 +404,19 @@ export const fileSystemService = {
       const destAbs = path.join(realParentPath, fileName)
       const destRel = toPosix(path.relative(resolvedParent.root, path.join(resolvedParent.target, fileName)))
       const handle = await fs.open(destAbs, 'wx')
-      let openedStat: Awaited<ReturnType<typeof handle.stat>> | null = null
+      let openedStat: FileIdentity | null = null
       let creationError: unknown
       try {
-        openedStat = await handle.stat()
+        openedStat = await handle.stat({ bigint: true })
         const verifyDestination = async () => {
           const [latestParentPath, destinationPath, destinationStat] = await Promise.all([
             fs.realpath(resolvedParent.target),
             fs.realpath(destAbs),
-            fs.lstat(destAbs),
+            readRegularFileIdentity(destAbs),
           ])
           if (latestParentPath !== realParentPath
             || !isWithin(realWorkspacePath, destinationPath)
-            || destinationStat.isSymbolicLink()
-            || !destinationStat.isFile()
-            || destinationStat.dev !== openedStat.dev
-            || destinationStat.ino !== openedStat.ino) {
+            || !sameFileIdentity(destinationStat, openedStat)) {
             const error = new Error('目标目录或文件在创建期间发生变化') as NodeJS.ErrnoException
             error.code = 'PATH_TRAVERSAL'
             throw error
@@ -438,13 +436,11 @@ export const fileSystemService = {
         try {
           const [destinationPath, destinationStat] = await Promise.all([
             fs.realpath(destAbs),
-            fs.lstat(destAbs),
+            readRegularFileIdentity(destAbs),
           ])
           if (openedStat
             && isWithin(realWorkspacePath, destinationPath)
-            && !destinationStat.isSymbolicLink()
-            && destinationStat.dev === openedStat.dev
-            && destinationStat.ino === openedStat.ino) {
+            && sameFileIdentity(destinationStat, openedStat)) {
             await fs.unlink(destAbs)
           }
         } catch {

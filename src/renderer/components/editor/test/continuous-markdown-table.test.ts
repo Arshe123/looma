@@ -2,19 +2,42 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { EditorSelection, EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { describe, expect, it, vi } from 'vitest'
-import { ensureSyntaxTree, syntaxTreeAvailable } from '@codemirror/language'
+import { syntaxTreeAvailable } from '@codemirror/language'
 import { ChunkedDocument } from '../../../../shared/utils/chunked-document'
 import { getContinuousTableContext, insertContinuousTable, runContinuousTableCommand } from '../continuousMarkdownTable'
+import { parsedMarkdownState } from './parsed-markdown-state'
 
-function fixture(source: string, needle = 'x', readOnly = false) {
+function fixture(source: string, needle = 'x', readOnly = false, { parse = true }: { parse?: boolean } = {}) {
   let state = EditorState.create({ doc: source, selection: { anchor: Math.max(0, source.indexOf(needle)) }, extensions: [markdown({ base: markdownLanguage }), EditorState.readOnly.of(readOnly)] })
+  if (parse) state = parsedMarkdownState(state)
   const transactions: TransactionSpec[] = []
-  const view = { get state() { return state }, dispatch(spec: TransactionSpec) { transactions.push(spec); state = state.update(spec).state } } as Pick<EditorView, 'state' | 'dispatch'>
+  const view = { get state() { return state }, dispatch(spec: TransactionSpec) {
+    transactions.push(spec)
+    state = state.update(spec).state
+    if (parse) state = parsedMarkdownState(state)
+  } } as Pick<EditorView, 'state' | 'dispatch'>
   return { view, transactions, text: () => state.doc.toString() }
 }
 const basic = '| A | B |\n| :--- | ---: |\n| x | y |\n| z | w |'
 
 describe('continuous source table commands', () => {
+  it('prepares the tree even when initialization exhausts its parse budget', () => {
+    let clock = 0
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock += 100)
+    let state: EditorState
+    try {
+      state = EditorState.create({ doc: basic, selection: { anchor: basic.indexOf('x') }, extensions: [markdown({ base: markdownLanguage })] })
+    } finally { now.mockRestore() }
+    const dispatch = vi.fn()
+    const view = { state, dispatch }
+    expect(syntaxTreeAvailable(state, state.doc.length)).toBe(false)
+    expect(runContinuousTableCommand(view, 'rowAfter')).toBe(false)
+    expect(dispatch).not.toHaveBeenCalled()
+    view.state = parsedMarkdownState(state)
+    expect(runContinuousTableCommand(view, 'rowAfter')).toBe(true)
+    expect(dispatch).toHaveBeenCalledOnce()
+    expect(view.state.update(dispatch.mock.calls[0][0]).newDoc.toString()).toBe(basic.replace('| x | y |', '| x | y |\n|  |  |'))
+  })
   it('inserts a row after the current source row in one mapped transaction', () => {
     const f = fixture(basic)
     const oldHead = f.view.state.selection.main.head
@@ -150,7 +173,7 @@ describe('continuous source table commands', () => {
     expect(getContinuousTableContext(f.view.state)?.to).toBe(f.text().indexOf('\n\nafter'))
   })
   it('refuses an incomplete parsed table rather than editing only its parsed prefix', () => {
-    const f = fixture(basic + '\n' + '| more | rows |\n'.repeat(50000))
+    const f = fixture(basic + '\n' + '| more | rows |\n'.repeat(50000), 'x', false, { parse: false })
     expect(syntaxTreeAvailable(f.view.state, f.view.state.doc.length)).toBe(false)
     expect(runContinuousTableCommand(f.view, 'columnAfter')).toBe(false)
     expect(f.transactions).toHaveLength(0)
@@ -185,7 +208,7 @@ describe('continuous source table commands', () => {
     f.view.dispatch({ selection: { anchor: 0, head: f.view.state.selection.main.head } })
     expect(runContinuousTableCommand(f.view, 'deleteTable')).toBe(false)
     expect(insertContinuousTable(f.view, 2, 2)).toBe(false)
-    const multiState = EditorState.create({ doc: basic, selection: EditorSelection.create([EditorSelection.cursor(basic.indexOf('x')), EditorSelection.cursor(basic.indexOf('y'))]), extensions: [markdown({ base: markdownLanguage }), EditorState.allowMultipleSelections.of(true)] })
+    const multiState = parsedMarkdownState(EditorState.create({ doc: basic, selection: EditorSelection.create([EditorSelection.cursor(basic.indexOf('x')), EditorSelection.cursor(basic.indexOf('y'))]), extensions: [markdown({ base: markdownLanguage }), EditorState.allowMultipleSelections.of(true)] }))
     const dispatch = vi.fn()
     const view = { state: multiState, dispatch } as Pick<EditorView, 'state' | 'dispatch'>
     expect(runContinuousTableCommand(view, 'deleteRow')).toBe(false)
@@ -204,8 +227,8 @@ describe('continuous source table commands', () => {
   it('queries context without table-wide reads and edits only the current table', () => {
     const source = basic + '\n\n' + 'unrelated\n'.repeat(10000)
     const f = fixture(source), state = f.view.state
-    // Simulate the host's completed background parser before measuring commands.
-    expect(ensureSyntaxTree(state, state.doc.length, 1000)).not.toBeNull()
+    // The fixture publishes the completed background parse before measuring reads.
+    expect(syntaxTreeAvailable(state, state.doc.length)).toBe(true)
     const reads = vi.spyOn(state.doc, 'sliceString')
     const dispatch = vi.fn()
     const view = { state, dispatch } as Pick<EditorView, 'state' | 'dispatch'>
@@ -222,13 +245,13 @@ describe('continuous source table commands', () => {
   it('uses the host dispatch as one canonical history edit with undo and redo', () => {
     const canonical = new ChunkedDocument(basic, 8)
     canonical.select(basic.indexOf('x'))
-    let state = EditorState.create({ doc: canonical.text, selection: canonical.selection, extensions: [markdown({ base: markdownLanguage })] })
+    let state = parsedMarkdownState(EditorState.create({ doc: canonical.text, selection: canonical.selection, extensions: [markdown({ base: markdownLanguage })] }))
     const view = { get state() { return state }, dispatch(spec: TransactionSpec) {
       const transaction = state.update(spec)
       const changes: { from: number; to: number; insert: string }[] = []
       transaction.changes.iterChanges((from, to, _fromB, _toB, inserted) => changes.push({ from, to, insert: inserted.toString() }))
       canonical.applyChanges(changes, transaction.state.selection.main)
-      state = transaction.state
+      state = parsedMarkdownState(transaction.state)
     } } as Pick<EditorView, 'state' | 'dispatch'>
     expect(runContinuousTableCommand(view, 'columnRight')).toBe(true)
     const edited = state.doc.toString(), selected = state.selection.main.head
@@ -244,7 +267,7 @@ describe('continuous source table commands', () => {
     expect(canonical.selection.head).toBe(selected)
   })
   it('does not insert into source whose protected-block context has not been parsed yet', () => {
-    const f = fixture('paragraph\n\n'.repeat(2000) + '```\nx\n```')
+    const f = fixture('paragraph\n\n'.repeat(2000) + '```\nx\n```', 'x', false, { parse: false })
     expect(syntaxTreeAvailable(f.view.state, f.view.state.selection.main.head)).toBe(false)
     expect(insertContinuousTable(f.view, 2, 2)).toBe(false)
     expect(f.transactions).toHaveLength(0)

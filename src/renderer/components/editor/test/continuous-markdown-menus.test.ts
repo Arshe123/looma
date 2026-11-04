@@ -4,11 +4,12 @@ import { createDefaultEditorShortcutSettings } from '../../../../shared/utils/ed
 import { EditorState } from '@codemirror/state'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { getTableMenuActions } from '../../../../shared/utils/tiptap-menu-actions'
+import { parsedMarkdownState } from './parsed-markdown-state'
 import { getContinuousMenuContext, continuousMenuPosition, getContinuousContextSelection, continuousTableMenuItems, continuousMarkdownMenus, refreshContinuousMarkdownMenus, resolveContinuousMenuShortcut } from '../continuousMarkdownMenus'
 
-const state = (doc: string, anchor = doc.length, head = anchor, readOnly = false) => EditorState.create({
+const state = (doc: string, anchor = doc.length, head = anchor, readOnly = false) => parsedMarkdownState(EditorState.create({
   doc, selection: { anchor, head }, extensions: [markdown({ base: markdownLanguage }), EditorState.readOnly.of(readOnly)],
-})
+}))
 
 describe('continuous menu context policy', () => {
   it('offers + only for a collapsed editable blank outside literal code', () => {

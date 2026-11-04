@@ -3,9 +3,10 @@ import { EditorSelection, EditorState } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
 import { createContinuousMarkdownClipboard, type ContinuousMarkdownClipboardOptions } from '../continuousMarkdownClipboard'
 import { history, undo, redo } from '@codemirror/commands'
+import { parsedMarkdownState } from './parsed-markdown-state'
 
 function fixture(source: string, overrides: Partial<ContinuousMarkdownClipboardOptions> = {}, readOnly = false) {
-  let state = EditorState.create({ doc: source, selection: EditorSelection.range(0, source.length), extensions: [markdown(), history(), EditorState.readOnly.of(readOnly)] })
+  let state = parsedMarkdownState(EditorState.create({ doc: source, selection: EditorSelection.range(0, source.length), extensions: [markdown(), history(), EditorState.readOnly.of(readOnly)] }))
   const writes: string[] = []
   const controller = createContinuousMarkdownClipboard({
     getView: () => view,
@@ -13,7 +14,7 @@ function fixture(source: string, overrides: Partial<ContinuousMarkdownClipboardO
     writeText: async text => { writes.push(text) },
     ...overrides,
   })
-  const view = { get state() { return state }, dispatch(spec: Parameters<EditorState['update']>[0]) { state = state.update(spec).state }, focus() {} }
+  const view = { get state() { return state }, dispatch(spec: Parameters<EditorState['update']>[0]) { state = parsedMarkdownState(state.update(spec).state) }, focus() {} }
   return { controller, view, writes, get state() { return state } }
 }
 

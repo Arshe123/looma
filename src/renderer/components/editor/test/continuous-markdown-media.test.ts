@@ -3,12 +3,13 @@ import { EditorState } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
 import { getContinuousImageContext, resizeContinuousImageSource, createContinuousMediaController, type ContinuousMediaHost } from '../continuousMarkdownMedia'
 import type { EditorView } from '@codemirror/view'
+import { parsedMarkdownState } from './parsed-markdown-state'
 
 function fixture() {
   let revision = 0, identity = {}, active = true
   const error = vi.fn()
-  const view = { state: EditorState.create({ doc: '正文', extensions: [markdown()] }), focus: vi.fn(),
-    dispatch(spec: Parameters<EditorState['update']>[0]) { this.state = this.state.update(spec).state; revision++ },
+  const view = { state: parsedMarkdownState(EditorState.create({ doc: '正文', extensions: [markdown()] })), focus: vi.fn(),
+    dispatch(spec: Parameters<EditorState['update']>[0]) { this.state = parsedMarkdownState(this.state.update(spec).state); revision++ },
   }
   const api = { fs: { importImage: vi.fn(async () => ({ success: true, data: { relativePath: 'assets/a #.png', fileName: 'a #.png' } })), importClipboardImage: vi.fn(), clipboardReadFiles: vi.fn() } }
   const host: ContinuousMediaHost = {
@@ -71,12 +72,12 @@ describe('continuous source-backed media', () => {
 
   it('identifies image source ranges and preserves exact title on resize', () => {
     const source = '正文 ![图](assets/a.png \'原题\'){width=60%} 后文'
-    const state = EditorState.create({ doc: source, extensions: [markdown()] })
+    const state = parsedMarkdownState(EditorState.create({ doc: source, extensions: [markdown()] }))
     const context = getContinuousImageContext(state, 12)!
     expect(context.source).toBe("![图](assets/a.png '原题'){width=60%}")
     expect(context.from).toBe(3)
     expect(source.slice(context.from, context.to)).toBe(context.source)
     expect(resizeContinuousImageSource(context, 35)).toBe("![图](assets/a.png '原题'){width=35%}")
-    expect(getContinuousImageContext(EditorState.create({ doc: '`![图](x.png)`', extensions: [markdown()] }), 6)).toBeNull()
+    expect(getContinuousImageContext(parsedMarkdownState(EditorState.create({ doc: '`![图](x.png)`', extensions: [markdown()] })), 6)).toBeNull()
   })
 })

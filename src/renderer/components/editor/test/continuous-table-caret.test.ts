@@ -3,14 +3,15 @@ import { EditorSelection, EditorState, StateEffect, Transaction } from '@codemir
 import { describe, expect, it } from 'vitest'
 import { continuousMarkdown } from '../continuousMarkdown'
 import { getContinuousTableContext } from '../continuousMarkdownTable'
+import { parsedMarkdownState } from './parsed-markdown-state'
 
 const source = '正文\n\n||||\n| --- | --- | --- |\n||||\n\n末尾'
 function fixture(anchor: number, rich = true, doc = source) {
-  return EditorState.create({ doc, selection: { anchor }, extensions: [
+  return parsedMarkdownState(EditorState.create({ doc, selection: { anchor }, extensions: [
     markdown({ base: markdownLanguage }),
     ...(rich ? [continuousMarkdown({ contextAt: () => ({ fence: '', fenceLength: 0 }),
       metadata: () => null, resolveImage: async () => null })] : []),
-  ] })
+  ] }))
 }
 
 describe('continuous table native caret association after editing', () => {
@@ -20,8 +21,9 @@ describe('continuous table native caret association after editing', () => {
     expect(transaction.newDoc.toString()).toBe(source.slice(0, at) + '\\ ' + source.slice(at))
     expect(transaction.newSelection.main.head).toBe(at + 1)
     expect(transaction.annotation(Transaction.userEvent)).toBe('input.type')
-    expect(getContinuousTableContext(transaction.state)?.cells).toHaveLength(3)
-    expect(getContinuousTableContext(transaction.state)?.column).toBe(1)
+    const parsed = parsedMarkdownState(transaction.state)
+    expect(getContinuousTableContext(parsed)?.cells).toHaveLength(3)
+    expect(getContinuousTableContext(parsed)?.column).toBe(1)
   })
   it.each(['input.type', 'input.paste', 'input.type.compose'])('protects a delimiter for %s while preserving annotations', userEvent => {
     const at = source.lastIndexOf('||||') + 1, state = fixture(at)
@@ -79,7 +81,7 @@ describe('continuous table native caret association after editing', () => {
       expect(transaction.newSelection.main.assoc).toBe(-1)
       expect(transaction.annotation(Transaction.userEvent)).toBe('input.type')
       expect(transaction.newDoc.toString()).toBe(state.sliceDoc(0, head) + insert + state.sliceDoc(head))
-      state = transaction.state
+      state = parsedMarkdownState(transaction.state)
     }
   })
   it('restored selections at a cell end keep the caret in that cell without editing source', () => {

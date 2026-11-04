@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { buildMarkdownReferenceIndex } from '@/shared/utils/markdown-reference-index'
 import { EditorState } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
-import { ensureSyntaxTree } from '@codemirror/language'
+import { parsedMarkdownState } from './parsed-markdown-state'
 import { getContinuousReferenceTrigger, getContinuousReferenceAtPosition, getContinuousReferenceRuns } from '../continuousMarkdownReferences'
 import { getContinuousInlineSpans } from '../continuousMarkdownSyntax'
 import { syntaxTree } from '@codemirror/language'
@@ -55,8 +55,7 @@ describe('portable reference source and presentation', () => {
 
 const stateAtEnd = (doc: string) => {
   const state = EditorState.create({ doc, selection: { anchor: doc.length }, extensions: [markdown()] })
-  ensureSyntaxTree(state, doc.length, 500)
-  return state.update({}).state
+  return parsedMarkdownState(state)
 }
 
 describe('continuous note reference input', () => {

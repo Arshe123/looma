@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { AgentMemoryStore } from '../AgentMemoryStore'
+import { directorySymlink, fileSymlinkSkipReason } from '../../test/symlink'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
@@ -27,16 +28,16 @@ it('rejects malformed receipt net metadata before replay reaches the ledger', as
 it.each(['memory-snapshots', 'user-history'])('rejects a symlinked %s directory before writing outside memory', async directory => {
   const { root, store } = await setup()
   const foreign = await fs.mkdtemp(path.join(os.tmpdir(), 'foreign-memory-')); roots.push(foreign)
-  await fs.symlink(foreign, path.join(root, directory))
+  await directorySymlink(foreign, path.join(root, directory))
   if (directory === 'memory-snapshots') await expect(store.snapshot('w', 'c')).rejects.toThrow()
   else await expect(store.save('user', 'private', hash(''))).rejects.toThrow()
   expect(await fs.readdir(foreign)).toEqual([])
 })
-it('does not accept a symlinked user file as commit proof for a pending receipt', async () => {
+it.skipIf(!!fileSymlinkSkipReason)('does not accept a symlinked user file as commit proof for a pending receipt', async () => {
   const { root, store } = await setup()
   const foreign = path.join(root, 'foreign.txt')
   await fs.writeFile(foreign, 'x')
-  await fs.symlink(foreign, path.join(root, 'user.md'))
+  await fs.symlink(foreign, path.join(root, 'user.md'), 'file')
   const id = randomUUID()
   await fs.mkdir(path.join(root, 'memory-receipts'))
   await fs.writeFile(path.join(root, 'memory-receipts', `${id}.json`), JSON.stringify({

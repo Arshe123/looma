@@ -3,10 +3,11 @@ import { EditorState } from '@codemirror/state'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { history, undo } from '@codemirror/commands'
 import { continuousToolbarTableSize, resizeContinuousToolbarTable } from '../continuousMarkdownMenuTable'
+import { parsedMarkdownState } from './parsed-markdown-state'
 
 const fixture = (doc: string) => {
-  let state = EditorState.create({ doc, selection: { anchor: 2 }, extensions: [markdown({ base: markdownLanguage }), history()] })
-  return { get state() { return state }, dispatch: (spec: Parameters<EditorState['update']>[0]) => { state = state.update(spec).state } }
+  let state = parsedMarkdownState(EditorState.create({ doc, selection: { anchor: 2 }, extensions: [markdown({ base: markdownLanguage }), history()] }))
+  return { get state() { return state }, dispatch: (spec: Parameters<EditorState['update']>[0]) => { state = parsedMarkdownState(state.update(spec).state) } }
 }
 describe('continuous table toolbar source adapter', () => {
   it('resizes one parsed table with existing source/alignment and one undoable transaction', () => {
@@ -26,7 +27,7 @@ describe('continuous table toolbar source adapter', () => {
     const plain = fixture('plain')
     expect(continuousToolbarTableSize(plain.state)).toBe(null)
     expect(resizeContinuousToolbarTable(plain, 2, 2)).toBe(false)
-    const readonly = EditorState.create({ doc: '| A |\n| --- |', extensions: [markdown(), EditorState.readOnly.of(true)] })
+    const readonly = parsedMarkdownState(EditorState.create({ doc: '| A |\n| --- |', extensions: [markdown(), EditorState.readOnly.of(true)] }))
     expect(resizeContinuousToolbarTable({ state: readonly, dispatch: () => { throw Error('read-only') } }, 2, 2)).toBe(false)
   })
 })

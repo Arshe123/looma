@@ -55,6 +55,7 @@ let pendingConfirmationResolve: ((confirmed: boolean) => void) | null = null
 const DRAFT_RECOVERY_DEBOUNCE_MS = 300
 const draftRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const pendingExternalTextRefreshes = new Set<string>()
+const textFileSaveQueues = new WeakMap<object, Map<string, Promise<unknown>>>()
 let draftRecoveryRevisionCounter = 0
 
 const draftRecoveryKey = (workspaceId: string, relativePath: string) => `${workspaceId}\u0000${relativePath}`
@@ -2561,6 +2562,32 @@ export const useWorkspaceStore = defineStore('workspace', {
     async saveActiveFileContent(content?: string, relativePath?: string) {
       const rel = normalizeDir(relativePath ?? this.activeFileRelativePath)
       const absPath = this.resolveAbsolutePath(rel)
+      if (!absPath || !isSupportedPath(absPath) || !isEditableTextPath(absPath)) return { success: true as const }
+      const workspaceId = this.activeWorkspaceId
+      const requestId = this.openedTextFileContents[rel]?.loadRequestId
+      const key = JSON.stringify([workspaceId, absPath, rel])
+      let queue = textFileSaveQueues.get(this)
+      if (!queue) { queue = new Map(); textFileSaveQueues.set(this, queue) }
+      const previous = queue.get(key)
+      // Publish queued explicit input immediately, but choose the latest live
+      // content/baseline only after the preceding save has fully completed.
+      if (previous && content !== undefined) this.setActiveFileContent(content, rel)
+      const save = async () => {
+        if (this.activeWorkspaceId !== workspaceId || this.resolveAbsolutePath(rel) !== absPath
+          || this.openedTextFileContents[rel]?.loadRequestId !== requestId) {
+          return { success: false as const, error: '笔记已切换或关闭，已取消排队的保存。' }
+        }
+        return this.saveTextFileContentSnapshot(previous ? undefined : content, rel)
+      }
+      const next = previous ? previous.then(save, save) : save()
+      queue.set(key, next)
+      try { return await next }
+      finally { if (queue.get(key) === next) queue.delete(key) }
+    },
+
+    async saveTextFileContentSnapshot(content?: string, relativePath?: string) {
+      const rel = normalizeDir(relativePath ?? this.activeFileRelativePath)
+      const absPath = this.resolveAbsolutePath(rel)
       if (!absPath) return { success: true as const }
       if (!isSupportedPath(absPath)) return { success: true as const }
       if (!isEditableTextPath(absPath)) return { success: true as const } // Don't save media files
@@ -2625,6 +2652,14 @@ export const useWorkspaceStore = defineStore('workspace', {
           )
         : await window.electronAPI.file.writeMarkdown(absPath, next, expectedContent)
       const latestState = this.openedTextFileContents[rel]
+      if (this.activeWorkspaceId !== workspaceId || this.resolveAbsolutePath(rel) !== absPath
+        || latestState?.loadRequestId !== completeState?.loadRequestId) {
+        if (externalRefreshKey) pendingExternalTextRefreshes.delete(externalRefreshKey)
+        if (r.success && workspaceId && savingRevision) {
+          await window.electronAPI.draftRecovery?.remove(workspaceId, rel, savingRevision).catch(() => {})
+        }
+        return r
+      }
       if (!r.success) {
         if (externalRefreshKey) pendingExternalTextRefreshes.delete(externalRefreshKey)
         this.openedTextFileContents[rel] = {

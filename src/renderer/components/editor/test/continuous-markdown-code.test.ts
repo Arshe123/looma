@@ -5,16 +5,17 @@ import { markdown } from '@codemirror/lang-markdown'
 import { buildContinuousCodeDecorations, buildContinuousCodePlan, changeContinuousCodeLanguage, continuousMarkdownCode, readContinuousCodeContent } from '../continuousMarkdownCode'
 import { history, undo } from '@codemirror/commands'
 import type { TransactionSpec } from '@codemirror/state'
+import { parsedMarkdownState } from './parsed-markdown-state'
 
 const mutableView = (doc: string, readOnly = false) => {
   const view = {
-    state: EditorState.create({ doc, extensions: [markdown(), history(), EditorState.readOnly.of(readOnly)] }),
-    dispatch(spec: TransactionSpec) { view.state = view.state.update(spec).state },
+    state: parsedMarkdownState(EditorState.create({ doc, extensions: [markdown(), history(), EditorState.readOnly.of(readOnly)] })),
+    dispatch(spec: TransactionSpec) { view.state = parsedMarkdownState(view.state.update(spec).state) },
   }
   return view
 }
 
-const state = (doc: string) => EditorState.create({ doc, extensions: [markdown()] })
+const state = (doc: string) => parsedMarkdownState(EditorState.create({ doc, extensions: [markdown()] }))
 
 describe('continuous Markdown code', () => {
   it('changes only the language token using the same dispatcher and shared undo history', () => {
@@ -23,7 +24,7 @@ describe('continuous Markdown code', () => {
     const position = source.indexOf('~~~')
     expect(changeContinuousCodeLanguage(view, position, 'python')).toBe(true)
     expect(view.state.doc.toString()).toBe(source.replace('js title', 'python title'))
-    expect(undo({ state: view.state, dispatch: transaction => { view.state = transaction.state } })).toBe(true)
+    expect(undo({ state: view.state, dispatch: transaction => { view.state = parsedMarkdownState(transaction.state) } })).toBe(true)
     expect(view.state.doc.toString()).toBe(source)
     expect(changeContinuousCodeLanguage(mutableView(source, true), position, 'python')).toBe(false)
     expect(changeContinuousCodeLanguage(view, position, '<script>')).toBe(false)
@@ -54,7 +55,7 @@ describe('continuous Markdown code', () => {
 
   it('decorates only fence syntax with an inline toolbar and leaves native code text in place', () => {
     const source = '```js\nconst a = 1\n```'
-    const s = EditorState.create({ doc: source, extensions: [markdown(), continuousMarkdownCode()] })
+    const s = parsedMarkdownState(EditorState.create({ doc: source, extensions: [markdown(), continuousMarkdownCode()] }))
     const decorations = buildContinuousCodeDecorations(s, [{ from: 0, to: s.doc.length }])
     const replacements: { from: number; to: number; widget: boolean }[] = []
     decorations.between(0, s.doc.length, (from, to, decoration) => {

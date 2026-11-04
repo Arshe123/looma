@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { EditorState } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
+import { syntaxTreeAvailable } from '@codemirror/language'
 import { buildContinuousCodeDecorations, updateContinuousCodeHover } from '../continuousMarkdownCode'
 import CodeBlockCopy from '../../shared/CodeBlockCopy.vue'
+import { parsedMarkdownState } from './parsed-markdown-state'
 
 const { render } = vi.hoisted(() => ({ render: vi.fn() }))
 vi.mock('vue', async original => ({ ...await original<typeof import('vue')>(), render }))
@@ -20,9 +22,27 @@ function element() {
 }
 
 describe('shared code presentation adapters', () => {
+  it('publishes the completed tree after the initial parse budget expires', () => {
+    let clock = 0
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock += 100)
+    let state: EditorState
+    try {
+      state = EditorState.create({ doc: 'before\n\n```js\na\n\nb\n```', extensions: [markdown()] })
+    } finally { now.mockRestore() }
+    const numbers = (state: EditorState) => {
+      const lines: number[] = []
+      buildContinuousCodeDecorations(state, [{ from: 0, to: state.doc.length }]).between(0, state.doc.length, (from, to, decoration) => {
+        if (from === to && decoration.spec.widget) lines.push(state.doc.lineAt(from).number)
+      })
+      return lines
+    }
+    expect(syntaxTreeAvailable(state, state.doc.length)).toBe(false)
+    expect(numbers(state)).toEqual([])
+    expect(numbers(parsedMarkdownState(state))).toEqual([4, 5, 6])
+  })
   it('adds display-only absolute source numbers on code content, not fences, within visible lines', () => {
     const source = 'before\n\n```js\na\n\nb\n```'
-    const state = EditorState.create({ doc: source, extensions: [markdown()] })
+    const state = parsedMarkdownState(EditorState.create({ doc: source, extensions: [markdown()] }))
     const collect = (from: number, to: number) => {
       const numbers: number[] = []
       buildContinuousCodeDecorations(state, [{ from, to }]).between(0, state.doc.length, (at, end, decoration) => {
@@ -41,7 +61,7 @@ describe('shared code presentation adapters', () => {
     expect(state.doc.toString()).toBe(source)
   })
   it('keeps the language selector hidden until badge right-click or keyboard disclosure, including read-only copy', () => {
-    const state = EditorState.create({ doc: '```js\na\n```', extensions: [markdown(), EditorState.readOnly.of(true)] })
+    const state = parsedMarkdownState(EditorState.create({ doc: '```js\na\n```', extensions: [markdown(), EditorState.readOnly.of(true)] }))
     let widget: any
     buildContinuousCodeDecorations(state, [{ from: 0, to: state.doc.length }]).between(0, state.doc.length, (from, to, d) => {
       if (d.spec.widget && from < to) widget = d.spec.widget
@@ -83,7 +103,7 @@ describe('shared code presentation adapters', () => {
   })
 
   it('does not collapse a pathological info line that still contains editable source', () => {
-    const state = EditorState.create({ doc: '```' + 'x'.repeat(20_000) + '\nbody\n```', extensions: [markdown()] })
+    const state = parsedMarkdownState(EditorState.create({ doc: '```' + 'x'.repeat(20_000) + '\nbody\n```', extensions: [markdown()] }))
     const decorations = buildContinuousCodeDecorations(state, [{ from: 0, to: 200 }])
     const classes: string[] = []
     decorations.between(0, 200, (_from, _to, decoration) => { if (decoration.spec.class) classes.push(decoration.spec.class) })
@@ -91,7 +111,7 @@ describe('shared code presentation adapters', () => {
   })
 
   it('adds a contiguous shell only on visible native source lines with real start/end boundaries', () => {
-    const state = EditorState.create({ doc: 'before\n\n```js\na\nb\n```\n\nafter', extensions: [markdown()] })
+    const state = parsedMarkdownState(EditorState.create({ doc: 'before\n\n```js\na\nb\n```\n\nafter', extensions: [markdown()] }))
     const lines = (ranges: { from: number; to: number }[]) => {
       const result: [number, string][] = []
       buildContinuousCodeDecorations(state, ranges).between(0, state.doc.length, (from, _to, decoration) => {
@@ -111,7 +131,7 @@ describe('shared code presentation adapters', () => {
   it('mounts the shared copy component outside editor updates, resolves live positions and unmounts on widget destroy', async () => {
     render.mockClear()
     const original = '```js\nconst a = 1\n```'
-    const state = EditorState.create({ doc: original, extensions: [markdown()] })
+    const state = parsedMarkdownState(EditorState.create({ doc: original, extensions: [markdown()] }))
     const decorations = buildContinuousCodeDecorations(state, [{ from: 0, to: state.doc.length }])
     let widget: any
     decorations.between(0, state.doc.length, (from, to, decoration) => { if (decoration.spec.widget && from < to) widget = decoration.spec.widget })
@@ -125,7 +145,7 @@ describe('shared code presentation adapters', () => {
     const [vnode, host] = render.mock.calls[0]
     expect(vnode.type).toBe(CodeBlockCopy)
     expect(vnode.props.language).toBe('js')
-    view.state = state.update({ changes: { from: 0, insert: 'before\n\n' } }).state
+    view.state = parsedMarkdownState(state.update({ changes: { from: 0, insert: 'before\n\n' } }).state)
     view.posAtDOM.mockReturnValue(8)
     expect(vnode.props.getText()).toBe('const a = 1\n')
     expect(view.posAtDOM).toHaveBeenCalledWith(root)

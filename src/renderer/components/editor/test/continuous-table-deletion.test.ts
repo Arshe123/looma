@@ -3,15 +3,18 @@ import { EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import { getContinuousTableContext, handleContinuousTableDelete } from '../continuousMarkdownTable'
+import { parsedMarkdownState } from './parsed-markdown-state'
 
 function fixture(marked: string, readOnly = false, parsed = true) {
   const anchor = marked.indexOf('¦'), source = marked.replace('¦', '')
   let state = EditorState.create({ doc: source, selection: { anchor }, extensions: [
     ...(parsed ? [markdown({ base: markdownLanguage })] : []), EditorState.readOnly.of(readOnly),
   ] })
+  if (parsed) state = parsedMarkdownState(state)
   const transactions: TransactionSpec[] = []
   const view = { get state() { return state }, dispatch(spec: TransactionSpec) {
     transactions.push(spec); state = state.update(spec).state
+    if (parsed) state = parsedMarkdownState(state)
   } } as Pick<EditorView, 'state' | 'dispatch'>
   return { view, transactions, source, text: () => state.doc.toString(),
     marked: () => state.sliceDoc(0, state.selection.main.head) + '¦' + state.sliceDoc(state.selection.main.head) }

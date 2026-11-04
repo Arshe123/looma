@@ -6,17 +6,19 @@ import { describe, expect, it, vi } from 'vitest'
 import { getInlineMarkdownSpans } from '@/shared/utils/tiptap-inline-markdown'
 import { continuousMarkdownSyntax } from '../continuousMarkdownSyntax'
 import { runContinuousMarkdownCommand, adjustContinuousHeading } from '../continuousMarkdownCommands'
+import { parsedMarkdownState } from './parsed-markdown-state'
 
 function editor(source: string, anchor = 0, head = anchor, readOnly = false) {
   let state = EditorState.create({ doc: source, selection: { anchor, head }, extensions: [
     markdown({ base: markdownLanguage, extensions: [continuousMarkdownSyntax] }), EditorState.readOnly.of(readOnly),
   ] })
+  state = parsedMarkdownState(state)
   const transactions: TransactionSpec[] = []
   const view: Pick<EditorView, 'state' | 'dispatch'> = {
     get state() { return state },
     dispatch: ((spec: TransactionSpec) => {
       transactions.push(spec)
-      state = state.update(spec).state
+      state = parsedMarkdownState(state.update(spec).state)
     }) as EditorView['dispatch'],
   }
   return { view, transactions, text: () => state.doc.toString(), selection: () => state.selection.main,

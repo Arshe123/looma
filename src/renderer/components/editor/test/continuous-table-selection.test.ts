@@ -2,13 +2,14 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { EditorState, type TransactionSpec } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import type { EditorView } from '@codemirror/view'
+import { parsedMarkdownState } from './parsed-markdown-state'
 import { continuousTableSelectionState, selectContinuousTableRectangle, getContinuousTableSelection, replaceContinuousTableSelection, readContinuousTableSelection, pasteContinuousTableSelection } from '../continuousMarkdownTableSelection'
 
 const source = '| A | B | C |\n| --- | --- | --- |\n| d | e | f |\n| g | h | i |'
 function fixture(text = source, readOnly = false) {
-  let state = EditorState.create({ doc: text, extensions: [markdown({ base: markdownLanguage }), continuousTableSelectionState, EditorState.readOnly.of(readOnly)] })
+  let state = parsedMarkdownState(EditorState.create({ doc: text, extensions: [markdown({ base: markdownLanguage }), continuousTableSelectionState, EditorState.readOnly.of(readOnly)] }))
   const transactions: TransactionSpec[] = []
-  const view = { get state() { return state }, dispatch(spec: TransactionSpec) { transactions.push(spec); state = state.update(spec).state } } as Pick<EditorView, 'state' | 'dispatch'>
+  const view = { get state() { return state }, dispatch(spec: TransactionSpec) { transactions.push(spec); state = parsedMarkdownState(state.update(spec).state) } } as Pick<EditorView, 'state' | 'dispatch'>
   return { view, transactions, text: () => state.doc.toString() }
 }
 describe('source-backed rectangular table selection', () => {

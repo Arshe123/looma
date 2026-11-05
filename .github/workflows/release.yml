@@ -153,6 +153,8 @@ jobs:
           else
             echo '::warning::Strict distribution signing is disabled; artifacts are not certified as signed/notarized.'
           fi
+          # An empty CSC_LINK is treated as a certificate path, not an absent secret.
+          if [[ -z "$CSC_LINK" ]]; then unset CSC_LINK; fi
           npm run "$BUILD_SCRIPT" -- --publish never "--$BUILD_ARCH" ${options[@]+"${options[@]}"}
       - name: Verify packaged architecture, sidecar and signing policy
         env:

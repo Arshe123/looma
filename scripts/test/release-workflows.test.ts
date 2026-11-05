@@ -192,7 +192,7 @@ describe('GitHub workflow safety contract', () => {
     // so this test checks exact arguments without building or publishing an installer.
     return spawnSync(process.platform === 'darwin' ? '/bin/bash' : 'bash', [
       '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c',
-      `npm() { printf 'ARG:%s\\n' "$@"; }\n${step.run}`,
+      `npm() { printf 'ARG:%s\\n' "$@"; printf 'CERT:%s\\n' "\${CSC_LINK-<unset>}"; }\n${step.run}`,
     ], {
       encoding: 'utf8', timeout: 10_000,
       env: { ...process.env,
@@ -215,10 +215,19 @@ describe('GitHub workflow safety contract', () => {
     expect(result.error).toBeUndefined()
     expect(result.stderr).toBe('')
     expect(result.status).toBe(0)
+    expect(result.stdout).toContain('CERT:test-fixture\n')
     expect(result.stdout.split('\n').filter(line => line.startsWith('ARG:')).map(line => line.slice(4))).toEqual([
       'run', platform === 'darwin' ? 'make:mac' : 'make:win', '--', '--publish', 'never',
       platform === 'darwin' ? '--arm64' : '--x64', ...options,
     ])
+  })
+  it.each(['darwin', 'win32'])('unsets an empty certificate secret before invoking the %s packager', platform => {
+    const result = runInstallerShell(platform, '', { CSC_LINK: '', CSC_KEY_PASSWORD: '' })
+    expect(result.error).toBeUndefined()
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('CERT:<unset>\n')
+    expect(result.stdout).toContain('ARG:never\n')
   })
   it.each([
     ['darwin', { CSC_LINK: '' }],

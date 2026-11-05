@@ -4,7 +4,7 @@
 
 - `.github/workflows/ci.yml`：PR 到 main、push main，以及手动运行；只验证，不发布、不读取签名 secrets。
 - `.github/workflows/release.yml`：push 裸版本 tag，例如 `1.6.1`；不接受 `v1.6.1`、预发布版本。发布仅在 `Arshe123/looma` 执行。
-- Windows x64 使用 `windows-2022`；macOS arm64 使用 `macos-15`。不使用会迁移的 `latest` 标签，也不把 x64 仿真计作 arm64 构建。
+- Windows x64 使用 `windows-2022`；macOS arm64 使用标准镜像 `macos-26`。不使用会迁移的 `latest` 标签，不自动切换收费的 `-large` / `-xlarge` runner，也不把 x64 仿真计作 arm64 构建。
 - Node 固定 `22.23.4`，uv 固定 `0.11.21`，Python 使用原生 `3.12`。工作流中的第三方 Actions 全部固定到经官方仓库核对的完整 commit SHA。
 - CI 的成功不代表原生微软拼音、剪贴板、安装/卸载或 Gatekeeper 已人工验收；自动化结果与平台手工验收分开报告。
 
@@ -65,6 +65,8 @@ git push origin 1.6.1
 - 重跑已有草稿时只补缺少的附件；同名附件 hash 不同、出现额外附件、服务器缺少 SHA256 digest、tag 指向变化或该版本已经公开，都会失败关闭，不覆盖已发布附件。
 - 若草稿内已有错误附件，先核对日志及对应提交，再由有权限的操作者处理草稿；不要移动已公开 tag 来重发不同源码。已公开版本应修复后升新版本。
 - 本地 Windows 无法证明 macOS runner 构建成功；首次真实 GitHub run、签名/公证和安装版原生交互验收应分别确认。
+- 若任务在执行任何步骤前被取消，并出现 `The job was not acquired by Runner of type hosted even after multiple attempts`，应先查看 annotations 是否提示托管 runner 容量不足；这不是应用测试失败，增加 job 的执行超时也不能解决分配阶段的取消。可以尝试另一官方标准原生 arm64 镜像，但仍须等待云端实测，不能保证更换标签一定消除平台容量限制。
+- 旧 run 的 Re-run 会使用该 run 原来的提交和工作流；仅修改 main 不会更新已有 `1.6.1` tag 中的配置。不要盲目重复旧 run 或强行移动 tag，先确认旧版本的受控重试方案。
 
 ## 本地检查
 

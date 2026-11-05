@@ -28,7 +28,7 @@ jobs:
             platform: win32
             arch: x64
           - id: macos-arm64
-            runner: macos-15
+            runner: macos-26
             platform: darwin
             arch: arm64
     defaults:

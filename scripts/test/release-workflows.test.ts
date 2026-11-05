@@ -82,9 +82,12 @@ describe('GitHub workflow safety contract', () => {
   it('uses native runner pairs and identical toolchain pins', () => {
     expect(ci.jobs.verify.strategy.matrix.include).toEqual([
       { id: 'windows-x64', runner: 'windows-2022', platform: 'win32', arch: 'x64' },
-      { id: 'macos-arm64', runner: 'macos-15', platform: 'darwin', arch: 'arm64' },
+      { id: 'macos-arm64', runner: 'macos-26', platform: 'darwin', arch: 'arm64' },
     ])
     for (const job of [ci.jobs.verify, release.jobs.build]) {
+      const mac = job.strategy.matrix.include.find((target: any) => target.id === 'macos-arm64')
+      expect(mac).toMatchObject({ runner: 'macos-26', platform: 'darwin', arch: 'arm64' })
+      expect(mac.runner).not.toMatch(/-(?:large|xlarge|intel)$/)
       const node = job.steps.find((step: any) => step.uses?.startsWith('actions/setup-node@'))
       const uv = job.steps.find((step: any) => step.uses?.startsWith('astral-sh/setup-uv@'))
       expect(node.with['node-version']).toBe('22.23.4')

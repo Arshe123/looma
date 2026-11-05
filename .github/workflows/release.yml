@@ -51,7 +51,7 @@ jobs:
             certificate: WIN_CSC_LINK
             certificate_password: WIN_CSC_KEY_PASSWORD
           - id: macos-arm64
-            runner: macos-15
+            runner: macos-26
             platform: darwin
             arch: arm64
             script: make:mac

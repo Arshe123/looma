@@ -107,7 +107,9 @@ export const useSettingsStore = defineStore('settings', {
     async persist(patch: unknown) {
       this.lastError = ''
       try {
-        const result = await window.electronAPI?.appSettings?.patch?.(patch)
+        // Settings are JSON data; strip nested Vue proxies before crossing IPC.
+        const plainPatch = JSON.parse(JSON.stringify(patch))
+        const result = await window.electronAPI?.appSettings?.patch?.(plainPatch)
         if (!result?.success || !result.data) throw new Error(result?.error || '保存系统设置失败')
         this.acceptSettings(result.data, result.revision)
       } catch (error) {

@@ -186,4 +186,49 @@ describe('GitHub workflow safety contract', () => {
     expect(steps.findIndex((step: any) => step.run?.includes('release-artifacts.mjs verify')))
       .toBeLessThan(steps.findIndex((step: any) => step.run?.includes('publish-release.mjs')))
   })
+  const runInstallerShell = (platform: string, signing: string, credentials = {}) => {
+    const step = release.jobs.build.steps.find((step: any) => step.name === 'Build native installer without publishing')
+    // Run the real workflow shell (system Bash 3.2 on macOS), replacing only npm
+    // so this test checks exact arguments without building or publishing an installer.
+    return spawnSync(process.platform === 'darwin' ? '/bin/bash' : 'bash', [
+      '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c',
+      `npm() { printf 'ARG:%s\\n' "$@"; }\n${step.run}`,
+    ], {
+      encoding: 'utf8', timeout: 10_000,
+      env: { ...process.env,
+        BUILD_SCRIPT: platform === 'darwin' ? 'make:mac' : 'make:win',
+        BUILD_PLATFORM: platform, BUILD_ARCH: platform === 'darwin' ? 'arm64' : 'x64',
+        REQUIRE_SIGNING: signing,
+        CSC_LINK: 'test-fixture', CSC_KEY_PASSWORD: 'test-fixture',
+        APPLE_ID: 'test-fixture', APPLE_APP_SPECIFIC_PASSWORD: 'test-fixture', APPLE_TEAM_ID: 'test-fixture',
+        ...credentials,
+      },
+    })
+  }
+  it.each([
+    ['darwin', '', []],
+    ['win32', '', []],
+    ['darwin', 'true', ['--config.forceCodeSigning=true', '--config.mac.notarize=true']],
+    ['win32', 'true', ['--config.forceCodeSigning=true']],
+  ])('executes installer shell for %s with signing=%s without adding empty arguments', (platform, signing, options) => {
+    const result = runInstallerShell(platform as string, signing as string)
+    expect(result.error).toBeUndefined()
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(0)
+    expect(result.stdout.split('\n').filter(line => line.startsWith('ARG:')).map(line => line.slice(4))).toEqual([
+      'run', platform === 'darwin' ? 'make:mac' : 'make:win', '--', '--publish', 'never',
+      platform === 'darwin' ? '--arm64' : '--x64', ...options,
+    ])
+  })
+  it.each([
+    ['darwin', { CSC_LINK: '' }],
+    ['win32', { CSC_KEY_PASSWORD: '' }],
+    ['darwin', { APPLE_TEAM_ID: '' }],
+  ])('does not invoke npm when strict signing credentials are missing for %s: %j', (platform, credentials) => {
+    const result = runInstallerShell(platform, 'true', credentials)
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(1)
+    expect(result.stdout).toContain('::error::')
+    expect(result.stdout).not.toContain('ARG:')
+  })
 })

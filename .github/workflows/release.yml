@@ -153,7 +153,7 @@ jobs:
           else
             echo '::warning::Strict distribution signing is disabled; artifacts are not certified as signed/notarized.'
           fi
-          npm run "$BUILD_SCRIPT" -- --publish never "--$BUILD_ARCH" "${options[@]}"
+          npm run "$BUILD_SCRIPT" -- --publish never "--$BUILD_ARCH" ${options[@]+"${options[@]}"}
       - name: Verify packaged architecture, sidecar and signing policy
         env:
           REQUIRE_SIGNING: ${{ vars.REQUIRE_SIGNING }}

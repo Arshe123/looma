@@ -53,7 +53,7 @@ const renderer = createRenderer<HostNode, HostNode>({
   nextSibling: target => target.parent?.children[target.parent.children.indexOf(target) + 1] ?? null,
 })
 const all = (target: HostNode): HostNode[] => [target, ...target.children.flatMap(all)]
-const text = (target: HostNode): string => target.text + target.children.map(text).join('')
+const text = (target: HostNode): string => target.tag === '#comment' ? '' : target.text + target.children.map(text).join('')
 
 beforeEach(() => {
   setActivePinia(createPinia())

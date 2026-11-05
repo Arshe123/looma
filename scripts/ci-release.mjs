@@ -14,7 +14,7 @@ export function validateVersion({ version, lockVersion, lockRootVersion, changeL
     throw new Error('package.json and both package-lock.json versions must match')
   }
   if (tag !== undefined && tag !== version) throw new Error('Tag must exactly match package.json version (without v)')
-  const heading = new RegExp(`^##[ \\t]+${version.replaceAll('.', '\\.')}[ \\t]*\\r?$`, 'm')
+  const heading = new RegExp(`^##[ \\t]+${version.replaceAll('.', '\\.')}(?:[ \\t]+\\d{4}-\\d{1,2}-\\d{1,2})?[ \\t]*\\r?$`, 'm')
   if (!heading.test(changeLog)) throw new Error(`Missing changeLog.md section for ${version}`)
   return version
 }

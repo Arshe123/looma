@@ -16,6 +16,12 @@ describe('release version gates', () => {
   it('accepts matching stable metadata and CRLF notes', () => {
     expect(validateVersion({ ...metadata, changeLog: metadata.changeLog.replaceAll('\n', '\r\n') })).toBe('1.6.1')
   })
+  it.each(['2026-11-05', '2026-9-3'])('accepts a version heading with date %s in LF and CRLF notes', date => {
+    const changeLog = `## 1.6.1 ${date}\n\n测试版本\n`
+    for (const notes of [changeLog, changeLog.replaceAll('\n', '\r\n')]) {
+      expect(validateVersion({ ...metadata, changeLog: notes })).toBe('1.6.1')
+    }
+  })
   it.each(['v1.6.1', '1.6.1-beta', '01.6.1', '1.6.1\nmalicious', '1.6'])('rejects unsupported version %s', version => {
     expect(() => validateVersion({ ...metadata, version })).toThrow()
   })
@@ -24,6 +30,9 @@ describe('release version gates', () => {
   })
   it('does not accept the notes of a different or prefix-matching version', () => {
     expect(() => validateVersion({ ...metadata, changeLog: '## 1.6.10\nother release' })).toThrow()
+  })
+  it.each(['1.6.10 2026-11-05', '1.6.1-beta 2026-11-05', '1.6.1 extra', '1.6.1 2026-11-05 extra'])('rejects an inexact version heading %s', heading => {
+    expect(() => validateVersion({ ...metadata, changeLog: `## ${heading}\n测试版本\n` })).toThrow(/Missing changeLog/)
   })
 })
 

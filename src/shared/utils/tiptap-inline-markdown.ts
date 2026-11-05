@@ -5,36 +5,12 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey, TextSelection, type EditorState } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { isInternalNoteHref } from './note-link-ref'
+import { markdownInlineExtensions } from './markdown-inline-grammar'
 
 // An independent lexer: the editor's MarkdownManager registers tokenizers on
 // its own instance. Re-entering that instance here would recurse.
 const inlineLexer = new Marked({ gfm: true })
-inlineLexer.use({ extensions: [
-  {
-    name: 'highlight', level: 'inline', start: src => src.indexOf('=='),
-    tokenizer(src) {
-      // Same extension grammar as @tiptap/extension-highlight, without trimming
-      // its source offsets. Standard Markdown is delegated to marked below.
-      const match = /^(==)([^=]+)(==)/.exec(src)
-      if (!match) return undefined
-      return { type: 'highlight', raw: match[0], text: match[2], tokens: this.lexer.inlineTokens(match[2]) }
-    },
-  },
-  {
-    name: 'strong', level: 'inline', start: src => src.indexOf('**'),
-    tokenizer(src) {
-      // Looma's punctuation-boundary strong extension (markdown-rich-text).
-      // Do not let the extension consume a closing triple delimiter as a pair.
-      if (!src.startsWith('**') || src.startsWith('***')) return undefined
-      const end = src.indexOf('**', 2)
-      if (end <= 2 || src[end - 1] === '\\' || src[end + 2] === '*') return undefined
-      const text = src.slice(2, end)
-      const characters = Array.from(text)
-      if (!/[\p{P}\p{S}]/u.test(characters[0]) && !/[\p{P}\p{S}]/u.test(characters[characters.length - 1])) return undefined
-      return { type: 'strong', raw: src.slice(0, end + 2), text, tokens: this.lexer.inlineTokens(text) }
-    },
-  },
-] })
+inlineLexer.use({ extensions: markdownInlineExtensions })
 
 export type InlineMarkdownFormat = 'bold' | 'italic' | 'strike' | 'inlineCode' | 'highlight'
 export type InlineMarkdownSpan = {

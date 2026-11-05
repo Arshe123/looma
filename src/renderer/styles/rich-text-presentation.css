@@ -1,4 +1,83 @@
 /* Shared visual presentation. Source positions and editable DOM remain engine-owned. */
+/* Basic prose is shared with read-only AI, not editor layout or interactions.
+   The two-class root beats lazy github-markdown-css without touching popovers. */
+:is(.tiptap.markdown-body, .ai-markdown) p {
+  margin-top: 0;
+  margin-bottom: 0.6em;
+}
+
+:is(.tiptap.markdown-body, .ai-markdown) :is(h1, h2, h3, h4, h5, h6) {
+  margin: var(--markdown-heading-margin, 1.5rem 0 1rem);
+  color: inherit;
+  font-weight: 600;
+  line-height: 1.25;
+}
+:is(.tiptap.markdown-body, .ai-markdown) h1 { font-size: var(--markdown-h1-size, 2em); }
+:is(.tiptap.markdown-body, .ai-markdown) h2 { font-size: var(--markdown-h2-size, 1.5em); }
+:is(.tiptap.markdown-body, .ai-markdown) h3 { font-size: var(--markdown-h3-size, 1.25em); }
+:is(.tiptap.markdown-body, .ai-markdown) h4 { font-size: 1em; }
+:is(.tiptap.markdown-body, .ai-markdown) h5 { font-size: var(--markdown-h5-size, 0.875em); }
+:is(.tiptap.markdown-body, .ai-markdown) h6 { font-size: var(--markdown-h6-size, 0.85em); color: var(--text-muted); }
+
+:is(.tiptap.markdown-body, .ai-markdown) ul {
+  list-style-type: disc;
+  padding-left: 1.5rem;
+  margin: 0.5em 0;
+}
+:is(.tiptap.markdown-body, .ai-markdown) ul ul { list-style-type: circle; }
+:is(.tiptap.markdown-body, .ai-markdown) ul ul ul { list-style-type: square; }
+:is(.tiptap.markdown-body, .ai-markdown) ol {
+  list-style-type: decimal;
+  padding-left: 1.5rem;
+  margin: 0.5em 0;
+}
+:is(.tiptap.markdown-body, .ai-markdown) ol ol { list-style-type: lower-alpha; }
+:is(.tiptap.markdown-body, .ai-markdown) ol ol ol { list-style-type: lower-roman; }
+:is(.tiptap.markdown-body, .ai-markdown) li { display: list-item; }
+:is(.tiptap.markdown-body, .ai-markdown) li + li { margin-top: 0.25em; }
+:is(.tiptap.markdown-body, .ai-markdown) li p { margin: 0; }
+
+:is(.tiptap.markdown-body, .ai-markdown) blockquote {
+  margin: 0 0 1rem;
+  padding: 0 1em;
+  color: var(--text-muted);
+  border-left: 0.25em solid var(--border-soft);
+}
+:is(.tiptap.markdown-body, .ai-markdown) blockquote > :last-child { margin-bottom: 0; }
+
+:is(.tiptap.markdown-body, .ai-markdown) :not(pre) > code {
+  padding: 0.2em 0.4em;
+  margin: 0;
+  border-radius: 6px;
+  color: inherit;
+  background-color: var(--panel-soft);
+  font-family: var(--font-code);
+  font-size: 85%;
+  white-space: break-spaces;
+}
+:is(.tiptap.markdown-body, .ai-markdown) mark {
+  color: var(--text-main);
+  background-color: color-mix(in srgb, var(--warning) 24%, var(--surface));
+}
+:is(.tiptap.markdown-body, .ai-markdown) a { color: var(--accent); }
+:is(.tiptap.markdown-body, .ai-markdown) a:any-link {
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+:is(.tiptap.markdown-body, .ai-markdown) a.looma-note-ref { border-bottom-style: dotted; }
+:is(.tiptap.markdown-body, .ai-markdown) .looma-link-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  vertical-align: -0.13em;
+  color: var(--accent);
+  pointer-events: none;
+}
+:is(.tiptap.markdown-body, .ai-markdown) .looma-link-icon svg { width: 100%; height: 100%; }
+
 .tiptap-preview-container .looma-line-number,
 .chunked-markdown-editor:not(.chunked-source-only) .looma-code-line .looma-line-number,
 .chunked-markdown-editor:not(.chunked-source-only) .cm-lineNumbers .cm-gutterElement {
@@ -46,6 +125,8 @@
 .tiptap-preview-container .tiptap table th,
 .markdown-body.markdown-body table td,
 .markdown-body.markdown-body table th,
+.ai-markdown table td,
+.ai-markdown table th,
 .chunked-markdown-editor:not(.chunked-source-only) .looma-continuous-table-cell {
   min-width: 7.5rem;
   border: 1px solid var(--border-soft);
@@ -58,6 +139,7 @@
 }
 
 .tiptap-preview-container .tiptap table th,
+.ai-markdown table th,
 .chunked-markdown-editor:not(.chunked-source-only) .looma-continuous-table-header .looma-continuous-table-cell {
   font-weight: bold;
   text-align: left;

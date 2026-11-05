@@ -23,7 +23,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { Markdown } from '@tiptap/markdown'
-import { common, createLowlight } from 'lowlight'
+import { getCodeHighlightSegments } from '@/shared/utils/markdown-code-highlight'
 import 'github-markdown-css/github-markdown-light.css'
 import InlineMenu from './InlineMenu.vue'
 import ContextMenu from './ContextMenu.vue'
@@ -123,38 +123,12 @@ const previewContainerRef = shallowRef<HTMLElement | null>(null)
 const dropErrorMessage = shallowRef('')
 const dropTechnicalDetail = shallowRef('')
 
-const lowlight = createLowlight(common)
 const PREVIEW_IMAGE_SETTLED_EVENT = 'looma:preview-image-settled'
 const HEADING_REANCHOR_WINDOW_MS = 1000
 const MARKDOWN_EMIT_DEBOUNCE_MS = 150
 const AUTOSAVE_DEBOUNCE_MS = 1000
 const CODE_HIGHLIGHT_IDLE_MS = 300
 const deferredLowlightKey = new PluginKey('loomaDeferredLowlight')
-
-type HighlightNode = {
-  value?: string
-  children?: HighlightNode[]
-  properties?: {
-    className?: string[]
-  }
-}
-
-type ParsedHighlightText = {
-  text: string
-  classes: string[]
-}
-
-const parseHighlightNodes = (nodes: HighlightNode[], className: string[] = []): ParsedHighlightText[] =>
-  nodes.flatMap((node) => {
-    const classes = [...className, ...(node.properties?.className || [])]
-    if (node.children) return parseHighlightNodes(node.children, classes)
-    return {
-      text: node.value || '',
-      classes,
-    }
-  })
-
-const getHighlightNodes = (result: any): HighlightNode[] => result.value || result.children || []
 
 const getCodeBlockDecorations = ({
   doc,
@@ -166,16 +140,12 @@ const getCodeBlockDecorations = ({
   defaultLanguage?: string | null
 }) => {
   const decorations: Decoration[] = []
-  const languages = lowlight.listLanguages()
 
   findChildren(doc, node => node.type.name === name).forEach((block) => {
     let from = block.pos + 1
     const language = block.node.attrs.language || defaultLanguage
-    const highlightedNodes = language && (languages.includes(language) || lowlight.registered?.(language))
-      ? getHighlightNodes(lowlight.highlight(language, block.node.textContent))
-      : getHighlightNodes(lowlight.highlightAuto(block.node.textContent))
 
-    parseHighlightNodes(highlightedNodes).forEach((node) => {
+    getCodeHighlightSegments(block.node.textContent, language).forEach((node) => {
       const to = from + node.text.length
       if (node.classes.length) {
         decorations.push(Decoration.inline(from, to, { class: node.classes.join(' ') }))

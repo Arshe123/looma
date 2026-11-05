@@ -2,7 +2,14 @@ import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
 import { isInternalNoteHref } from './note-link-ref'
 import { normalizeMarkdownNoteLinks } from './markdown-note-links'
+import { matchMarkdownHighlight, matchMarkdownPunctuationStrong } from './markdown-inline-grammar'
+import type { CodeHighlightSegment } from './markdown-code-highlight'
 import { findMarkdownNoteTitle, readMarkdownNoteStats, noteStatsLabel } from './note-reading-time'
+
+export type MarkdownRenderOptions = {
+  codeBlockCopy?: boolean
+  highlightCode?: (source: string, language: string) => CodeHighlightSegment[]
+}
 
 const markdown = new MarkdownIt({
   html: false,
@@ -21,97 +28,29 @@ markdown.use(taskLists, {
   labelAfter: true,
 })
 
-// 任何 Unicode 标点/符号,出现在 ** 开标记右侧或闭标记左侧时会让 CommonMark emphasis 判定失败。
-// 中文写作里既会用到 CJK 标点(“”（），。),也会用到英文标点(" ' ( ) , . : ; ! ?),
-// 因此这里使用 \p{P} (标点) + \p{S} (符号) 完整覆盖,不再局限于 CJK 范围。
-const isBoundaryPunctCp = (cp: number): boolean =>
-  /[\p{P}\p{S}]/u.test(String.fromCodePoint(cp))
-
-const isPunctCharCp = (cp: number): boolean =>
-  markdown.utils.isPunctChar(String.fromCodePoint(cp))
-
-const isWhiteSpaceCp = (cp: number): boolean => markdown.utils.isWhiteSpace(cp)
-
-/**
- * CommonMark 规定 ** 开标记右侧 / 闭标记左侧紧邻标点时不视为 emphasis 分隔符。
- * 中英文混排里 bold 内侧紧邻 “”""（）(),.:;!? 等标点极常见,导致 AI 输出/笔记里
- * `**...）**`、`**"..."**`、`**bold.**` 被原样渲染成 `**...**`。
- *
- * 该规则在默认 emphasis 之前运行：仅当默认判定失败、且失败原因仅是
- * 开标记右侧 / 闭标记左侧是标点/符号时,接管并生成 strong token。
- * 默认能解析的样本（含英文 bold、嵌套 bold、italic）一律放行，不重复消费。
- */
-const strongCjkFixRule = (state: any, silent: boolean): boolean => {
-  const start = state.pos
-  if (state.src.charCodeAt(start) !== 0x2a || state.src.charCodeAt(start + 1) !== 0x2a) {
-    return false
-  }
-  // 反斜杠转义的 \** 不处理
-  if (start > 0 && state.src.charCodeAt(start - 1) === 0x5c) return false
-
-  let pos = start + 2
-  // eslint-disable-next-line no-cond-assign
-  while ((pos = state.src.indexOf('**', pos)) !== -1) {
-    if (pos === start + 2) {
-      pos += 2
-      continue
-    }
-
-    const beforeOpenCp = start > 0 ? state.src.codePointAt(start - 1)! : 0x20
-    const afterOpenCp = state.src.codePointAt(start + 2) ?? 0x20
-    const beforeCloseCp = state.src.codePointAt(pos - 1) ?? 0x20
-    const afterCloseCp = pos + 2 < state.src.length ? state.src.codePointAt(pos + 2)! : 0x20
-
-    const beforeOpenOk = !isWhiteSpaceCp(beforeOpenCp) && !isPunctCharCp(beforeOpenCp)
-    const afterCloseOk = !isWhiteSpaceCp(afterCloseCp) && !isPunctCharCp(afterCloseCp)
-
-    // CommonMark 默认失败的两种情形：开右侧是标点且左侧是文字，或闭左侧是标点且右侧是文字
-    const defaultOpenFails = isPunctCharCp(afterOpenCp) && beforeOpenOk
-    const defaultCloseFails = isPunctCharCp(beforeCloseCp) && afterCloseOk
-
-    // 默认能成功的情形不接管，避免与默认 emphasis 冲突
-    if (!defaultOpenFails && !defaultCloseFails) return false
-
-    // 接管条件: 默认失败仅因为对应位置是标点/符号 (含中英文标点)
-    const fixOpen = defaultOpenFails && isBoundaryPunctCp(afterOpenCp)
-    const fixClose = defaultCloseFails && isBoundaryPunctCp(beforeCloseCp)
-
-    if (!fixOpen && !fixClose) {
-      pos += 2
-      continue
-    }
-
+// Engine adapter only: matching is shared with the editable inline lexer.
+// Keep the same state for reference links and delimiter post-processing.
+const inlineExtensionRule = (match: typeof matchMarkdownHighlight, tag: string, type: string) =>
+  (state: any, silent: boolean): boolean => {
+    if (state.level >= state.md.options.maxNesting) return false
+    const start = state.pos
+    const max = state.posMax
+    const result = match(state.src, start, max)
+    if (!result) return false
     if (!silent) {
-      state.push('strong_open', 'strong', 1)
-      const text = state.push('text', '', 0)
-      text.content = state.src.slice(start + 2, pos)
-      state.push('strong_close', 'strong', -1)
+      state.push(`${type}_open`, tag, 1)
+      state.pos = start + 2
+      state.posMax = start + result.raw.length - 2
+      state.md.inline.tokenize(state)
+      state.push(`${type}_close`, tag, -1)
     }
-    state.pos = pos + 2
+    state.pos = start + result.raw.length
+    state.posMax = max
     return true
   }
-  return false
-}
 
-markdown.inline.ruler.before('emphasis', 'strong_cjk_fix', strongCjkFixRule)
-
-const highlightRule = (state: any, silent: boolean) => {
-  const start = state.pos
-  if (state.src.slice(start, start + 2) !== '==') return false
-  const end = state.src.indexOf('==', start + 2)
-  if (end <= start + 2) return false
-
-  if (!silent) {
-    state.push('mark_open', 'mark', 1)
-    const text = state.push('text', '', 0)
-    text.content = state.src.slice(start + 2, end)
-    state.push('mark_close', 'mark', -1)
-  }
-  state.pos = end + 2
-  return true
-}
-
-markdown.inline.ruler.before('emphasis', 'highlight', highlightRule)
+markdown.inline.ruler.before('emphasis', 'strong_cjk_fix', inlineExtensionRule(matchMarkdownPunctuationStrong, 'strong', 'strong'))
+markdown.inline.ruler.before('emphasis', 'highlight', inlineExtensionRule(matchMarkdownHighlight, 'mark', 'mark'))
 
 markdown.core.ruler.after('inline', 'image_width', (state) => {
   for (const blockToken of state.tokens) {
@@ -164,17 +103,31 @@ markdown.renderer.rules.heading_open = withLineData(markdown.renderer.rules.head
 markdown.renderer.rules.list_item_open = withLineData(markdown.renderer.rules.list_item_open)
 markdown.renderer.rules.hr = withLineData(markdown.renderer.rules.hr)
 
+// Split text, not generated HTML: multiline tokens must close inside each line
+// wrapper so line anchors and copied text stay intact.
+const renderCodeLines = (source: string, language: string, highlightCode?: MarkdownRenderOptions['highlightCode']) => {
+  const lines = ['']
+  for (const segment of highlightCode ? highlightCode(source, language) : [{ text: source, classes: [] }]) {
+    const classes = segment.classes.map(markdown.utils.escapeHtml).join(' ')
+    segment.text.split('\n').forEach((part, index) => {
+      if (index) lines.push('')
+      const text = markdown.utils.escapeHtml(part)
+      lines[lines.length - 1] += classes && text ? `<span class="${classes}">${text}</span>` : text
+    })
+  }
+  return lines
+}
+
 markdown.renderer.rules.fence = (tokens, idx, options, env) => {
   const token = tokens[idx]
   const info = token.info ? token.info.trim() : ''
   const language = info ? info.split(/\s+/)[0] : 'text'
   const escapedLanguage = markdown.utils.escapeHtml(language || 'text')
-  const escapedContent = markdown.utils.escapeHtml(token.content)
+  const parts = renderCodeLines(token.content, language, env?.highlightCode)
 
-  let codeBody = escapedContent
+  let codeBody = parts.join('\n')
   if (typeof env?.lineBase === 'number' && token.map) {
     // fence 行 = map[0]+1，内容行从 fence+1 开始；去掉内容末尾换行产生的空行
-    const parts = escapedContent.split('\n')
     if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop()
     const firstLine = env.lineBase + token.map[0] + 2
     codeBody = parts
@@ -246,7 +199,7 @@ markdown.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   return /^https?:/i.test(href) ? `${openTag}${LINK_ICON}` : openTag
 }
 
-export const renderMarkdown = (content: string, options: { codeBlockCopy?: boolean } = {}) =>
+export const renderMarkdown = (content: string, options: MarkdownRenderOptions = {}) =>
   markdown.render(normalizeMarkdownNoteLinks(content || ''), options)
 
 /**
@@ -262,8 +215,8 @@ export const getMarkdownNoteTitleMetadata = (content: string, isPartial: boolean
   return line === null ? null : { line, ...(isPartial ? { minutes: null, words: null } : readMarkdownNoteStats(tokens)) }
 }
 
-export const renderMarkdownWithLineData = (content: string, lineBase: number, noteTitle?: NoteTitleMetadata | null) => {
-  const env = { lineBase }
+export const renderMarkdownWithLineData = (content: string, lineBase: number, noteTitle?: NoteTitleMetadata | null, options: MarkdownRenderOptions = {}) => {
+  const env = { ...options, lineBase }
   const tokens = markdown.parse(normalizeMarkdownNoteLinks(content || ''), env)
   if (noteTitle) {
     const index = tokens.findIndex(token => token.type === 'heading_open' && token.tag === 'h1'

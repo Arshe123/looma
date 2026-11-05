@@ -1,0 +1,33 @@
+<!doctype html>
+<html><body style="margin:0"><div id="app"></div><script type="module">
+import { createApp, h, reactive, nextTick } from 'vue'
+import { createPinia } from 'pinia'
+import TiptapPreview from '/src/renderer/components/preview/TiptapPreview.vue'
+import AiMarkdown from '/src/renderer/components/ai/AiMarkdown.vue'
+import '/src/renderer/styles/style.css'
+
+// Only in-memory content; never initializes a workspace or reads user notes.
+window.electronAPI = { platform: 'darwin' }
+window.events = { updates: [], saves: [], edits: 0, copies: [] }
+Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => events.copies.push(text) }, configurable: true })
+window.fixture = reactive({ content: '', width: 420 })
+createApp({ setup: () => () => h('div', { style: 'display:flex;align-items:flex-start;gap:16px;padding:16px' }, [
+  h('section', { id: 'note', style: 'width:680px;height:820px;flex-shrink:0' }, [h(TiptapPreview, {
+    content: fixture.content, filePath: '', relativeFilePath: 'fixture.md', showLineNumbers: true,
+    'onUpdate:content': value => events.updates.push(value), onSave: value => events.saves.push(value),
+    onEditPending: () => events.edits++,
+  })]),
+  h('section', { id: 'chat', style: `width:${fixture.width}px;min-width:0;flex-shrink:0;font-size:16px;line-height:1.6;color:var(--text-main)` }, [
+    h(AiMarkdown, { content: fixture.content }),
+  ]),
+]) }).use(createPinia()).mount('#app')
+window.ready = () => !!document.querySelector('.tiptap')?.editor
+window.editor = () => document.querySelector('.tiptap')?.editor
+window.setFixture = async (content, width = 420, theme = 'light') => {
+  fixture.content = content; fixture.width = width
+  document.documentElement.dataset.theme = theme
+  document.documentElement.classList.toggle('dark', theme === 'dark')
+  await nextTick(); await document.fonts.ready
+  editor()?.commands.blur()
+}
+</script></body></html>

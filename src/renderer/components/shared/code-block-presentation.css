@@ -20,50 +20,65 @@
 }
 
 .code-block-syntax .hljs-keyword,
+.ai-markdown .code-block-content .hljs-keyword,
 .looma-continuous-code-token.hljs-keyword,
 .code-block-syntax .hljs-selector-tag,
+.ai-markdown .code-block-content .hljs-selector-tag,
 .looma-continuous-code-token.hljs-selector-tag,
 .code-block-syntax .hljs-built_in,
+.ai-markdown .code-block-content .hljs-built_in,
 .looma-continuous-code-token.hljs-built_in {
   color: var(--looma-code-keyword);
 }
 
 .code-block-syntax .hljs-string,
+.ai-markdown .code-block-content .hljs-string,
 .looma-continuous-code-token.hljs-string,
 .code-block-syntax .hljs-attr,
+.ai-markdown .code-block-content .hljs-attr,
 .looma-continuous-code-token.hljs-attr,
 .code-block-syntax .hljs-regexp,
+.ai-markdown .code-block-content .hljs-regexp,
 .looma-continuous-code-token.hljs-regexp {
   color: var(--looma-code-string);
 }
 
 .code-block-syntax .hljs-title,
+.ai-markdown .code-block-content .hljs-title,
 .looma-continuous-code-token.hljs-title,
 .code-block-syntax .hljs-function,
+.ai-markdown .code-block-content .hljs-function,
 .looma-continuous-code-token.hljs-function,
 .code-block-syntax .hljs-name,
+.ai-markdown .code-block-content .hljs-name,
 .looma-continuous-code-token.hljs-name {
   color: var(--looma-code-title);
 }
 
 .code-block-syntax .hljs-number,
+.ai-markdown .code-block-content .hljs-number,
 .looma-continuous-code-token.hljs-number,
 .code-block-syntax .hljs-literal,
+.ai-markdown .code-block-content .hljs-literal,
 .looma-continuous-code-token.hljs-literal,
 .code-block-syntax .hljs-symbol,
+.ai-markdown .code-block-content .hljs-symbol,
 .looma-continuous-code-token.hljs-symbol {
   color: var(--looma-code-number);
 }
 
 .code-block-syntax .hljs-comment,
+.ai-markdown .code-block-content .hljs-comment,
 .looma-continuous-code-token.hljs-comment,
 .code-block-syntax .hljs-quote,
+.ai-markdown .code-block-content .hljs-quote,
 .looma-continuous-code-token.hljs-quote {
   color: var(--looma-code-comment);
   font-style: italic;
 }
 
 .tiptap .code-block-shell,
+.ai-markdown .code-block-shell,
 .markdown-body .code-block-shell {
   margin: 0.95em 0;
   position: relative;
@@ -107,8 +122,10 @@
 }
 
 .tiptap .code-block-shell:hover .code-block-floating-copy,
+.ai-markdown .code-block-shell:hover .code-block-floating-copy,
 .markdown-body .code-block-shell:hover .code-block-floating-copy,
 .tiptap .code-block-shell:focus-within .code-block-floating-copy,
+.ai-markdown .code-block-shell:focus-within .code-block-floating-copy,
 .markdown-body .code-block-shell:focus-within .code-block-floating-copy,
 .looma-continuous-code-toolbar.is-block-hovered .code-block-floating-copy,
 .looma-continuous-code-toolbar:focus-within .code-block-floating-copy,
@@ -158,6 +175,7 @@
 }
 
 .tiptap .code-block-shell pre.code-block-body,
+.ai-markdown .code-block-shell pre.code-block-body,
 .markdown-body .code-block-shell pre.code-block-body {
   margin: 0;
   min-height: 2.75rem;
@@ -176,6 +194,7 @@
 }
 
 .tiptap .code-block-content,
+.ai-markdown .code-block-content,
 .markdown-body .code-block-content {
   display: block;
   margin: 0;

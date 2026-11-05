@@ -17,7 +17,7 @@ describe('font preset rendering integration', () => {
     for (const file of ['preview/TiptapPreview.vue', 'preview/NoteLinkPreview.vue', 'preview/CodeBlockView.vue', 'preview/LocalImageView.vue', 'help/HelpPage.vue', 'ai/AiMarkdown.vue']) {
       const source = read(`components/${file}`)
       expect(source).not.toMatch(/font-family:\s*(?:-apple-system|ui-monospace)/)
-      if (file === 'preview/CodeBlockView.vue') {
+      if (file === 'preview/CodeBlockView.vue' || file === 'ai/AiMarkdown.vue') {
         expect(source).toContain("import '../shared/code-block-presentation.css'")
         expect(read('components/shared/code-block-presentation.css')).toContain('font-family: var(--font-code)')
       } else expect(source).toContain('font-family: var(--font-code)')

@@ -8,6 +8,8 @@ import { normalizeAiAssistantSourcePath } from '@/renderer/stores/workspace-ai-u
 import type { AiAssistantMessage, AiAssistantMessageAction } from '@/renderer/stores/workspace'
 import AgentMemoryUpdateNotice from './AgentMemoryUpdateNotice.vue'
 import AiMarkdown from './AiMarkdown.vue'
+import AiQuestionNav from './AiQuestionNav.vue'
+import { useAiChatHistory } from './useAiChatHistory'
 import AgentConversationFlow from './AgentConversationFlow.vue'
 import AgentFileReviewFloat from './AgentFileReviewFloat.vue'
 import AgentRagSources from './AgentRagSources.vue'
@@ -37,6 +39,11 @@ const hasWorkspace = computed(() => Boolean(workspaceStore.activeWorkspaceId))
 const activeConversation = computed(() => workspaceStore.activeAiAssistantConversation)
 const activeConversationId = computed(() => workspaceStore.aiAssistant.activeConversationId)
 const messages = computed(() => activeConversation.value.messages)
+const {
+  visibleMessages, questions, hasEarlier, loadingEarlier, loadEarlier,
+  activeQuestionId, highlightedQuestionId, jumpToQuestion,
+  handleScroll, scrollToBottom, followingLatest,
+} = useAiChatHistory(messages, () => JSON.stringify([workspaceStore.activeWorkspaceId, activeConversationId.value]), messagesRef)
 const isAgentRunning = computed(() => aiAssistStore.isConversationRunningAgent(activeConversationId.value))
 const isGenerating = computed(() => isAgentRunning.value)
 const isIndexing = computed(() => aiAssistStore.isWorkspaceIndexing(workspaceStore.activeWorkspaceId))
@@ -115,12 +122,6 @@ const openAgentRagSource = (source: AgentRagSourceDisplayItem) => {
     return
   }
   workspaceStore.openFileTab(path)
-}
-
-const scrollToBottom = () => {
-  nextTick(() => {
-    messagesRef.value?.scrollTo({ top: messagesRef.value.scrollHeight, behavior: 'smooth' })
-  })
 }
 
 const appendMessage = (role: 'assistant' | 'user' | 'system', text: string, actions?: AiAssistantMessageAction[], meta?: { aiName?: string }) => {
@@ -370,7 +371,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', handleDocumentClick)
 })
 
-watch(() => messages.value.length, scrollToBottom)
+watch([() => workspaceStore.activeWorkspaceId, activeConversationId, messages], scrollToBottom)
 watch(question, resizeComposer)
 watch(() => workspaceStore.activeWorkspaceId, (_nextWorkspaceId, oldWorkspaceId) => {
   aiAssistStore.cancelWorkspaceStreams(oldWorkspaceId).catch(console.error)
@@ -384,7 +385,6 @@ watch(() => workspaceStore.activeWorkspaceId, (_nextWorkspaceId, oldWorkspaceId)
 watch(activeConversationId, () => {
   closeAiContextMenu()
   backfillLegacyAiNames()
-  scrollToBottom()
 })
 watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
 </script>
@@ -444,12 +444,24 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
       </div>
     </header>
 
+    <div class="relative min-h-0 flex-1">
     <div
       ref="messagesRef"
-      class="min-h-0 flex-1 overflow-y-auto bg-panel px-3 py-4"
+      class="h-full overflow-y-auto bg-panel px-3 py-4 [overflow-anchor:none]"
+      :class="{ 'pr-12': questions.length > 0 }"
       @contextmenu="openMessagesContextMenu"
-      @scroll="closeAiContextMenu"
+      @scroll="closeAiContextMenu(); handleScroll()"
     >
+      <div data-chat-content :class="{ 'h-full': messages.length === 0 }">
+      <button
+        v-if="hasEarlier"
+        type="button"
+        class="mx-auto mb-4 block rounded-full bg-panel-soft px-3 py-1 text-[11px] text-text-muted transition-colors hover:bg-accent-soft hover:text-text-main disabled:cursor-wait"
+        :disabled="loadingEarlier"
+        @click="loadEarlier"
+      >
+        {{ loadingEarlier ? '正在显示更早的对话…' : '↑ 向上查看更早的 5 轮对话' }}
+      </button>
       <div v-if="messages.length === 0" class="flex min-h-full items-center justify-center px-4 py-10 text-center">
         <div class="max-w-sm rounded-2xl border border-border-soft bg-panel p-5 shadow-sm">
           <div class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-accent-soft text-accent">
@@ -463,8 +475,10 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
       </div>
       <div v-else class="flex flex-col gap-4 text-sm">
         <div
-          v-for="message in messages"
+          v-for="message in visibleMessages"
           :key="message.id"
+          :data-chat-message-id="message.id"
+          :data-chat-question-id="message.role === 'user' ? message.id : undefined"
           @mouseenter="messageTimeNow = Date.now()"
           :class="[
             'group/message flex',
@@ -507,6 +521,7 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
                 'break-words text-sm leading-6 select-text',
                 message.role === 'assistant' ? 'mx-auto max-w-[760px] px-1 py-1 text-text-main' : '',
                 message.role === 'assistant' ? '' : 'whitespace-pre-wrap',
+                highlightedQuestionId === message.id ? 'ring-2 ring-accent/40 ring-offset-2 ring-offset-panel' : '',
                 message.role === 'user'
                   ? 'rounded-2xl rounded-tr-md bg-accent px-3.5 py-3 text-white shadow-sm'
                   : message.role === 'system'
@@ -614,6 +629,16 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
           </div>
         </div>
       </div>
+    </div>
+
+      </div>
+    <AiQuestionNav :questions="questions" :active-id="activeQuestionId" @select="jumpToQuestion" />
+    <button
+      v-if="!followingLatest && messages.length"
+      type="button"
+      class="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-border-soft bg-panel px-3 py-1 text-[11px] text-text-muted shadow-sm hover:text-text-main"
+      @click="scrollToBottom"
+    >↓ 回到最新</button>
     </div>
 
     <footer class="relative shrink-0 border-t border-border-soft bg-panel px-3 py-3">

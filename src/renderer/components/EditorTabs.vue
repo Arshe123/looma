@@ -28,23 +28,37 @@ const selectTab = (tab: WorkspaceTab) => {
 
 // Renderer-local ordering: external identities must never enter workspace metadata.
 const visualOrder = ref<string[]>([])
+const tabRenderKeys = ref(new Map<string, number>())
+let nextTabRenderKey = 0
 const availableTabs = computed(() => [
   ...workspaceStore.tabs,
   ...externalDocuments.documents.map(doc => ({ ...doc, kind: 'external' as const })),
 ])
-watch(() => workspaceStore.activeWorkspaceId, () => { visualOrder.value = availableTabs.value.map(tab => tab.id) }, { flush: 'sync' })
-watch(availableTabs, tabs => {
+watch(() => workspaceStore.activeWorkspaceId, () => {
+  visualOrder.value = availableTabs.value.map(tab => tab.id)
+  tabRenderKeys.value = new Map()
+}, { flush: 'sync' })
+watch([availableTabs, () => workspaceStore.previewTabId], ([tabs, previewId], [, previousPreviewId]) => {
   const ids = new Set(tabs.map(tab => tab.id))
+  const replacingPreview = previousPreviewId && !ids.has(previousPreviewId) && ids.has(previewId)
+  // Transfer the visual slot and node identity, not the file/editor identity.
+  const order = visualOrder.value.map(id => replacingPreview && id === previousPreviewId ? previewId : id)
+  const previousKeys = tabRenderKeys.value
+  tabRenderKeys.value = new Map(tabs.map(tab => [tab.id,
+    previousKeys.get(tab.id)
+      ?? (replacingPreview && tab.id === previewId ? previousKeys.get(previousPreviewId) : undefined)
+      ?? nextTabRenderKey++,
+  ]))
   const nextOrder = [
-    ...visualOrder.value.filter(id => ids.has(id)),
-    ...tabs.filter(tab => !visualOrder.value.includes(tab.id)).map(tab => tab.id),
+    ...order.filter(id => ids.has(id)),
+    ...tabs.filter(tab => !order.includes(tab.id)).map(tab => tab.id),
   ]
   // Restored/programmatically reordered workspace tabs remain authoritative for
   // ordinary slots; only the interleaving and external order are renderer-local.
   const ordinaryIds = new Set(workspaceStore.tabs.map(tab => tab.id))
   let ordinaryIndex = 0
   visualOrder.value = nextOrder.map(id => ordinaryIds.has(id) ? workspaceStore.tabs[ordinaryIndex++].id : id)
-}, { immediate: true, flush: 'sync' })
+}, { immediate: true })
 const visualTabs = computed(() => {
   const tabs = new Map(availableTabs.value.map(tab => [tab.id, tab]))
   return visualOrder.value.flatMap(id => tabs.has(id) ? [tabs.get(id)!] : [])
@@ -189,7 +203,7 @@ onUnmounted(() => {
       @wheel="onWheel"
       @dragover="onDragOver"
     >
-      <template v-for="(tab, index) in visualTabs" :key="tab.id">
+      <template v-for="(tab, index) in visualTabs" :key="tabRenderKeys.get(tab.id)">
       <div v-if="tab.kind === 'external'" :title="tab.filePath" :data-document-tab="tab.id"
         class="external-document-tab group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full cursor-pointer relative shrink-0 transition-colors rounded-lg mr-1"
         :class="externalDocuments.activeId === tab.id ? 'bg-surface text-accent' : 'text-text-muted hover:bg-accent-soft'"

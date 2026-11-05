@@ -27,8 +27,16 @@ new Function('require', 'module', 'exports', compiled)((id: string) => {
   throw new Error(`Unexpected component import: ${id}`)
 }, componentModule, componentModule.exports)
 
-interface HostNode { tag: string; text: string; props: Record<string, unknown>; children: HostNode[]; parent: HostNode | null }
-const node = (tag: string, text = ''): HostNode => ({ tag, text, props: {}, children: [], parent: null })
+interface HostNode {
+  tag: string; text: string; props: Record<string, unknown>; children: HostNode[]; parent: HostNode | null
+  scrollLeft: number; clientWidth: number; offsetLeft: number; offsetWidth: number
+  dataset: { documentTab?: string }
+}
+const node = (tag: string, text = ''): HostNode => ({
+  tag, text, props: {}, children: [], parent: null,
+  scrollLeft: 0, clientWidth: 0, offsetLeft: 0, offsetWidth: 0,
+  get dataset() { return { documentTab: this.props['data-document-tab'] as string | undefined } },
+})
 const renderer = createRenderer<HostNode, HostNode>({
   createElement: tag => node(tag), createText: text => node('#text', text), createComment: text => node('#comment', text),
   setText: (target, text) => { target.text = text },
@@ -143,5 +151,40 @@ it('preserves the preview slot next to external tabs and keeps nodes stable on r
     expect(tabs()[0]).toBe(original[2])
     expect(tabs()[1]).toBe(original[1])
     expect(tabs()[2]).toBe(original[0])
+  } finally { app.unmount() }
+})
+
+it('reveals activated tabs by the minimum distance, even when clicking the current file again', async () => {
+  const store = workspace.useWorkspaceStore()
+  vi.spyOn(store, 'saveWorkspaceMeta').mockResolvedValue()
+  for (const file of ['left.md', 'middle.md', 'right.md']) store.openFileTab(file)
+  const root = node('root')
+  const app = renderer.createApp(componentModule.exports.default)
+  app.mount(root)
+  const tabs = all(root).filter(item => item.props['data-document-tab'])
+  const container = tabs[0].parent!
+  container.clientWidth = 240
+  tabs.forEach((tab, index) => { tab.offsetLeft = index * 124; tab.offsetWidth = 120 })
+  try {
+    store.openPreviewFileTab('right.md')
+    await nextTick()
+    expect(container.scrollLeft).toBe(128)
+    store.openPreviewFileTab('middle.md')
+    await nextTick()
+    expect(container.scrollLeft).toBe(124)
+    store.openPreviewFileTab('left.md')
+    await nextTick()
+    expect(container.scrollLeft).toBe(0)
+    store.openPreviewFileTab('middle.md')
+    await nextTick()
+    expect(container.scrollLeft).toBe(4)
+    container.scrollLeft = 100
+    store.openPreviewFileTab('middle.md')
+    await nextTick()
+    expect(container.scrollLeft).toBe(100)
+    container.scrollLeft = 250
+    store.openPreviewFileTab('middle.md')
+    await nextTick()
+    expect(container.scrollLeft).toBe(124)
   } finally { app.unmount() }
 })

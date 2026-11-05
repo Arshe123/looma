@@ -9,6 +9,7 @@ it('uses one visual order for bidirectional mixed dragging, persistence and canc
   const workspace = vue.reactive({
     tabs: [{ id: 'a', kind: 'file' }, { id: 'help', kind: 'system' }], activeTabId: 'a', activeWorkspaceId: 'ws',
     setTabs: vi.fn((tabs: any[]) => { workspace.tabs = tabs }), saveWorkspaceMeta: vi.fn(async () => {}),
+    $onAction: vi.fn(() => () => {}),
     isTabDirty: () => false, closeTab: async (id: string) => { closed.push(id); return true },
   })
   const external = vue.reactive({ documents: [{ id: 'x' }, { id: 'y' }],

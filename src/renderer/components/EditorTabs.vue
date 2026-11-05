@@ -2,7 +2,7 @@
 import { useWorkspaceStore, type WorkspaceTab } from '../stores/workspace'
 import { useExternalDocumentsStore } from '../stores/externalDocuments'
 import { X, FileSymlink } from 'lucide-vue-next'
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, nextTick, type ComponentPublicInstance } from 'vue'
 import { FILE_TREE_REVEAL_ACTIVE_FILE_EVENT } from '@/shared/utils/file-tree-utils'
 import { closeDocumentTabs, type DocumentTabCloseMode } from '@/renderer/utils/document-tab-closing'
 import { getTabTitle } from '@/renderer/stores/workspace-tab-utils'
@@ -62,6 +62,26 @@ watch([availableTabs, () => workspaceStore.previewTabId], ([tabs, previewId], [,
 const visualTabs = computed(() => {
   const tabs = new Map(availableTabs.value.map(tab => [tab.id, tab]))
   return visualOrder.value.flatMap(id => tabs.has(id) ? [tabs.get(id)!] : [])
+})
+const tabGroup = ref<ComponentPublicInstance | null>(null)
+const activeVisualTabId = computed(() => externalDocuments.activeId || workspaceStore.activeTabId)
+const revealActiveTab = () => {
+  const container = tabGroup.value?.$el as HTMLElement | undefined
+  if (!container || container.clientWidth <= 0) return
+  const tab = (Array.from(container.children) as HTMLElement[])
+    .find(child => child.dataset.documentTab === activeVisualTabId.value)
+  if (!tab) return
+  const left = tab.offsetLeft
+  const right = left + tab.offsetWidth
+  if (left < container.scrollLeft) container.scrollLeft = left
+  else if (right > container.scrollLeft + container.clientWidth) {
+    container.scrollLeft = tab.offsetWidth > container.clientWidth ? left : right - container.clientWidth
+  }
+}
+watch([activeVisualTabId, visualTabs], revealActiveTab, { flush: 'post' })
+// A file-tree click must also reveal an already-active tab after manual scrolling.
+const stopRevealOnActivation = workspaceStore.$onAction(({ name, after }) => {
+  if (name === 'activateTab') after(() => { void nextTick(revealActiveTab) })
 })
 let draggedId: string | null = null
 
@@ -184,11 +204,13 @@ const onGlobalKeyDown = (e: KeyboardEvent) => {
 }
 
 onMounted(() => {
+  revealActiveTab()
   window.addEventListener('pointerdown', onGlobalPointerDown)
   window.addEventListener('keydown', onGlobalKeyDown)
 })
 
 onUnmounted(() => {
+  stopRevealOnActivation()
   window.removeEventListener('pointerdown', onGlobalPointerDown)
   window.removeEventListener('keydown', onGlobalKeyDown)
 })
@@ -199,6 +221,7 @@ onUnmounted(() => {
     <TransitionGroup
       name="editor-tab"
       tag="div"
+      ref="tabGroup"
       class="relative flex-1 flex overflow-x-auto overflow-y-hidden custom-scrollbar focus-scrollbar"
       @wheel="onWheel"
       @dragover="onDragOver"

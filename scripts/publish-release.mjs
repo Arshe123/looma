@@ -12,6 +12,9 @@ function validateVersion(version) {
 }
 
 export const REPOSITORY = 'Arshe123/looma'
+// Existing tags pin the release source. Using an old SHA as target_commitish
+// can require workflows:write even though the tag already exists.
+const RELEASE_TARGET = 'main'
 class ReleasePublicationError extends Error {}
 const fail = message => { throw new ReleasePublicationError(message) }
 export function publicationFailureMessage(error) {
@@ -157,7 +160,9 @@ export function createGitHubClient({ token, fetchImpl = globalThis.fetch, signal
 }
 
 function assertRelease(release, { version, sha, id, draft, body }) {
-  if (!release || !Number.isSafeInteger(release.id) || release.id <= 0 || (id !== undefined && release.id !== id) || release.tag_name !== version || release.target_commitish !== sha || release.draft !== draft || release.prerelease !== false || release.body !== body) fail('Release identity/state/body mismatch')
+  // target_commitish is metadata, not the resolved tag SHA. Accept legacy
+  // drafts pinned to sha as well; checkTag independently verifies provenance.
+  if (!release || !Number.isSafeInteger(release.id) || release.id <= 0 || (id !== undefined && release.id !== id) || release.tag_name !== version || ![RELEASE_TARGET, sha].includes(release.target_commitish) || release.draft !== draft || release.prerelease !== false || release.body !== body) fail('Release identity/state/body mismatch')
 }
 
 export async function publishRelease({ version, source, env = process.env, fetchImpl = globalThis.fetch, changelogPath = 'docs/changeLog.md', signal }) {
@@ -177,7 +182,7 @@ export async function publishRelease({ version, source, env = process.env, fetch
   if (matches.some(release => release.draft !== true)) fail('Published release already exists; refusing overwrite')
   if (matches.length > 1) fail('Multiple drafts exist for tag')
   await checkLatest()
-  const release = matches[0] || await api.request('POST', `${base}/releases`, { body: { tag_name: version, target_commitish: config.sha, name: version, body, draft: true, prerelease: false, generate_release_notes: false } })
+  const release = matches[0] || await api.request('POST', `${base}/releases`, { body: { tag_name: version, target_commitish: RELEASE_TARGET, name: version, body, draft: true, prerelease: false, generate_release_notes: false } })
   assertRelease(release, { ...config, draft: true, body })
   const target = `${base}/releases/${release.id}`
   const existing = assertRemoteAssets(await api.list(`${target}/assets`), assets, { complete: false })
@@ -191,7 +196,7 @@ export async function publishRelease({ version, source, env = process.env, fetch
   await checkLatest()
   await checkTag()
   signal?.throwIfAborted()
-  await api.request('PATCH', target, { body: { draft: false, prerelease: false, make_latest: 'true', tag_name: version, target_commitish: config.sha, name: version, body } })
+  await api.request('PATCH', target, { body: { draft: false, prerelease: false, make_latest: 'true', tag_name: version, target_commitish: RELEASE_TARGET, name: version, body } })
   const published = await api.request('GET', target)
   assertRelease(published, { ...config, id: release.id, draft: false, body })
   assertRemoteAssets(await api.list(`${target}/assets`), assets)

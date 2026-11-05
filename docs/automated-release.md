@@ -16,7 +16,7 @@
 4. 核查打包后 Electron 和 sidecar 的 PE/Mach-O 架构，再执行打包资源中的 sidecar `--packaging-self-test`。NSIS 引导 stub 是 x86，并不意味着其安装的应用不是 x64；架构检查针对实际 payload。
 5. 仅收集明确的本版本安装包、blockmap 和更新 YAML；校验更新元数据中的版本、路径、大小和 SHA512，生成每个平台的 SHA256 清单。
 6. 两个平台全部成功后，最终任务只下载 `release-windows-x64` 与 `release-macos-arm64`，不下载测试报告；核对两个清单、所有载荷，生成 `SHA256SUMS`。
-7. 最终任务使用 GitHub 自动提供的 `GITHUB_TOKEN` 创建或恢复草稿，上传缺失附件，再读取远端附件列表、大小与服务器 SHA256 digest。全部一致后才公开正式 Release，并读取 Release 状态确认。
+7. 最终任务从本次工作流的固定提交单独检出发布工具到 `.release-tools`（不打入安装包）；使用 GitHub 自动提供的 `GITHUB_TOKEN` 创建或恢复草稿，上传缺失附件，再读取远端附件列表、大小与服务器 SHA256 digest。全部一致后才公开正式 Release，并读取 Release 状态确认。
 
 只有最终 publish job 有 `contents: write`；构建和验证任务只有 `contents: read`。checkout 不持久化凭据。发布失败不会回退成“部分成功”：安装包构建失败则不执行 publish，上传中途失败则保留未公开草稿供排查/重跑。
 
@@ -74,11 +74,19 @@ git push origin 1.6.1
 
 1. 将工作流修复提交并推送到 main，确认 main 的 CI 通过。
 2. 在 GitHub 的 Actions → Release → Run workflow，分支选择 **main**，`tag` 填 **1.6.1**。不要点击旧 run 的 Re-run。
-3. 新任务使用 main 上的工作流和 runner 配置，但校验、构建、发布的源码均为指定 tag 的原始提交；不会移动 tag，也不会把 main 新代码混入安装包。
+3. 新任务使用 main 上的工作流、runner 配置及发布工具，但应用源码、安装包和更新日志仍来自指定 tag 的原始提交；不会移动 tag，也不会把 main 新代码混入安装包。
 4. 校验阶段要求 tag 已存在、版本格式正确且提交属于 main 历史，并锁定提交 SHA；两个构建任务与最终发布任务都检出同一 SHA。发布器接收的是目标 tag/提交身份，而不是手动运行时的 main 身份，并仍会核对远端 tag。
 5. Windows/macOS 会重新构建、测试并验证产物，只有两者全部成功才会发布。已有正式 Release 不会被覆盖；若此前留下草稿，仍按既有附件完整性规则恢复，不绕过校验。
 
 该入口解决旧 tag 无法使用新工作流的问题，不保证 GitHub 托管 runner 永远有可用容量。若 tag 源码本身需要修复，应升新版本，而不是借补发混入源码修改。
+
+### 创建 Release 返回 HTTP 403
+
+先检查发布 job 日志开头的 `GITHUB_TOKEN Permissions`，不要把所有 403 都当成缺少 `contents: write`。GitHub 对 `target_commitish` 指向的提交与默认分支存在工作流差异的情况，还会检查 workflows 写权限，而自动 `GITHUB_TOKEN` 无法获得该权限。
+
+发布器要求 tag 已存在，并在上传前及公开前独立核对 tag 解析出的 SHA；创建和公开 Release 时，`target_commitish` 元数据固定使用仓库默认分支 `main`，不再传旧 tag 的 SHA。已有 tag 的实际源码仍由 tag 决定，不会改为 main。恢复旧草稿时兼容其原有 SHA 元数据，公开时同样更新为 main；产物哈希、防覆盖和远端 tag 检查均保留。
+
+补发时必须运行本次工作流提交中的新发布器；如果仍执行 tag 内的旧 `scripts/publish-release.mjs`，只修改 main 不会解决旧版本发布器的问题。无需为此增配个人 PAT，也不要移动版本 tag。
 
 ## 本地检查
 

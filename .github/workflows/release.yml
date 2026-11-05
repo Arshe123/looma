@@ -211,6 +211,14 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: node scripts/release-artifacts.mjs verify --version "$RELEASE_VERSION" --source out/release-assets
+      - name: Check out publisher from the immutable workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: |
+            scripts
+          persist-credentials: false
       - name: Create or resume draft, verify remote assets, then publish
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -218,4 +226,4 @@ jobs:
           RELEASE_SHA: ${{ needs.validate.outputs.sha }}
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         # Scope the tag identity to the publisher process, not the main workflow context.
-        run: GITHUB_REF_NAME="$RELEASE_TAG" GITHUB_SHA="$RELEASE_SHA" node scripts/publish-release.mjs --version "$RELEASE_VERSION" --source out/release-assets
+        run: GITHUB_REF_NAME="$RELEASE_TAG" GITHUB_SHA="$RELEASE_SHA" node .release-tools/scripts/publish-release.mjs --version "$RELEASE_VERSION" --source out/release-assets

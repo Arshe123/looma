@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -66,6 +68,7 @@ function mockGitHub(assets: any[], opts: any = {}) {
     }
     if (url.pathname.endsWith('/releases') && init.method === 'GET') return response(release ? [release] : [])
     if (url.pathname.endsWith('/releases') && init.method === 'POST') {
+      if (opts.enforceWorkflowScope && JSON.parse(init.body).target_commitish !== 'main') return response({}, 403)
       release = { id: 7, ...JSON.parse(init.body) }
       return response(release, 201)
     }
@@ -82,6 +85,7 @@ function mockGitHub(assets: any[], opts: any = {}) {
       return response(remote[remote.length - 1], 201)
     }
     if (init.method === 'PATCH') {
+      if (opts.enforceWorkflowScope && JSON.parse(init.body).target_commitish !== 'main') return response({}, 403)
       release = { ...release, ...JSON.parse(init.body) }
       if (opts.publicMismatch) release.prerelease = true
       return response(release)
@@ -145,6 +149,24 @@ describe('publisher pure contracts', () => {
   it('rejects malformed CLI flags without HTTP', async () => {
     await expect(main(['--version', version, '--source', 'x', '--source', 'y'])).rejects.toThrow(/Usage/)
   })
+  it('loads a separately checked-out publisher using the tagged workspace dependencies', async () => {
+    const f = await fixture()
+    const root = path.dirname(f.source)
+    const tools = path.join(root, '.release-tools')
+    await mkdir(path.join(tools, 'scripts'), { recursive: true })
+    for (const name of ['publish-release.mjs', 'release-artifacts.mjs']) {
+      await copyFile(new URL(`../${name}`, import.meta.url), path.join(tools, 'scripts', name))
+    }
+    await copyFile(new URL('../../package.json', import.meta.url), path.join(tools, 'package.json'))
+    await symlink(fileURLToPath(new URL('../../node_modules', import.meta.url)), path.join(root, 'node_modules'), 'junction')
+    const result = spawnSync(process.execPath, [path.join(tools, 'scripts/publish-release.mjs'), '--invalid'], {
+      cwd: root, encoding: 'utf8', timeout: 10_000,
+    })
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('Usage: publish-release.mjs')
+    expect(result.stderr).not.toContain('ERR_MODULE_NOT_FOUND')
+  })
 })
 
 describe('read-only local validation', () => {
@@ -183,11 +205,22 @@ describe('draft to public state machine (mock HTTP only)', () => {
     const { f, assets, api } = await setup({ existing: false })
     const result = await publishRelease({ ...f, fetchImpl: api.fetchImpl })
     expect(result.assets).toHaveLength(assets.length)
-    expect(api.release).toMatchObject({ draft: false, prerelease: false, target_commitish: sha, tag_name: version })
+    expect(api.release).toMatchObject({ draft: false, prerelease: false, target_commitish: 'main', tag_name: version })
     expect(api.calls.filter(call => call.url.pathname.includes('/commits/'))).toHaveLength(2)
     expect(api.calls.filter(call => call.method === 'POST' && call.url.hostname === 'uploads.github.com')).toHaveLength(assets.length)
     const creation = api.calls.find(call => call.method === 'POST' && call.url.pathname.endsWith('/releases'))!
-    expect(JSON.parse(creation.body)).toMatchObject({ draft: true, prerelease: false, generate_release_notes: false })
+    expect(JSON.parse(creation.body)).toMatchObject({ draft: true, prerelease: false, generate_release_notes: false, target_commitish: 'main' })
+  })
+  it.each([false, true])('publishes an existing historical tag without workflow-write scope (existing draft=%s)', async existing => {
+    // Model GitHub's documented target_commitish workflow-scope check; this is
+    // a request contract test, not a live GitHub permissions probe.
+    const { f, api } = await setup({ existing, enforceWorkflowScope: true })
+    await publishRelease({ ...f, fetchImpl: api.fetchImpl })
+    expect(api.release).toMatchObject({ tag_name: version, target_commitish: 'main', draft: false })
+    expect(api.calls.filter(call => call.url.pathname.includes('/commits/'))).toHaveLength(2)
+    for (const call of api.calls.filter(call => ['POST', 'PATCH'].includes(call.method) && call.url.hostname === 'api.github.com')) {
+      expect(JSON.parse(call.body).target_commitish).toBe('main')
+    }
   })
   it('reuses matching partial draft without overwriting', async () => {
     const { f, assets } = await setup()

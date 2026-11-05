@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ['[0-9]*.[0-9]*.[0-9]*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要补发的已有版本 tag（例如 1.6.1）；工作流分支必须选择 main'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -19,11 +25,39 @@ jobs:
     timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.target.outputs.tag }}
+      sha: ${{ steps.target.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Resolve and pin release tag before running tag code
+        id: target
+        shell: bash
+        env:
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" != "refs/heads/main" ]]; then
+            echo '::error::补发必须使用 main 分支上的工作流。'
+            exit 1
+          fi
+          if [[ ! "$RELEASE_TAG" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo '::error::必须指定已有的裸版本 tag，例如 1.6.1。'
+            exit 1
+          fi
+          sha=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
+          if [[ "$RELEASE_EVENT" == "push" && "$sha" != "$EVENT_SHA" ]]; then
+            echo '::error::tag 已偏离触发发布的提交，停止发布。'
+            exit 1
+          fi
+          git merge-base --is-ancestor "$sha" origin/main
+          git checkout --detach "$sha"
+          printf 'tag=%s\nsha=%s\n' "$RELEASE_TAG" "$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.23.4
@@ -31,7 +65,7 @@ jobs:
       - name: Validate stable tag, versions, release notes and main ancestry
         id: version
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag }}
         run: node scripts/ci-release.mjs version --tag="$RELEASE_TAG" --check-main
 
   build:
@@ -63,6 +97,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.validate.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -154,6 +189,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.validate.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -176,5 +212,8 @@ jobs:
       - name: Create or resume draft, verify remote assets, then publish
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_SHA: ${{ needs.validate.outputs.sha }}
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
-        run: node scripts/publish-release.mjs --version "$RELEASE_VERSION" --source out/release-assets
+        # Scope the tag identity to the publisher process, not the main workflow context.
+        run: GITHUB_REF_NAME="$RELEASE_TAG" GITHUB_SHA="$RELEASE_SHA" node scripts/publish-release.mjs --version "$RELEASE_VERSION" --source out/release-assets

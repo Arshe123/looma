@@ -3,7 +3,7 @@
 ## 范围与触发
 
 - `.github/workflows/ci.yml`：PR 到 main、push main，以及手动运行；只验证，不发布、不读取签名 secrets。
-- `.github/workflows/release.yml`：push 裸版本 tag，例如 `1.6.1`；不接受 `v1.6.1`、预发布版本。发布仅在 `Arshe123/looma` 执行。
+- `.github/workflows/release.yml`：push 裸版本 tag，例如 `1.6.1`；也支持从 main 手动补发已有 tag。不接受 `v1.6.1`、预发布版本。发布仅在 `Arshe123/looma` 执行。
 - Windows x64 使用 `windows-2022`；macOS arm64 使用标准镜像 `macos-26`。不使用会迁移的 `latest` 标签，不自动切换收费的 `-large` / `-xlarge` runner，也不把 x64 仿真计作 arm64 构建。
 - Node 固定 `22.23.4`，uv 固定 `0.11.21`，Python 使用原生 `3.12`。工作流中的第三方 Actions 全部固定到经官方仓库核对的完整 commit SHA。
 - CI 的成功不代表原生微软拼音、剪贴板、安装/卸载或 Gatekeeper 已人工验收；自动化结果与平台手工验收分开报告。
@@ -67,6 +67,18 @@ git push origin 1.6.1
 - 本地 Windows 无法证明 macOS runner 构建成功；首次真实 GitHub run、签名/公证和安装版原生交互验收应分别确认。
 - 若任务在执行任何步骤前被取消，并出现 `The job was not acquired by Runner of type hosted even after multiple attempts`，应先查看 annotations 是否提示托管 runner 容量不足；这不是应用测试失败，增加 job 的执行超时也不能解决分配阶段的取消。可以尝试另一官方标准原生 arm64 镜像，但仍须等待云端实测，不能保证更换标签一定消除平台容量限制。
 - 旧 run 的 Re-run 会使用该 run 原来的提交和工作流；仅修改 main 不会更新已有 `1.6.1` tag 中的配置。不要盲目重复旧 run 或强行移动 tag，先确认旧版本的受控重试方案。
+
+### 使用修复后的工作流补发已有 tag
+
+适用于 tag 已推送、但 runner 分配等故障导致尚未公开 Release 的情况，例如 `1.6.1`：
+
+1. 将工作流修复提交并推送到 main，确认 main 的 CI 通过。
+2. 在 GitHub 的 Actions → Release → Run workflow，分支选择 **main**，`tag` 填 **1.6.1**。不要点击旧 run 的 Re-run。
+3. 新任务使用 main 上的工作流和 runner 配置，但校验、构建、发布的源码均为指定 tag 的原始提交；不会移动 tag，也不会把 main 新代码混入安装包。
+4. 校验阶段要求 tag 已存在、版本格式正确且提交属于 main 历史，并锁定提交 SHA；两个构建任务与最终发布任务都检出同一 SHA。发布器接收的是目标 tag/提交身份，而不是手动运行时的 main 身份，并仍会核对远端 tag。
+5. Windows/macOS 会重新构建、测试并验证产物，只有两者全部成功才会发布。已有正式 Release 不会被覆盖；若此前留下草稿，仍按既有附件完整性规则恢复，不绕过校验。
+
+该入口解决旧 tag 无法使用新工作流的问题，不保证 GitHub 托管 runner 永远有可用容量。若 tag 源码本身需要修复，应升新版本，而不是借补发混入源码修改。
 
 ## 本地检查
 

@@ -1,4 +1,7 @@
 import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import yaml from 'js-yaml'
 import { assertNativeEnvironment, binaryArchitectures, validateVersion } from '../ci-release.mjs'
@@ -78,6 +81,78 @@ describe('GitHub workflow safety contract', () => {
     expect(release.jobs.validate.if).toBe("github.repository == 'Arshe123/looma'")
     expect(JSON.stringify(ci)).not.toContain('secrets.')
     expect(JSON.stringify(ci)).not.toContain('publish-release.mjs')
+  })
+  it('retries an existing tag using the main workflow and pins every job to the resolved commit', () => {
+    expect(release.on.workflow_dispatch?.inputs?.tag).toMatchObject({ required: true, type: 'string' })
+    expect(release.jobs.validate.outputs.sha).toBe('${{ steps.target.outputs.sha }}')
+    expect(release.jobs.validate.outputs.tag).toBe('${{ steps.target.outputs.tag }}')
+    const steps = release.jobs.validate.steps
+    const target = steps.findIndex((step: any) => step.id === 'target')
+    expect(target).toBeGreaterThan(0)
+    const version = steps.findIndex((step: any) => step.id === 'version')
+    expect(target).toBeLessThan(version)
+    expect(steps[version].env.RELEASE_TAG).toBe('${{ steps.target.outputs.tag }}')
+    for (const job of [release.jobs.build, release.jobs.publish]) {
+      expect(job.steps.find((step: any) => step.uses?.startsWith('actions/checkout@')).with.ref)
+        .toBe('${{ needs.validate.outputs.sha }}')
+    }
+    const publish = release.jobs.publish.steps.find((step: any) => step.run?.includes('publish-release.mjs'))
+    expect(publish.env.RELEASE_SHA).toBe('${{ needs.validate.outputs.sha }}')
+    expect(publish.env.RELEASE_TAG).toBe('${{ needs.validate.outputs.tag }}')
+    expect(publish.run).toContain('GITHUB_REF_NAME="$RELEASE_TAG" GITHUB_SHA="$RELEASE_SHA" node ')
+  })
+  it('resolves only existing stable tags on main and rejects unsafe retry targets before running tag code', () => {
+    const target = release.jobs.validate.steps.find((step: any) => step.id === 'target')
+    expect(target).toBeDefined()
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'looma-release-target-'))
+    const git = (...args: string[]) => {
+      const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stderr)
+      return result.stdout.trim()
+    }
+    try {
+      git('init', '-b', 'main')
+      git('config', 'user.email', 'test@example.invalid')
+      git('config', 'user.name', 'Release Test')
+      git('commit', '--allow-empty', '-m', 'tag source')
+      const sha = git('rev-parse', 'HEAD')
+      git('tag', '-a', '1.6.1', '-m', 'annotated release')
+      git('commit', '--allow-empty', '-m', 'workflow runner fix')
+      const main = git('rev-parse', 'HEAD')
+      git('update-ref', 'refs/remotes/origin/main', main)
+      git('checkout', '--orphan', 'unrelated')
+      git('commit', '--allow-empty', '-m', 'not on main')
+      git('tag', '1.6.2')
+      const run = (event: string, tag: string, ref = 'refs/heads/main', eventSha = main) => {
+        git('checkout', '--detach', main)
+        const output = path.join(root, 'output')
+        fs.writeFileSync(output, '')
+        const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', target.run], {
+          cwd: root, encoding: 'utf8', env: { ...process.env,
+            RELEASE_EVENT: event, RELEASE_TAG: tag, WORKFLOW_REF: ref,
+            EVENT_SHA: eventSha, GITHUB_OUTPUT: output,
+          },
+        })
+        return { status: result.status, output: fs.readFileSync(output, 'utf8'), head: git('rev-parse', 'HEAD') }
+      }
+      expect(run('workflow_dispatch', '1.6.1')).toEqual({ status: 0, output: `tag=1.6.1\nsha=${sha}\n`, head: sha })
+      expect(run('push', '1.6.1', 'refs/tags/1.6.1', sha).status).toBe(0)
+      for (const [event, tag, ref, eventSha] of [
+        ['workflow_dispatch', 'v1.6.1', 'refs/heads/main', main],
+        ['workflow_dispatch', '1.6.1\n', 'refs/heads/main', main],
+        ['workflow_dispatch', '1.6.3', 'refs/heads/main', main],
+        ['workflow_dispatch', '1.6.2', 'refs/heads/main', main],
+        ['workflow_dispatch', '1.6.1', 'refs/tags/1.6.1', main],
+        ['push', '1.6.1', 'refs/tags/1.6.1', main],
+      ]) {
+        const result = run(event, tag, ref, eventSha)
+        expect(result.status).not.toBe(0)
+        expect(result.output).toBe('')
+        expect(result.head).toBe(main)
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
   it('uses native runner pairs and identical toolchain pins', () => {
     expect(ci.jobs.verify.strategy.matrix.include).toEqual([

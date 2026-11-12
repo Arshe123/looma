@@ -218,10 +218,12 @@ onUnmounted(() => {
 
 <template>
   <header class="h-12 shrink-0 flex bg-panel z-10 w-full overflow-hidden select-none p-1.5">
+    <!-- Hover color transitions must not delay removal; keep FLIP moves for dragging. -->
     <TransitionGroup
       name="editor-tab"
       tag="div"
       ref="tabGroup"
+      @leave="(_el, done) => done()"
       class="relative flex-1 flex overflow-x-auto overflow-y-hidden custom-scrollbar focus-scrollbar"
       @wheel="onWheel"
       @dragover="onDragOver"

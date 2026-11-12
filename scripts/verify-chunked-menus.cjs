@@ -8,13 +8,13 @@ const directory = fs.mkdtempSync(path.join(os.homedir(), '.hermes/cache/scratch/
 app.setPath('userData', path.join(directory, 'profile'))
 const wait = (ms = 150) => new Promise(resolve => setTimeout(resolve, ms))
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ width: 1100, height: 850, show: true, webPreferences: { backgroundThrottling: false } })
+  const win = new BrowserWindow({ width: 1100, height: 850, show: false, webPreferences: { backgroundThrottling: false } })
   const run = source => win.webContents.executeJavaScript(source)
   const errors = []
   win.webContents.on('console-message', (_event, level, message) => { if (level >= 3) errors.push(message) })
   const until = async (source, label) => { for (let i=0;i<120;i++) { if (await run(source)) return; await wait(50) } throw new Error(`Timeout: ${label}`) }
   const focus = async () => {
-    for (let i=0;i<30;i++) { app.focus({ steal: true }); win.focus(); await run('cm().focus()'); await wait(50); if (await run('document.hasFocus() && cm().hasFocus')) return }
+    for (let i=0;i<30;i++) { await run('cm().focus()'); await wait(50); if (await run('document.hasFocus() && cm().hasFocus')) return }
     throw new Error('native focus unavailable')
   }
   const fixture = async source => { await run(`setFixture(${JSON.stringify(source)})`); await wait(700); await run('start(0)'); await focus(); await wait() }
@@ -36,9 +36,10 @@ app.whenReady().then(async () => {
   try {
     await win.loadURL('http://127.0.0.1:5189/src/renderer/components/editor/test/chunked-editor.browser.html')
     await until('window.ready?.() && !!cm()', 'production editor')
-    await run('document.fonts.ready'); await focus(); win.webContents.debugger.attach('1.3')
+    await run('document.fonts.ready'); win.webContents.debugger.attach('1.3')
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled',{enabled:true})
     await win.webContents.debugger.sendCommand('Page.bringToFront')
+    await focus()
     await run('(async()=>{window.settings=(await import("/src/renderer/stores/settings.ts")).useSettingsStore();window.copied=[];Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:async text=>copied.push(text),readText:async()=>"粘贴文本"}})})()')
     await fixture('开始\n\n结束'); await run('select(3)'); await focus()
     await until('!!document.querySelector("[data-looma-continuous-menu-plus]:not([hidden])")', 'blank-line quick insert button')
@@ -47,7 +48,7 @@ app.whenReady().then(async () => {
     assert.equal(geometry.number,'hidden')
     await click('[data-looma-continuous-menu-plus]')
     assert.ok(await run('(()=>{const p=document.querySelector(".looma-continuous-menu-panel").getBoundingClientRect();const b=document.querySelector("[data-looma-continuous-menu-plus]").getBoundingClientRect();return Math.abs(p.left-Math.max(8,b.left))<1 && p.top>=b.bottom})()'),'pointer-opened panel follows the gutter button rather than jumping to body text')
-    assert.equal(await run('document.querySelector(".looma-continuous-menu-panel [data-action=image]").disabled'),true,'image insertion stays explicitly unavailable until the separate media stage')
+    assert.equal(await run('document.querySelector(".looma-continuous-menu-panel [data-action=image]").disabled'),false,'production image insertion is available in the quick menu')
     fs.writeFileSync(path.join(directory,'quick-menu.png'),(await win.webContents.capturePage()).toPNG())
     await click('.looma-continuous-menu-panel [data-action="h2"]')
     assert.equal(await run('model().content'),'开始\n## \n结束')

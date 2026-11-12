@@ -960,10 +960,29 @@ export const fileSystemService = {
 
       for (const entry of entries) {
         const target = path.join(trashDir, entry)
+        let stagingDir: string | undefined
+        let renamedTarget: string | undefined
         try {
-          await shell.trashItem(target)
+          const parsed = parseTrashFileName(entry)
+          if (parsed && parsed.originalName !== '.' && parsed.originalName !== '..') {
+            // 独立目录避免不同原路径下的同名项目互相覆盖。
+            stagingDir = await fs.mkdtemp(path.join(trashDir, '.transfer-'))
+            const originalTarget = path.join(stagingDir, path.basename(parsed.originalName))
+            await fs.rename(target, originalTarget)
+            renamedTarget = originalTarget
+          }
+          try {
+            await shell.trashItem(renamedTarget ?? target)
+          } catch (error) {
+            // 转移失败时恢复暂存名称，保证应用回收站仍可识别和恢复。
+            if (renamedTarget) await fs.rename(renamedTarget, target)
+            throw error
+          }
         } catch (error: any) {
           failures.push(`${entry}: ${error?.message ?? String(error)}`)
+        } finally {
+          // 只删除空目录，不能误删转移或回滚失败后仍保留的笔记。
+          if (stagingDir) await fs.rmdir(stagingDir).catch(() => {})
         }
       }
 

@@ -63,7 +63,7 @@ app.whenReady().then(async () => {
           assert.equal(styles.color, styles.expectedColor)
           assert.equal(styles.codeBackground, styles.expectedBackground)
           assert.notEqual(styles.color, styles.codeBackground)
-          assert.equal(styles.italic, 'italic'); assert.equal(styles.bullet, 'disc')
+          assert.equal(styles.italic, 'oblique 16deg'); assert.equal(styles.bullet, 'disc')
         }
       }
     }

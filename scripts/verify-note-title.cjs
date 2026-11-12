@@ -11,6 +11,7 @@ const wait = (ms=400) => new Promise(resolve=>setTimeout(resolve,ms))
 app.whenReady().then(async()=>{
  const win=new BrowserWindow({width:1500,height:850,show:false,webPreferences:{backgroundThrottling:false}})
  const run=code=>win.webContents.executeJavaScript(code)
+ const until=async(code,label)=>{for(let i=0;i<100;i++){if(await run(code))return;await wait(50)}throw new Error(`Timeout: ${label}`)}
  // Allow the real component's 150ms local serialization gate to settle before an external replacement.
  const fixture=async(content,chunked=false,partial=false)=>{await wait(200);await run(`setFixture(${JSON.stringify(content)},${chunked},${partial})`);await wait()}
  const key=async(keyCode,modifiers=[])=>{win.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers});win.webContents.sendInputEvent({type:'keyUp',keyCode,modifiers});await wait(100)}
@@ -21,6 +22,8 @@ app.whenReady().then(async()=>{
   for(let i=0;i<100;i++){if(await run('window.ready?.()')) break;await wait(100)}
   assert.ok(await run('ready()'),'real Tiptap mounted')
   win.webContents.debugger.attach('1.3')
+  await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled',{enabled:true})
+  await win.webContents.debugger.sendCommand('Page.bringToFront')
   await win.webContents.debugger.sendCommand('DOM.enable')
   await win.webContents.debugger.sendCommand('CSS.enable')
   await run('document.fonts.ready');await wait()
@@ -33,22 +36,37 @@ app.whenReady().then(async()=>{
   for(const chunked of [false,true]) {
    for(const [content,count] of [['# Title\n\n## Section',1],['# Title\n\nbody\n\n## Section',1],['# Title\n\n# Later',1],['\n\n# Title',1],['Setext\n======',1],['body\n\n# Later',0],['#\n\n# Later',0],['> # Nested',0],['```\n# Fake\n```',0],['- # Nested',0]]) {
     await fixture(content,chunked)
+    await until(`metadata().length===${count}`,`title eligibility ${chunked}: ${content}`)
     assert.equal((await run('metadata()')).length,count,`eligibility ${chunked}: ${content}`)
    }
    await fixture('# 标题 Title\n\n## Section\n\n正文 body',chunked)
+   await until('metadata().length===1','title metadata worker ready')
+   const titleSelector=chunked ? '.chunked-markdown-editor .looma-continuous-h1:not(.looma-continuous-structural-line)' : '.looma-note-body h1'
    let cases=0
    for(const font of ['simple','literary','handwritten']) for(const theme of ['light','dark']) for(const palette of ['paper','graphite','ocean']) for(const zoom of [75,100,200]) for(const width of [360,1400]) {
     await run(`appearance('${font}','${theme}','${palette}',${zoom},${width})`);await wait(20)
     const m=await run('measure()')
-    assert.equal(m.border,'0px');assert.equal(parseFloat(m.font),30*zoom/100)
-    assert.equal(m.weight,'550');assert.equal(m.marker,'"H1"');assert.equal(m.count,1)
-    assert.ok(Math.abs(m.titleGap-10.944*zoom/100)<1,JSON.stringify(m))
-    assert.ok(Math.abs(m.bodyGap-29.952*zoom/100)<1,JSON.stringify(m))
-    assert.equal(m.align,0);assert.ok(m.overflow<=1,JSON.stringify(m));cases++
+    assert.equal(m.border,'0px');assert.equal(m.count,1)
+    if(chunked) {
+     // The continuous renderer uses a heading line with an inline statistics widget,
+     // not the Tiptap h1 + block metadata layout. This is not a parity assertion.
+     assert.ok(Math.abs(parseFloat(m.font)-30.4*zoom/100)<0.01,JSON.stringify(m))
+     assert.equal(m.weight,'700');assert.ok(Math.abs(parseFloat(m.lineHeight)-45.6*zoom/100)<0.01,JSON.stringify(m))
+     assert.equal(m.metaInsideTitle,true);assert.equal(m.metaDisplay,'inline')
+     assert.equal(m.metaFont,'12px');assert.equal(m.metaMargin,'16px')
+     assert.ok(m.metaWidth>0 && m.metaHeight>0,JSON.stringify(m))
+    } else {
+     assert.equal(parseFloat(m.font),30*zoom/100)
+     assert.equal(m.weight,'550');assert.equal(m.marker,'"H1"')
+     assert.ok(Math.abs(m.titleGap-10.944*zoom/100)<1,JSON.stringify(m))
+     assert.ok(Math.abs(m.bodyGap-29.952*zoom/100)<1,JSON.stringify(m))
+     assert.equal(m.align,0)
+    }
+    assert.ok(m.overflow<=1,JSON.stringify(m));cases++
     if(theme==='light' && palette==='paper' && zoom===100 && width===1400) {
-     await run('document.querySelector(".looma-note-body h1").scrollIntoView({block:"start"})');await wait(50)
+     await run(`document.querySelector(${JSON.stringify(titleSelector)}).scrollIntoView({block:"start"})`);await wait(50)
      const {root}=await win.webContents.debugger.sendCommand('DOM.getDocument')
-     const {nodeId}=await win.webContents.debugger.sendCommand('DOM.querySelector',{nodeId:root.nodeId,selector:'.looma-note-body h1'})
+     const {nodeId}=await win.webContents.debugger.sendCommand('DOM.querySelector',{nodeId:root.nodeId,selector:titleSelector})
      const {fonts}=await win.webContents.debugger.sendCommand('CSS.getPlatformFontsForNode',{nodeId})
      assert.ok(fonts.some(font=>font.isCustomFont && font.glyphCount>0),'actual local title font')
      console.log('FONT',chunked?'chunked':'Tiptap',font,JSON.stringify(fonts))
@@ -57,19 +75,25 @@ app.whenReady().then(async()=>{
    console.log(`PASS ${chunked?'chunked':'Tiptap'} appearance: ${cases} font/theme/palette/zoom/width cases`,JSON.stringify(await run('measure()')))
   }
   await run("appearance('handwritten','light','paper',100,1000)")
-  // Force a title/H2 boundary at the real 64KiB split without a 64KiB heading.
-  const cross='# Title'+ ' '.repeat(65536)+'\n\n## Section\n\nbody\n\n# Later'
+  // Cross internal source boundaries without assuming obsolete 64KiB DOM chunks.
+  const cross='# Title\n\n'+ ' \n'.repeat(32768)+'## Section\n\nbody\n\n# Later'
   await fixture(cross,true,true)
+  await until('metadata()[0]==="字数待全文加载 · 阅读时间待全文加载"','partial title metadata')
   assert.deepEqual(await run('metadata()'),['字数待全文加载 · 阅读时间待全文加载'])
-  assert.ok(await run('document.querySelectorAll(".markdown-render-chunk").length>1'))
-  assert.ok(Math.abs((await run('measure()')).bodyGap-29.952)<1,'cross-chunk H2 margin')
+  assert.equal(await run('cm().state.doc.length'),cross.length,'continuous view retains complete source across internal boundaries')
+  assert.equal(await run('document.querySelectorAll(".cm-editor").length'),1,'one continuous view rather than per-chunk DOM editors')
   const loads=await run('events.loads')
   await run('props.isPartial=false');await wait()
+  await until('metadata()[0]==="共 4 字 · 预计阅读 1 分钟"','complete title metadata')
   assert.deepEqual(await run('metadata()'),['共 4 字 · 预计阅读 1 分钟'])
   assert.equal(await run('events.loads'),loads,'completion does not request content')
+  await run('jump(1)');await wait()
+  assert.ok(await run('(()=>{const heading=cm().contentDOM.querySelector(".looma-continuous-h2"),pane=cm().scrollDOM;if(!heading)return false;const h=heading.getBoundingClientRect(),p=pane.getBoundingClientRect();return h.top>=p.top-1 && h.bottom<=p.bottom+1})()'),'H2 navigation crosses internal source boundaries into the real viewport')
+  await run('jump(0)');await wait()
   await fixture(cross+'\n\n'+'word '.repeat(401),true)
+  await until('metadata()[0]==="共 405 字 · 预计阅读 3 分钟"','updated whole-document statistics')
   assert.deepEqual(await run('metadata()'),['共 405 字 · 预计阅读 3 分钟'],'cached title changes for full document')
-  console.log('PASS chunk boundary, pending→complete, appended whole-document count and no forced read')
+  console.log('PASS continuous source boundary navigation, pending→complete, appended whole-document count and no forced read')
   await fixture('# Title\n\nbody')
   await run('editor().commands.focus(6)');await wait(100);await key('Return')
   assert.equal(await run('editor().state.doc.childCount'),3,'Enter creates only a real paragraph')

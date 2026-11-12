@@ -8,6 +8,7 @@ import { serializeMarkdownAst } from '/src/shared/utils/markdown-rich-text'
 import { NOTE_TITLE_KEY } from '/src/shared/utils/tiptap-note-title'
 import { undoDepth } from '@tiptap/pm/history'
 import { parseMarkdownOutline } from '/src/shared/utils/markdown-outline'
+import { EditorView } from '@codemirror/view'
 import '/src/renderer/styles/style.css'
 // No workspace is opened, all content/IPC is isolated in memory.
 window.electronAPI = { platform:'darwin' }
@@ -19,16 +20,21 @@ const component = ref()
 createApp({setup:()=>()=>h(MarkdownEditor,{...props,ref:component,'onUpdate:content':value=>{events.updates.push(value);props.content=value},onSave:value=>events.saves.push(value),onEditPending:()=>events.edits++,onLoadMore:()=>events.loads++})}).use(pinia).mount('#app')
 window.ready = () => !!document.querySelector('.tiptap')?.editor
 window.editor = () => document.querySelector('.tiptap')?.editor
+window.cm = () => {
+ const root=document.querySelector('.chunked-markdown-editor:not(.chunked-source-only) .cm-editor')
+ return root ? EditorView.findFromDOM(root) : null
+}
 window.setFixture = async (content, chunked=false, partial=false) => {
  props.content=content; props.useChunkedPreview=chunked; props.isPartial=partial; await nextTick();
 }
 window.metadata = () => [...document.querySelectorAll('.looma-note-reading-time')].map(el=>el.textContent)
 window.measure = () => {
- const root=document.querySelector('.looma-note-body'), title=root.querySelector('h1'), meta=root.querySelector('.looma-note-reading-time')
+ const root=props.useChunkedPreview ? cm()?.contentDOM : document.querySelector('.looma-note-body')
+ const title=root?.querySelector(props.useChunkedPreview ? '.looma-continuous-h1:not(.looma-continuous-structural-line)' : 'h1'), meta=root?.querySelector('.looma-note-reading-time')
  if(!title||!meta) return {count:metadata().length}
  const ts=getComputedStyle(title),ms=getComputedStyle(meta), mr=meta.getBoundingClientRect(),tr=title.getBoundingClientRect()
  const next=meta.nextElementSibling || meta.parentElement.nextElementSibling?.firstElementChild
- return {count:metadata().length,font:ts.fontSize,weight:ts.fontWeight,lineHeight:ts.lineHeight,border:ts.borderBottomWidth,metaFont:ms.fontSize,color:ms.color,expectedColor:getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim(),titleGap:mr.top+parseFloat(ms.paddingTop)-tr.bottom,bodyGap:next?next.getBoundingClientRect().top-(mr.bottom-parseFloat(ms.paddingBottom)):null,align:mr.left-tr.left,marker:getComputedStyle(title,'::after').content,markerVisibility:getComputedStyle(title,'::after').visibility,overflow:root.scrollWidth-root.clientWidth}
+ return {count:metadata().length,font:ts.fontSize,weight:ts.fontWeight,lineHeight:ts.lineHeight,border:ts.borderBottomWidth,metaFont:ms.fontSize,color:ms.color,expectedColor:getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim(),titleGap:mr.top+parseFloat(ms.paddingTop)-tr.bottom,bodyGap:next?next.getBoundingClientRect().top-(mr.bottom-parseFloat(ms.paddingBottom)):null,align:mr.left-tr.left,marker:getComputedStyle(title,'::after').content,markerVisibility:getComputedStyle(title,'::after').visibility,overflow:root.scrollWidth-root.clientWidth,metaInsideTitle:title.contains(meta),metaDisplay:ms.display,metaMargin:ms.marginLeft,metaWidth:mr.width,metaHeight:mr.height}
 }
 window.snapshot = () => {
  const e=editor();e.commands.selectAll()

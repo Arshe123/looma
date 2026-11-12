@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import { useOllamaStore } from '@/renderer/stores/ollama'
 import { useProviderModels } from '@/renderer/composables/useProviderModels'
+import { getEmbeddingDiscoveryTarget } from '@/renderer/services/embeddingDiscovery'
 import {
   getDefaultChatProviderConfig,
   getDefaultEmbeddingProviderConfig,
@@ -47,9 +48,9 @@ const defaultLlmModelsByProvider: ProviderModelCatalog = {
 
 const defaultEmbedModelsByProvider: ProviderModelCatalog = {
   ollama: ['bge-m3:latest', 'nomic-embed-text:latest', 'mxbai-embed-large:latest'],
-  openai: ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002'],
+  openai: [],
   deepseek: [],
-  qwen: ['text-embedding-v4', 'text-embedding-v3', 'text-embedding-async-v2'],
+  qwen: [],
   custom: [],
 }
 
@@ -112,6 +113,17 @@ const {
 })
 const isLlmOllama = computed(() => aiSettings.value.chat.provider === 'ollama')
 const isEmbedOllama = computed(() => aiSettings.value.embedding.provider === 'ollama')
+const embedDiscoveryTarget = computed(() => isEmbedOllama.value ? null : getEmbeddingDiscoveryTarget(embedBaseUrl.value))
+const {
+  models: discoveredEmbedModels,
+  loading: isDiscoveringEmbedModels,
+  loaded: hasDiscoveredEmbedModels,
+  error: embedDiscoveryError,
+  refresh: refreshDiscoveredEmbedModels,
+} = useProviderModels(() => {
+  if (!embedDiscoveryTarget.value || !aiSettings.value.embedding.apiKey?.trim()) return null
+  return { ...embedDiscoveryTarget.value, apiKey: aiSettings.value.embedding.apiKey }
+})
 const llmNeedsPull = computed(() => isLlmOllama.value && Boolean(aiSettings.value.chat.model && !ollamaModels.value.includes(aiSettings.value.chat.model)))
 const embedNeedsPull = computed(() => isEmbedOllama.value && Boolean(aiSettings.value.embedding.model && !ollamaModels.value.includes(aiSettings.value.embedding.model)))
 const installedModelSet = computed(() => new Set(ollamaModels.value))
@@ -162,10 +174,16 @@ const llmModelOptions = computed(() => buildModelOptions(
   return { ...option, desc: discovered ? `${discovered.name}` : '当前配置的模型（尚未由接口确认）' }
 }))
 const embedModelOptions = computed(() => buildModelOptions(
-  defaultEmbedModelsByProvider[aiSettings.value.embedding.provider],
+  isEmbedOllama.value
+    ? defaultEmbedModelsByProvider[aiSettings.value.embedding.provider]
+    : discoveredEmbedModels.value.map(model => model.id),
   aiSettings.value.embedding.model,
   aiSettings.value.embedding.provider,
-))
+).map(option => {
+  if (isEmbedOllama.value) return option
+  const discovered = discoveredEmbedModels.value.find(item => item.id === option.name)
+  return { ...option, desc: discovered ? discovered.name : '当前配置的模型（尚未由接口确认）' }
+}))
 
 const showInfo = async (title: string, message: string, detail?: string) => {
   await window.electronAPI.app.showMessageBox({
@@ -757,6 +775,30 @@ watch(
             />
           </label>
 
+          <div v-if="!isEmbedOllama" class="grid gap-2" aria-live="polite">
+            <template v-if="embedDiscoveryTarget">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <p class="text-xs leading-5 text-text-muted">
+                  {{ isDiscoveringEmbedModels ? '正在获取向量模型列表…' : hasDiscoveredEmbedModels ? `找到 ${discoveredEmbedModels.length} 个已确认的向量模型` : '填写 API 密钥后自动获取向量模型列表，也可手动输入模型名称。' }}
+                </p>
+                <button
+                  type="button"
+                  class="inline-flex h-8 items-center gap-2 rounded-xl border border-border-soft px-3 text-xs text-text-main hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle"
+                  :disabled="isDiscoveringEmbedModels || !aiSettings.embedding.apiKey?.trim()"
+                  @click="refreshDiscoveredEmbedModels"
+                >
+                  <Loader2 v-if="isDiscoveringEmbedModels" :size="13" class="animate-spin" />
+                  <RefreshCw v-else :size="13" />
+                  刷新向量模型列表
+                </button>
+              </div>
+              <p v-if="embedDiscoveryError" role="alert" class="text-xs leading-5 text-danger">{{ embedDiscoveryError }}</p>
+            </template>
+            <p v-if="!embedDiscoveryTarget || embedDiscoveryError || (hasDiscoveredEmbedModels && !discoveredEmbedModels.length)" class="text-xs leading-5 text-text-muted">
+              无法明确获取可用的向量模型列表，请查阅官方相关文档，确认支持的模型名称后手动填写。当前配置会保留，但不代表已验证可用。
+            </p>
+          </div>
+
           <ModelSelectCard
             title="Embedding Model"
             subtitle="Vector model"
@@ -768,7 +810,7 @@ watch(
             :is-model-pulling="ollamaStore.isPullingModel"
             :is-model-deleting="ollamaStore.isDeletingModel"
             :local-managed="isEmbedOllama"
-            :available-label="isEmbedOllama ? '已安装' : '可选择'"
+            :available-label="isEmbedOllama ? '已安装' : discoveredEmbedModels.some(model => model.id === aiSettings.embedding.model) ? '接口已确认' : '未确认'"
             :missing-label="isEmbedOllama ? '未下载' : '需填写'"
             :empty-description="isEmbedOllama ? '已安装的本地模型' : `${getProviderLabel(aiSettings.embedding.provider)} 模型`"
             search-placeholder="搜索模型，或输入自定义模型名..."

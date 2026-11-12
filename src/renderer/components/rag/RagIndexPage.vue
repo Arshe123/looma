@@ -102,6 +102,7 @@ const isLoadingChunks = ref(false)
 const chunkError = ref('')
 const chunkSearchQuery = ref('')
 const reindexingFilePath = ref('')
+const ignoringFilePath = ref('')
 const reindexStartedAt = ref<number | null>(null)
 const reindexElapsedSeconds = ref(0)
 const reindexMessage = ref('')
@@ -109,6 +110,7 @@ const reindexError = ref('')
 const reindexSuccessPath = ref('')
 let unsubscribeIndexStream: (() => void) | null = null
 let reindexTimer: number | null = null
+let chunkRequestGeneration = 0
 
 const activeWorkspaceId = computed(() => workspaceStore.activeWorkspaceId)
 const activeWorkspaceName = computed(() => workspaceStore.activeWorkspace?.name || '当前工作空间')
@@ -122,6 +124,7 @@ const summary = computed<IndexSummary>(() => status.value?.summary ?? {
 })
 const totalActionable = computed(() => summary.value.notIndexed + summary.value.outdated + summary.value.deleted + summary.value.failed)
 const isFileReindexing = computed(() => Boolean(reindexingFilePath.value))
+const indexActionsBusy = computed(() => isBuilding.value || isFileReindexing.value || Boolean(ignoringFilePath.value))
 const activeReindexFile = computed(() =>
   (status.value?.files ?? []).find((file) => file.path === reindexingFilePath.value) ?? null,
 )
@@ -167,7 +170,7 @@ const healthClass = computed(() => {
 const filteredFiles = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
   return (status.value?.files ?? [])
-    .filter((file) => statusFilter.value === 'all' || file.status === statusFilter.value)
+    .filter((file) => statusFilter.value === 'all' ? file.status !== 'ignored' : file.status === statusFilter.value)
     .filter((file) => !q || file.path.toLowerCase().includes(q))
 })
 const totalFilteredFiles = computed(() => filteredFiles.value.length)
@@ -295,7 +298,7 @@ const cancelBuild = async () => {
 
 const buildIndex = async (mode: BuildMode) => {
   const workspaceId = activeWorkspaceId.value
-  if (!workspaceId || isBuilding.value) return
+  if (!workspaceId || indexActionsBusy.value) return
   if (mode === 'full') {
     const ok = window.confirm('全量重建会清空旧索引并重新生成，确认继续？')
     if (!ok) return
@@ -316,7 +319,7 @@ const buildIndex = async (mode: BuildMode) => {
 
 const reindexFile = async (path: string) => {
   const workspaceId = activeWorkspaceId.value
-  if (!workspaceId || isBuilding.value || isFileReindexing.value) return
+  if (!workspaceId || indexActionsBusy.value) return
 
   errorText.value = ''
   reindexError.value = ''
@@ -363,6 +366,7 @@ const reindexFile = async (path: string) => {
 }
 
 const closeChunkDrawer = () => {
+  chunkRequestGeneration += 1
   selectedFile.value = null
   fileChunks.value = []
   chunkError.value = ''
@@ -372,7 +376,8 @@ const closeChunkDrawer = () => {
 
 const openFileChunks = async (file: IndexFile) => {
   const workspaceId = activeWorkspaceId.value
-  if (!workspaceId || file.status === 'ignored') return
+  if (!workspaceId || ignoringFilePath.value || file.status === 'ignored') return
+  const generation = ++chunkRequestGeneration
   selectedFile.value = file
   fileChunks.value = []
   chunkError.value = ''
@@ -380,6 +385,7 @@ const openFileChunks = async (file: IndexFile) => {
   isLoadingChunks.value = true
   try {
     const result = await window.electronAPI.rag.indexFile.chunks(workspaceId, file.path)
+    if (generation !== chunkRequestGeneration) return
     if (!result.success) {
       chunkError.value = result.error || '读取 chunk 详情失败。'
       return
@@ -392,9 +398,31 @@ const openFileChunks = async (file: IndexFile) => {
       chunkError.value = '当前索引缺少按文件追踪信息，请全量重建索引后再查看 chunk 详情。'
     }
   } catch (error: any) {
-    chunkError.value = error?.message ?? String(error)
+    if (generation === chunkRequestGeneration) chunkError.value = error?.message ?? String(error)
   } finally {
-    isLoadingChunks.value = false
+    if (generation === chunkRequestGeneration) isLoadingChunks.value = false
+  }
+}
+
+const setFileIgnored = async (file: IndexFile) => {
+  const workspaceId = activeWorkspaceId.value
+  if (!workspaceId || indexActionsBusy.value || file.status === 'deleted') return
+  ignoringFilePath.value = file.path
+  const action = file.status === 'ignored' ? 'unignore' : 'ignore'
+  const actionLabel = action === 'ignore' ? '忽略文件' : '取消忽略'
+  errorText.value = ''
+  try {
+    const result = await window.electronAPI.rag.indexFile[action](workspaceId, file.path)
+    if (!result.success || result.data?.error || result.data?.success === false) {
+      errorText.value = `${actionLabel}失败：${result.error || result.data?.error || '服务未完成操作。'}`
+      return
+    }
+    if (selectedFile.value?.path === file.path) closeChunkDrawer()
+    await refreshStatus()
+  } catch (error: any) {
+    errorText.value = `${actionLabel}失败：${error?.message ?? String(error)}`
+  } finally {
+    ignoringFilePath.value = ''
   }
 }
 
@@ -409,7 +437,7 @@ const copyChunkText = async (chunk: FileChunk) => {
 
 const deleteAllIndex = async () => {
   const workspaceId = activeWorkspaceId.value
-  if (!workspaceId || isBuilding.value) return
+  if (!workspaceId || indexActionsBusy.value) return
   const ok = window.confirm('确认删除当前工作空间的全部索引数据？\n\n此操作不可恢复。')
   if (!ok) return
   errorText.value = ''
@@ -427,7 +455,7 @@ const deleteAllIndex = async () => {
 
 const deleteFileIndex = async (path: string) => {
   const workspaceId = activeWorkspaceId.value
-  if (!workspaceId || isBuilding.value) return
+  if (!workspaceId || indexActionsBusy.value) return
   const ok = window.confirm(`删除索引记录：${path}？`)
   if (!ok) return
   const result = await window.electronAPI.rag.indexFile.delete(workspaceId, path)
@@ -497,25 +525,25 @@ onBeforeUnmount(() => {
           <p class="mt-1 text-sm text-text-muted">管理 {{ activeWorkspaceName }} 的本地 RAG 索引、文件状态和配置兼容性。</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-border-soft bg-panel-soft px-3 text-xs font-medium hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle" :disabled="isLoading || isBuilding || isFileReindexing" @click="refreshStatus">
+          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-border-soft bg-panel-soft px-3 text-xs font-medium hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle" :disabled="isLoading || indexActionsBusy" @click="refreshStatus">
             <Loader2 v-if="isLoading" :size="14" class="animate-spin" />
             <RefreshCw v-else :size="14" />
             刷新状态
           </button>
-          <button class="inline-flex h-9 items-center gap-2 rounded-xl bg-accent px-3 text-xs font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-accent-soft disabled:text-text-muted" :disabled="isBuilding || isFileReindexing" @click="buildIndex('incremental')">
+          <button class="inline-flex h-9 items-center gap-2 rounded-xl bg-accent px-3 text-xs font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-accent-soft disabled:text-text-muted" :disabled="indexActionsBusy" @click="buildIndex('incremental')">
             <Loader2 v-if="isBuilding && buildMode === 'incremental'" :size="14" class="animate-spin" />
             <Database v-else :size="14" />
             增量更新
           </button>
-          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-border-soft bg-panel-soft px-3 text-xs font-medium hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle" :disabled="isBuilding || isFileReindexing" @click="buildIndex('retry_failed')">
+          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-border-soft bg-panel-soft px-3 text-xs font-medium hover:bg-accent-soft disabled:cursor-not-allowed disabled:text-text-subtle" :disabled="indexActionsBusy" @click="buildIndex('retry_failed')">
             <RotateCcw :size="14" />
             重试失败
           </button>
-          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 text-xs font-medium text-danger hover:bg-danger/15 disabled:cursor-not-allowed disabled:opacity-60" :disabled="isBuilding || isFileReindexing" @click="buildIndex('full')">
+          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 text-xs font-medium text-danger hover:bg-danger/15 disabled:cursor-not-allowed disabled:opacity-60" :disabled="indexActionsBusy" @click="buildIndex('full')">
             <Trash2 :size="14" />
             全量重建
           </button>
-          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-danger/20 bg-panel-soft px-3 text-xs font-medium text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50" :disabled="isBuilding || isFileReindexing" @click="deleteAllIndex">
+          <button class="inline-flex h-9 items-center gap-2 rounded-xl border border-danger/20 bg-panel-soft px-3 text-xs font-medium text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50" :disabled="indexActionsBusy" @click="deleteAllIndex">
             <Trash2 :size="14" />
             删除全部索引
           </button>
@@ -529,7 +557,7 @@ onBeforeUnmount(() => {
 
     <RagIndexSettingsDialog
       :open="showSettings"
-      :disabled="isBuilding || isFileReindexing"
+      :disabled="indexActionsBusy"
       @close="showSettings = false"
       @saved="refreshStatus"
       @save-and-rebuild="buildIndex('full')"
@@ -740,13 +768,22 @@ onBeforeUnmount(() => {
                       v-if="file.status !== 'ignored' && file.status !== 'deleted'"
                       class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-text-muted hover:bg-accent-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-60"
                       :class="reindexingFilePath === file.path ? 'bg-accent-soft text-accent' : ''"
-                      :disabled="isBuilding || (isFileReindexing && reindexingFilePath !== file.path)"
+                      :disabled="indexActionsBusy"
                       @click.stop="reindexFile(file.path)"
                     >
                       <Loader2 v-if="reindexingFilePath === file.path" :size="12" class="animate-spin" />
                       {{ reindexingFilePath === file.path ? '重建中' : '重建' }}
                     </button>
-                    <button v-if="file.status === 'deleted'" class="rounded-lg px-2 py-1 text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50" :disabled="isBuilding || isFileReindexing" @click.stop="deleteFileIndex(file.path)">清理</button>
+                    <button
+                      v-if="file.status !== 'deleted'"
+                      class="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-text-muted hover:bg-accent-soft hover:text-text-main disabled:cursor-not-allowed disabled:opacity-60"
+                      :disabled="indexActionsBusy"
+                      @click.stop="setFileIgnored(file)"
+                    >
+                      <Loader2 v-if="ignoringFilePath === file.path" :size="12" class="animate-spin" />
+                      {{ ignoringFilePath === file.path ? '处理中' : file.status === 'ignored' ? '取消忽略' : '忽略' }}
+                    </button>
+                    <button v-if="file.status === 'deleted'" class="rounded-lg px-2 py-1 text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50" :disabled="indexActionsBusy" @click.stop="deleteFileIndex(file.path)">清理</button>
                   </div>
                 </td>
               </tr>

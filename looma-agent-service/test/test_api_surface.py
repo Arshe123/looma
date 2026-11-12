@@ -18,6 +18,8 @@ class ApiSurfaceTest(unittest.TestCase):
             ('POST', '/rag/index/build/stream'),
             ('POST', '/rag/index/file/chunks'),
             ('POST', '/rag/index/file/reindex'),
+            ('POST', '/rag/index/file/ignore'),
+            ('POST', '/rag/index/file/unignore'),
             ('DELETE', '/rag/index/file'),
             ('DELETE', '/rag/index'),
         })

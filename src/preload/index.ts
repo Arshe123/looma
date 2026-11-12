@@ -210,6 +210,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       },
     },
     indexFile: {
+      unignore: (workspaceId: string, relativePath: string) => ipcRenderer.invoke('rag:indexFile:unignore', workspaceId, relativePath),
+      ignore: (workspaceId: string, relativePath: string) => ipcRenderer.invoke('rag:indexFile:ignore', workspaceId, relativePath),
       reindex: (workspaceId: string, relativePath: string) => ipcRenderer.invoke('rag:indexFile:reindex', workspaceId, relativePath),
       chunks: (workspaceId: string, relativePath: string) => ipcRenderer.invoke('rag:indexFile:chunks', workspaceId, relativePath),
       delete: (workspaceId: string, relativePath: string) => ipcRenderer.invoke('rag:indexFile:delete', workspaceId, relativePath),

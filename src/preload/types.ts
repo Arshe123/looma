@@ -164,6 +164,7 @@ interface RagSourcePayload {
 
 interface RagIndexPayload {
   status: string;
+  success?: boolean;
   document_count?: number;
   file_count?: number;
   exists?: boolean;
@@ -408,6 +409,8 @@ interface ElectronAPI {
       onEvent: (listener: (payload: RagStreamEventPayload) => void) => () => void;
     };
     indexFile: {
+      unignore: (workspaceId: string, relativePath: string) => Promise<Result<RagIndexPayload>>;
+      ignore: (workspaceId: string, relativePath: string) => Promise<Result<RagIndexPayload>>;
       reindex: (workspaceId: string, relativePath: string) => Promise<Result<RagIndexPayload>>;
       chunks: (workspaceId: string, relativePath: string) => Promise<Result<RagFileChunksPayload>>;
       delete: (workspaceId: string, relativePath: string) => Promise<Result<RagIndexPayload>>;

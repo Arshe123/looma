@@ -66,6 +66,20 @@ ipcMain.handle('rag:indexFile:chunks', async (_, workspaceId: string, relativePa
   return await aiService.getFileChunks(workspacePath, relativePath);
 });
 
+ipcMain.handle('rag:indexFile:ignore', async (_, workspaceId: string, relativePath: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: '工作空间不存在。' };
+  if (!relativePath?.trim()) return { success: false, error: '必须提供文件路径。' };
+  return await aiService.ignoreFile(workspacePath, relativePath);
+});
+
+ipcMain.handle('rag:indexFile:unignore', async (_, workspaceId: string, relativePath: string) => {
+  const workspacePath = await getWorkspacePathById(workspaceId);
+  if (!workspacePath) return { success: false, error: '工作空间不存在。' };
+  if (!relativePath?.trim()) return { success: false, error: '必须提供文件路径。' };
+  return await aiService.unignoreFile(workspacePath, relativePath);
+});
+
 ipcMain.handle('rag:indexFile:reindex', async (_, workspaceId: string, relativePath: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };

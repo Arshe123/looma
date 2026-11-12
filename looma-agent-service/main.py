@@ -30,7 +30,9 @@ from rag.index_manager import (
     delete_file_index,
     delete_index_data,
     get_file_chunks,
+    ignore_file,
     reindex_file,
+    unignore_file,
 )
 from schemas import (
     AgentRunRequest,
@@ -175,6 +177,24 @@ async def rag_index_file_chunks(request: IndexBuildRequest):
 async def rag_index_file_reindex(request: IndexBuildRequest):
     request = resolve_request_config(request)
     return await asyncio.to_thread(reindex_file, request)
+
+
+@app.post("/rag/index/file/ignore")
+async def rag_index_file_ignore(request: IndexBuildRequest):
+    request = resolve_request_config(request)
+    try:
+        return await asyncio.to_thread(ignore_file, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/rag/index/file/unignore")
+async def rag_index_file_unignore(request: IndexBuildRequest):
+    request = resolve_request_config(request)
+    try:
+        return await asyncio.to_thread(unignore_file, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.delete("/rag/index/file")

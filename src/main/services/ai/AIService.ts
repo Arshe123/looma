@@ -24,6 +24,7 @@ export interface ChatAnswer {
 
 export interface RagIndexResult {
   status: string
+  success?: boolean
   document_count?: number
   file_count?: number
   exists?: boolean
@@ -247,6 +248,10 @@ interface AIService {
     onEvent: (event: RagStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<Result<void>>
+
+  ignoreFile(workspacePath: string, path: string): Promise<Result<RagIndexResult>>
+
+  unignoreFile(workspacePath: string, path: string): Promise<Result<RagIndexResult>>
 
   reindexFile(workspacePath: string, path: string): Promise<Result<RagIndexResult>>
 
@@ -619,6 +624,14 @@ export const aiService: AIService = {
     signal?: AbortSignal,
   ): Promise<Result<void>> {
     return streamNdjson<RagStreamEvent>('/rag/index/build/stream', toIndexBuildBody(workspacePath, mode), onEvent, signal)
+  },
+
+  async ignoreFile(workspacePath: string, path: string): Promise<Result<RagIndexResult>> {
+    return postJson<RagIndexResult>('/rag/index/file/ignore', toIndexBuildBody(workspacePath, 'incremental', path))
+  },
+
+  async unignoreFile(workspacePath: string, path: string): Promise<Result<RagIndexResult>> {
+    return postJson<RagIndexResult>('/rag/index/file/unignore', toIndexBuildBody(workspacePath, 'incremental', path))
   },
 
   async reindexFile(workspacePath: string, path: string): Promise<Result<RagIndexResult>> {

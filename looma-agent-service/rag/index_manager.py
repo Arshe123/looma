@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator, Literal
 
 from providers.base import ProviderConnectionError
 from rag import index_service
+from rag.index_exclusions import canonical_relative_file_path, ignored_files_path, load_ignored_files, relative_file_path, save_ignored_files
 from rag.index_transaction import staged_index_update
 from rag.index_service import build_index as build_vector_index, get_persist_dir, has_index
 from rag.index_service import scan_indexable_files
@@ -384,7 +385,8 @@ def _build_status_snapshot_locked(request: IndexRequest | IndexStatusRequest) ->
 
     manifest = load_manifest(workspace)
     manifest_files: dict[str, Any] = manifest.get("files", {})
-    scanned, ignored = scan_workspace(workspace)
+    scanned, _excluded = scan_workspace(workspace)
+    manually_ignored = load_ignored_files(workspace)
     seen: set[str] = set()
     files: list[dict[str, Any]] = []
 
@@ -409,15 +411,14 @@ def _build_status_snapshot_locked(request: IndexRequest | IndexStatusRequest) ->
         files.append(file_entry(path, workspace, status, previous, computed_hash=computed_hash))
 
     for rel, previous in manifest_files.items():
-        if rel in seen:
+        if rel in seen or rel in manually_ignored:
             continue
         item = dict(previous)
         item["path"] = rel
         item["status"] = "deleted"
         files.append(item)
 
-    for path in ignored[:500]:
-        rel = str(path.relative_to(workspace)).replace("\\", "/")
+    for rel in sorted(manually_ignored):
         files.append({"path": rel, "status": "ignored", "chunkCount": 0, "error": None})
 
     summary = {status: 0 for status in STATUSES}
@@ -699,6 +700,56 @@ async def build_managed_index_events(request: IndexRequest, mode: str = "increme
     yield {"type": "done", "result": result, **{k: v for k, v in result.items() if k in {"status", "document_count", "file_count", "exists", "persist_dir", "mode", "processed_count"}}}
 
 
+def ignore_file(request: IndexBuildRequest) -> dict[str, Any]:
+    workspace = Path(request.workspace.workspace_path).expanduser().resolve()
+    if not workspace.is_dir():
+        raise ValueError("工作空间不存在或不是文件夹。")
+    rel = relative_file_path(request.path)
+    knowledge = request.knowledge or KnowledgeConfig()
+    persist_dir = get_persist_dir(workspace, knowledge.vector_store_path)
+    _validate_transaction_target(workspace, persist_dir)
+    try:
+        with index_operation_lock(persist_dir), staged_index_update(
+            persist_dir, [manifest_path(workspace), metadata_path(workspace), ignored_files_path(workspace)],
+            copy_existing=True,
+        ) as staged_dir:
+            if not index_service.is_indexable_file(workspace / rel, workspace):
+                raise ValueError("文件格式不支持或该文件已排除索引。")
+            rel = canonical_relative_file_path(workspace, rel)
+            present = {name for name in REQUIRED_INDEX_FILES if (staged_dir / name).is_file()}
+            if present and present != REQUIRED_INDEX_FILES:
+                raise CorruptIndexError(persist_dir, "索引文件不完整，无法安全删除文件向量。")
+            removed = _remove_doc_vectors(workspace, staged_dir, file_doc_id(workspace, rel), rel)
+            manifest = load_manifest(workspace)
+            manifest["files"].pop(rel, None)
+            save_manifest(workspace, manifest)
+            ignored = load_ignored_files(workspace)
+            ignored.add(rel)
+            save_ignored_files(workspace, ignored)
+    except CorruptIndexError as exc:
+        return corrupt_index_response(exc, rel)
+    return {"success": True, "status": "ignored", "path": rel, "vector_nodes_removed": removed}
+
+
+def unignore_file(request: IndexBuildRequest) -> dict[str, Any]:
+    workspace = Path(request.workspace.workspace_path).expanduser().resolve()
+    if not workspace.is_dir():
+        raise ValueError("工作空间不存在或不是文件夹。")
+    rel = relative_file_path(request.path)
+    knowledge = request.knowledge or KnowledgeConfig()
+    persist_dir = get_persist_dir(workspace, knowledge.vector_store_path)
+    _validate_transaction_target(workspace, persist_dir)
+    with index_operation_lock(persist_dir), staged_index_update(
+        persist_dir, [ignored_files_path(workspace)], copy_existing=True,
+    ):
+        ignored = load_ignored_files(workspace)
+        if (workspace / rel).is_file():
+            rel = canonical_relative_file_path(workspace, rel)
+        ignored.discard(rel)
+        save_ignored_files(workspace, ignored)
+    return {"success": True, "status": "ok", "path": rel}
+
+
 def delete_file_index(request: IndexBuildRequest) -> dict[str, Any]:
     workspace = Path(request.workspace.workspace_path).expanduser().resolve()
     rel = (request.path or "").strip().replace("\\", "/")
@@ -886,6 +937,9 @@ def reindex_file(request: IndexBuildRequest) -> dict[str, Any]:
     if not file_path.is_file():
         raise ValueError(f"文件不存在或不是普通文件：{rel}")
 
+    rel = canonical_relative_file_path(workspace, rel)
+    file_path = workspace / rel
+
     knowledge = request.knowledge or KnowledgeConfig()
     vector_store = knowledge.vector_store_path or ".looma/rag-index"
     persist_dir = get_persist_dir(workspace, vector_store)
@@ -898,6 +952,8 @@ def reindex_file(request: IndexBuildRequest) -> dict[str, Any]:
         with index_operation_lock(persist_dir), staged_index_update(
             persist_dir, [manifest_path(workspace), metadata_path(workspace)], copy_existing=True
         ) as staged_dir:
+            if rel in load_ignored_files(workspace):
+                raise ValueError("该文件已忽略，请先取消忽略后再重建索引。")
             _remove_doc_vectors(workspace, staged_dir, doc_id, rel)
             chunks = _insert_doc_vectors(workspace, staged_dir, file_path, index_request)
             manifest = load_manifest(workspace)

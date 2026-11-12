@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 from pydantic import PrivateAttr
 
 from providers.factory import create_embedding_provider
+from rag.index_exclusions import load_ignored_files
 from schemas import EmbeddingModelConfig, IndexRequest, KnowledgeConfig
 
 if TYPE_CHECKING:
@@ -111,14 +112,18 @@ def _is_link_or_reparse(path: Path) -> bool:
 def is_indexable_file(path: Path, workspace: Path) -> bool:
     try:
         relative = path.relative_to(workspace)
-        if any(part.casefold() in EXCLUDE_PARTS or part == ".." for part in relative.parts):
+        if any(part.casefold() in EXCLUDE_PARTS or part.startswith(".") for part in relative.parts):
             return False
         if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             return False
         current = workspace
         for part in relative.parts:
             current = current / part
-            if _is_link_or_reparse(current):
+            info = current.lstat()
+            if _is_link_or_reparse(current) or bool(
+                getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_HIDDEN", 0)
+                or getattr(info, "st_flags", 0) & getattr(stat, "UF_HIDDEN", 0)
+            ):
                 return False
         return path.is_file() and path.resolve().is_relative_to(workspace)
     except (OSError, ValueError):
@@ -127,6 +132,7 @@ def is_indexable_file(path: Path, workspace: Path) -> bool:
 
 def scan_indexable_files(workspace: Path) -> tuple[list[Path], list[Path]]:
     workspace = workspace.expanduser().resolve()
+    manually_ignored = load_ignored_files(workspace)
     accepted: list[Path] = []
     ignored: list[Path] = []
     for directory, dirs, filenames in os.walk(workspace, followlinks=False):
@@ -137,7 +143,8 @@ def scan_indexable_files(workspace: Path) -> tuple[list[Path], list[Path]]:
                 ignored.append(path)
         for name in filenames:
             path = Path(directory) / name
-            (accepted if is_indexable_file(path, workspace) else ignored).append(path)
+            eligible = path.relative_to(workspace).as_posix() not in manually_ignored and is_indexable_file(path, workspace)
+            (accepted if eligible else ignored).append(path)
     key = lambda path: (str(path).casefold(), str(path))
     return sorted(accepted, key=key), sorted(ignored, key=key)
 

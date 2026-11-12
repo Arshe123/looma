@@ -1,3 +1,5 @@
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +10,19 @@ from rag import index_service as service
 
 
 class DocumentLoadingTests(unittest.TestCase):
+    @unittest.skipUnless(hasattr(os, 'chflags') and hasattr(stat, 'UF_HIDDEN'), '需要 macOS 隐藏标志')
+    def test_shared_scan_excludes_finder_hidden_files_and_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory).resolve()
+            for relative in ('visible.md', 'hidden.md', 'private/note.md'):
+                path = workspace / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('example')
+            os.chflags(workspace / 'hidden.md', stat.UF_HIDDEN)
+            os.chflags(workspace / 'private', stat.UF_HIDDEN)
+            scanned, _excluded = service.scan_indexable_files(workspace)
+            self.assertEqual([path.relative_to(workspace).as_posix() for path in scanned], ['visible.md'])
+
     def test_shared_scan_excludes_generated_files_and_symlinks(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
             workspace = Path(directory).resolve()

@@ -54,34 +54,11 @@ const defaultEmbedModelsByProvider: ProviderModelCatalog = {
   custom: [],
 }
 
-const modelMetadata: Record<string, { desc: string; size?: string }> = {
-  'qwen2.5:7b': { desc: '通用中文能力较好，适合日常笔记问答', size: '约 4.7 GB' },
-  'qwen2.5:3b': { desc: '响应更轻量，适合低配置设备和快速任务', size: '约 2.0 GB' },
-  'llama3.1:8b': { desc: '英文能力较好，适合通用对话和写作', size: '约 4.9 GB' },
-  'deepseek-r1:7b': { desc: '偏推理任务，适合分析和步骤拆解', size: '约 4.7 GB' },
-  'bge-m3:latest': { desc: '多语言向量模型，适合 RAG 检索', size: '约 1.2 GB' },
-  'nomic-embed-text:latest': { desc: '文本向量模型，适合本地知识库检索', size: '约 274 MB' },
-  'mxbai-embed-large:latest': { desc: '高质量嵌入模型，适合语义检索', size: '约 670 MB' },
-  'gpt-4o-mini': { desc: 'OpenAI 轻量通用模型，适合日常问答和摘要' },
-  'gpt-4o': { desc: 'OpenAI 通用旗舰模型，适合复杂理解和生成' },
-  'gpt-4.1-mini': { desc: 'OpenAI 低延迟模型，适合工具调用和长上下文任务' },
-  'gpt-4.1': { desc: 'OpenAI 高能力模型，适合复杂推理和文档处理' },
-  'qwen3.7plus': { desc: '通义千问均衡模型，适合中文知识工作' },
-  'text-embedding-3-small': { desc: 'OpenAI 小型向量模型，成本低、适合常规检索' },
-  'text-embedding-3-large': { desc: 'OpenAI 高质量向量模型，适合高精度语义检索' },
-  'text-embedding-ada-002': { desc: 'OpenAI 旧版兼容向量模型' },
-  'text-embedding-v4': { desc: '通义千问新版文本向量模型' },
-  'text-embedding-v3': { desc: '通义千问文本向量模型' },
-  'text-embedding-async-v2': { desc: '通义千问异步文本向量模型' },
-  'bge-m3': { desc: '多语言 BGE 向量模型，常见于兼容服务' },
-  'bge-large-zh-v1.5': { desc: '中文语义检索向量模型，常见于兼容服务' },
-}
-
 const providerOptions: Array<{ value: ProviderValue; label: string }> = [
   { value: 'ollama', label: 'Ollama' },
   { value: 'openai', label: 'OpenAI' },
   { value: 'deepseek', label: 'DeepSeek' },
-  { value: 'qwen', label: '通义千问' },
+  { value: 'qwen', label: '阿里云百炼' },
   { value: 'custom', label: '自定义 HTTP API' },
 ]
 
@@ -136,15 +113,6 @@ const getProviderLabel = (provider: AiProvider) => {
   return providerOptions.find((option) => option.value === provider)?.label ?? provider
 }
 
-const getModelDescription = (model: string, provider: AiProvider) => {
-
-  return modelMetadata[model]?.desc ?? (provider === 'ollama' ? '已安装的本地模型' : `${getProviderLabel(provider)} 模型`)
-}
-
-const getModelSize = (model: string) => {
-  return modelMetadata[model]?.size ?? ''
-}
-
 const buildModelOptions = (defaults: string[], selectedModel: string, provider: AiProvider): ModelOption[] => {
   const names = new Set<string>()
   for (const model of defaults) names.add(model)
@@ -157,8 +125,7 @@ const buildModelOptions = (defaults: string[], selectedModel: string, provider: 
     name,
     installed: provider === 'ollama' ? isModelInstalled(name) : true,
     selected: name === selectedModel,
-    desc: getModelDescription(name, provider),
-    size: provider === 'ollama' ? getModelSize(name) : '',
+    desc: provider === 'ollama' ? '本地模型' : `${getProviderLabel(provider)} 模型`,
   }))
 }
 

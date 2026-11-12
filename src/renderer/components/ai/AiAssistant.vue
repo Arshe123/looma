@@ -88,7 +88,7 @@ const providerLabels: Record<string, string> = {
   openai: 'OpenAI',
   'openai-compatible': 'OpenAI Compatible',
   deepseek: 'DeepSeek',
-  qwen: '通义千问',
+  qwen: '阿里云百炼',
   custom: '自定义 HTTP API',
 }
 const aiDisplayName = computed(() => {

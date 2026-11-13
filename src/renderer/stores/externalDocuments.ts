@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { showMessageDialog } from './message-dialog'
 import type { ExternalDocumentData } from '@/shared/types/external-document'
 import { normalizeMarkdownNoteLinks } from '@/shared/utils/markdown-note-links'
 import type { EditorSession } from './workspace-types'
@@ -79,7 +80,7 @@ export const useExternalDocumentsStore = defineStore('externalDocuments', () => 
         if (explicit && doc.error) {
           const disk = await api().readCurrent(id)
           if (disk !== expected) {
-            const result = await window.electronAPI.app.showMessageBox({ type: 'warning', message: '文件已被其他程序修改', detail: '覆盖会替换磁盘内容。取消可保留当前编辑与恢复草稿。', buttons: ['覆盖磁盘内容', '取消'], defaultId: 1, cancelId: 1 })
+            const result = await showMessageDialog({ type: 'warning', message: '文件已被其他程序修改', detail: '覆盖会替换磁盘内容。取消可保留当前编辑与恢复草稿。', buttons: ['覆盖磁盘内容', '取消'], defaultId: 1, cancelId: 1, dangerId: 0 })
             if (result.response !== 0) return false
             expected = disk
           }
@@ -103,7 +104,7 @@ export const useExternalDocumentsStore = defineStore('externalDocuments', () => 
     const doc = get(id)
     if (!doc) return true
     if (dirty(id)) {
-      const result = await window.electronAPI.app.showMessageBox({ type: 'question', message: '保存外部文件的更改？', detail: doc.filePath, buttons: ['保存', '不保存', '取消'], defaultId: 0, cancelId: 2 })
+      const result = await showMessageDialog({ type: 'question', message: '保存外部文件的更改？', detail: doc.filePath, buttons: ['保存', '不保存', '取消'], defaultId: 0, cancelId: 2 })
       if (result.response === 2) return false
       if (result.response === 0) {
         if (!await save(id, true)) return false

@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ArrowLeft, FilePlus2, Plus, Save, Trash2, X } from 'lucide-vue-next'
 import { renderMarkdown } from '@/shared/utils/markdown-renderer'
+import { confirmMessageDialog, showMessageDialog } from '@/renderer/stores/message-dialog'
 import 'github-markdown-css/github-markdown-light.css'
 import {
   evaluateNoteTemplateExpression,
@@ -94,7 +95,7 @@ const isDirty = computed(() => isNew.value || snapshot() !== originalSnapshot.va
 
 const confirmDiscard = async () => {
   if (!isDirty.value) return true
-  const { response } = await window.electronAPI.app.showMessageBox({
+  const { response } = await showMessageDialog({
     type: 'warning',
     buttons: ['保存', '放弃', '取消'],
     defaultId: 0,
@@ -311,12 +312,22 @@ async function save(): Promise<boolean> {
 
 const removeSelected = async () => {
   if (!selectedId.value || pending.value) return
-  const current = props.store.templates.find(template => template.id === selectedId.value)
-  if (!current || !window.confirm(`确定删除模板“${current.name}”吗？已创建的文件不会受到影响。`)) return
+  const templateId = selectedId.value
+  const revision = props.store.revision
+  const current = props.store.templates.find(template => template.id === templateId)
+  if (!current || !await confirmMessageDialog({
+    title: '删除模板',
+    message: `确定删除模板“${current.name}”吗？已创建的文件不会受到影响。`,
+    confirmText: '删除模板',
+    cancelText: '取消',
+    danger: true,
+  })) return
+  if (pending.value || selectedId.value !== templateId || props.store.revision !== revision
+    || !props.store.templates.some(template => template.id === templateId)) return
   pending.value = true
   errorText.value = ''
   try {
-    const result = await noteTemplatesApi.remove(selectedId.value, props.store.revision)
+    const result = await noteTemplatesApi.remove(templateId, revision)
     if (!result.success) {
       errorText.value = result.error || '删除模板失败。'
       if (result.errorCode === 'TEMPLATE_STALE') await recoverFromStaleRevision()

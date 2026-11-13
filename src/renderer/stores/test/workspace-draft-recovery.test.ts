@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useWorkspaceStore } from '../workspace'
+import { showMessageDialog } from '../message-dialog'
+
+vi.mock('../message-dialog', async importOriginal => {
+  const actual = await importOriginal<typeof import('../message-dialog')>()
+  return { ...actual, showMessageDialog: vi.fn() }
+})
 
 const workspace = {
   id: 'workspace-1',
@@ -26,6 +32,7 @@ const createTextState = (content: string) => ({
 
 describe('workspace draft recovery', () => {
   beforeEach(() => {
+    vi.mocked(showMessageDialog).mockReset()
     vi.useFakeTimers()
     setActivePinia(createPinia())
     ;(globalThis as any).window = globalThis.window || globalThis
@@ -163,8 +170,8 @@ describe('workspace draft recovery', () => {
 
   it('requires confirmation before a recovered conflict can overwrite external changes', async () => {
     const writeMarkdown = vi.fn()
+    vi.mocked(showMessageDialog).mockResolvedValue({ response: 1 })
     ;(window as any).electronAPI = {
-      app: { showMessageBox: vi.fn().mockResolvedValue({ response: 1 }) },
       file: { writeMarkdown, readMarkdown: vi.fn().mockResolvedValue({ success: true, data: 'external change' }) },
       draftRecovery: {
         save: vi.fn().mockResolvedValue({ success: true }),
@@ -192,9 +199,8 @@ describe('workspace draft recovery', () => {
 
   it('does not save when clearing a non-empty note is not confirmed', async () => {
     const writeMarkdown = vi.fn()
-    const showMessageBox = vi.fn().mockResolvedValue({ response: 1 })
+    const showMessageBox = vi.mocked(showMessageDialog).mockResolvedValue({ response: 1 })
     ;(window as any).electronAPI = {
-      app: { showMessageBox },
       file: { writeMarkdown },
     }
     const store = useWorkspaceStore()
@@ -221,9 +227,8 @@ describe('workspace draft recovery', () => {
 
   it('saves an empty note after explicit confirmation', async () => {
     const writeMarkdown = vi.fn().mockResolvedValue({ success: true })
-    const showMessageBox = vi.fn().mockResolvedValue({ response: 0 })
+    vi.mocked(showMessageDialog).mockResolvedValue({ response: 0 })
     ;(window as any).electronAPI = {
-      app: { showMessageBox },
       file: { writeMarkdown },
       draftRecovery: {
         save: vi.fn().mockResolvedValue({ success: true }),

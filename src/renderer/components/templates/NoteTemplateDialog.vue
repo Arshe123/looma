@@ -5,6 +5,7 @@ import NoteTemplateManager from './NoteTemplateManager.vue'
 import NoteTemplatePicker from './NoteTemplatePicker.vue'
 import NoteLocationPicker from './NoteLocationPicker.vue'
 import { getNoteTemplatesApi, type UiNoteTemplate, type UiNoteTemplateStore } from './note-template-ui-types'
+import { useMessageDialogStore } from '@/renderer/stores/message-dialog'
 
 type View = 'picker' | 'manager'
 
@@ -125,6 +126,7 @@ const handleStoreUpdated = (nextStore: UiNoteTemplateStore) => {
 }
 
 const handleKeydown = (event: KeyboardEvent) => {
+  if (useMessageDialogStore().current) return
   if (!props.open || event.key !== 'Escape') return
   event.preventDefault()
   event.stopPropagation()

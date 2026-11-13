@@ -7,6 +7,7 @@ import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import { matchesAppShortcut } from '@/shared/utils/app-shortcuts'
 import { LARGE_NOTE_BYTES } from '@/shared/utils/markdown-chunks'
+import { useMessageDialogStore } from '@/renderer/stores/message-dialog'
 
 const store = useExternalDocumentsStore()
 const settings = useSettingsStore()
@@ -45,6 +46,8 @@ function save(id: string) {
   void store.save(id, true)
 }
 function keydown(event: KeyboardEvent) {
+  if (useMessageDialogStore().current
+    || (event.target instanceof Element && event.target.closest('[data-message-dialog]'))) return
   if (store.activeId && matchesAppShortcut(event, settings.appShortcuts.saveFile, window.electronAPI.platform)) {
     event.preventDefault()
     event.stopImmediatePropagation()

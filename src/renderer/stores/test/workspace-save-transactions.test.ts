@@ -5,6 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileService } from '../../../main/services/file/fileService'
 import { useWorkspaceStore } from '../workspace'
+import { showMessageDialog } from '../message-dialog'
+
+vi.mock('../message-dialog', async importOriginal => {
+  const actual = await importOriginal<typeof import('../message-dialog')>()
+  return { ...actual, showMessageDialog: vi.fn() }
+})
 
 const deferred = <T,>() => {
   let resolve!: (value: T) => void
@@ -17,7 +23,7 @@ async function setup(content = '') {
   const filePath = join(directory, 'note.md')
   await writeFile(filePath, 'original')
   const confirmations: ReturnType<typeof deferred<{ response: number }>>[] = []
-  const showMessageBox = vi.fn(() => {
+  const showMessageBox = vi.mocked(showMessageDialog).mockReset().mockImplementation(() => {
     const confirmation = deferred<{ response: number }>()
     confirmations.push(confirmation)
     return confirmation.promise
@@ -27,7 +33,7 @@ async function setup(content = '') {
   const saveDraft = vi.fn().mockResolvedValue({ success: true })
   const removeDraft = vi.fn().mockResolvedValue({ success: true })
   vi.stubGlobal('window', { electronAPI: {
-    app: { showMessageBox }, file: { writeMarkdown, readMarkdown },
+    file: { writeMarkdown, readMarkdown },
     draftRecovery: { save: saveDraft, remove: removeDraft },
   } })
   const store = useWorkspaceStore()

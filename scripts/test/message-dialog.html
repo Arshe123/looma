@@ -1,0 +1,35 @@
+<!doctype html>
+<html><body style="margin:0"><div id="app"></div><script type="module">
+import { createApp, h, ref } from 'vue'
+import { createPinia } from 'pinia'
+import ConfirmationDialog from '/src/renderer/components/ConfirmationDialog.vue'
+import EditorDropAlert from '/src/renderer/components/editor/EditorDropAlert.vue'
+import NoteTemplateDialog from '/src/renderer/components/templates/NoteTemplateDialog.vue'
+import ExternalDocuments from '/src/renderer/components/ExternalDocuments.vue'
+import { useExternalDocumentsStore } from '/src/renderer/stores/externalDocuments'
+import { showMessageDialog, confirmMessageDialog, useMessageDialogStore } from '/src/renderer/stores/message-dialog'
+import '/src/renderer/styles/style.css'
+// No real workspace, credentials, filesystem, or application services.
+window.electronAPI = { platform: 'darwin', noteTemplates: { list: async () => ({ success: true, data: { schemaVersion: 1, revision: 0, templates: [] } }) } }
+const pinia = createPinia()
+const dropOpen = ref(false), templateOpen = ref(false)
+window.results = []
+window.templateCloses = 0
+window.externalSaves = 0
+const external = useExternalDocumentsStore(pinia)
+external.activeId = 'fixture'
+external.save = async () => { window.externalSaves++; return true }
+createApp({ setup: () => () => h('div', { style: 'transform:translateX(5px);overflow:hidden;height:50px' }, [
+  h('button', { id: 'opener' }, '打开'),
+  h(ExternalDocuments),
+  h(ConfirmationDialog),
+  h(EditorDropAlert, { open: dropOpen.value, message: '无法插入文件', detail: '技术信息 <b>不应渲染为 HTML</b>', onClose: () => { dropOpen.value = false } }),
+  h(NoteTemplateDialog, { open: templateOpen.value, workspaceId: 'fixture', parentDirRelativePath: '', onClose: () => { templateOpen.value = false; window.templateCloses++ } }),
+]) }).use(pinia).mount('#app')
+window.dialogs = useMessageDialogStore(pinia)
+window.show = options => { showMessageDialog(options).then(result => results.push(result)); return dialogs.current?.id }
+window.confirm = options => { confirmMessageDialog(options).then(result => results.push(result)) }
+window.drop = () => { dropOpen.value = true }
+window.template = () => { templateOpen.value = true }
+window.ready = true
+</script></body></html>

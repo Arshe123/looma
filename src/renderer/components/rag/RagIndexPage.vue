@@ -3,6 +3,7 @@ import { scaleFileSize } from '@/shared/utils/format-size'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AlertTriangle, CheckCircle2, Database, FileText, Loader2, RefreshCw, RotateCcw, Search, Settings, Trash2, XCircle } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
+import { confirmMessageDialog } from '@/renderer/stores/message-dialog'
 import RagIndexSettingsDialog from './RagIndexSettingsDialog.vue'
 
 type IndexStatus = 'indexed' | 'not_indexed' | 'outdated' | 'deleted' | 'failed' | 'ignored'
@@ -300,8 +301,14 @@ const buildIndex = async (mode: BuildMode) => {
   const workspaceId = activeWorkspaceId.value
   if (!workspaceId || indexActionsBusy.value) return
   if (mode === 'full') {
-    const ok = window.confirm('全量重建会清空旧索引并重新生成，确认继续？')
-    if (!ok) return
+    const ok = await confirmMessageDialog({
+      title: '全量重建索引',
+      message: '全量重建会清空旧索引并重新生成，确认继续？',
+      confirmText: '全量重建',
+      cancelText: '取消',
+      danger: true,
+    })
+    if (!ok || activeWorkspaceId.value !== workspaceId || indexActionsBusy.value) return
   }
   errorText.value = ''
   buildLog.value = []
@@ -438,8 +445,14 @@ const copyChunkText = async (chunk: FileChunk) => {
 const deleteAllIndex = async () => {
   const workspaceId = activeWorkspaceId.value
   if (!workspaceId || indexActionsBusy.value) return
-  const ok = window.confirm('确认删除当前工作空间的全部索引数据？\n\n此操作不可恢复。')
-  if (!ok) return
+  const ok = await confirmMessageDialog({
+    title: '删除全部索引',
+    message: '确认删除当前工作空间的全部索引数据？\n\n此操作不可恢复。',
+    confirmText: '删除全部索引',
+    cancelText: '取消',
+    danger: true,
+  })
+  if (!ok || activeWorkspaceId.value !== workspaceId || indexActionsBusy.value) return
   errorText.value = ''
   try {
     const result = await window.electronAPI.rag.deleteIndex(workspaceId)
@@ -456,8 +469,14 @@ const deleteAllIndex = async () => {
 const deleteFileIndex = async (path: string) => {
   const workspaceId = activeWorkspaceId.value
   if (!workspaceId || indexActionsBusy.value) return
-  const ok = window.confirm(`删除索引记录：${path}？`)
-  if (!ok) return
+  const ok = await confirmMessageDialog({
+    title: '删除文件索引',
+    message: `删除索引记录：${path}？`,
+    confirmText: '删除索引',
+    cancelText: '取消',
+    danger: true,
+  })
+  if (!ok || activeWorkspaceId.value !== workspaceId || indexActionsBusy.value) return
   const result = await window.electronAPI.rag.indexFile.delete(workspaceId, path)
   if (!result.success) {
     errorText.value = result.error || `删除 ${path} 索引失败。`

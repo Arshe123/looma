@@ -1,15 +1,22 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useExternalDocumentsStore } from '../externalDocuments'
+import { showMessageDialog } from '../message-dialog'
+
+vi.mock('../message-dialog', async importOriginal => {
+  const actual = await importOriginal<typeof import('../message-dialog')>()
+  return { ...actual, showMessageDialog: vi.fn() }
+})
 
 const doc = { id: 'canonical-id', filePath: '/tmp/note.md', content: '# Disk', baseContent: '# Disk' }
 const legacyLink = '[文字](../医渡云相关信息.md#4. 国家疾控管理后台)'
 const normalizedLink = '[文字](../医渡云相关信息.md#4.%20国家疾控管理后台)'
 beforeEach(() => {
+  vi.mocked(showMessageDialog).mockReset().mockResolvedValue({ response: 2 })
   setActivePinia(createPinia())
   vi.stubGlobal('window', { location: { search: '?editorOnly=1' }, electronAPI: { window: { close: vi.fn().mockResolvedValue(undefined) }, externalDocuments: {
     draft: vi.fn().mockResolvedValue(undefined), save: vi.fn().mockResolvedValue(undefined), close: vi.fn().mockResolvedValue(undefined),
-  }, app: { showMessageBox: vi.fn().mockResolvedValue({ response: 2 }) } } })
+  } } })
 })
 it.each(['dirty', 'clean'])('normalizes an explicit %s Markdown save while retaining the disk baseline', async state => {
   const store = useExternalDocumentsStore()
@@ -112,7 +119,7 @@ it.each(['cancel', 'save-failure', 'close-failure'])('keeps the last tab and win
   } else {
     store.update(doc.id, '# Dirty')
     if (reason === 'save-failure') {
-      vi.mocked(window.electronAPI.app.showMessageBox).mockResolvedValue({ response: 0 } as any)
+      vi.mocked(showMessageDialog).mockResolvedValue({ response: 0 } as any)
       vi.mocked(window.electronAPI.externalDocuments.save).mockRejectedValue(new Error('save failed'))
     }
   }
@@ -140,7 +147,7 @@ it('does not close over edits made while the final save is in flight', async () 
   const store = useExternalDocumentsStore()
   store.open(doc)
   store.update(doc.id, '# One')
-  vi.mocked(window.electronAPI.app.showMessageBox).mockResolvedValue({ response: 0 } as any)
+  vi.mocked(showMessageDialog).mockResolvedValue({ response: 0 } as any)
   let finish!: () => void
   vi.mocked(window.electronAPI.externalDocuments.save).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
   const closing = store.close(doc.id)

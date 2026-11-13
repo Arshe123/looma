@@ -285,6 +285,7 @@ const toggleShortcut = async (row: ShortcutRow) => {
 }
 
 const handleShortcutRecording = async (event: KeyboardEvent) => {
+  if (workspaceStore.confirmationDialogOpen) return
   const target = recordingTarget.value
   if (target === null) return
   event.preventDefault()

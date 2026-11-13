@@ -121,6 +121,12 @@ if (!childStage) {
   BrowserWindow.prototype.focus = () => {}
   app.focus = () => {}
   dialog.showMessageBox = async (...args) => { result.dialogs.push(args.at(-1)); return { response: 1, checkboxChecked: false } }
+  app.on('web-contents-created', (_event, contents) => {
+    require('./message-dialog-driver.cjs')(contents, async request => {
+      result.dialogs.push(request.options)
+      await request.answer(1)
+    })
+  })
   let gateNext = false, gateEntered = false, releaseGate
   const handle = ipcMain.handle.bind(ipcMain)
   ipcMain.handle = (channel, listener) => handle(channel, async (event, ...args) => {

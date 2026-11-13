@@ -1,6 +1,7 @@
 // Run with Vite test mode on 5189. Real MainContent/EditorTabs and CSS,
 // memory-only documents/IPC and an isolated profile; never touches user notes.
 const { app, BrowserWindow } = require('electron')
+const watchMessageDialogs = require('./message-dialog-driver.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -18,15 +19,26 @@ app.whenReady().then(async () => {
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
     for (let i = 0; i < 100 && !await run('window.ready?.()'); i++) await wait(100)
     assert.ok(await run('window.ready?.()'), 'real editor mounted')
+    await run(`(async () => {
+      const vueUrl = performance.getEntriesByType('resource').find(entry => new URL(entry.name).pathname.endsWith('/vue.js')).name;
+      const { h, render } = await import(vueUrl);
+      const { default: DialogHost } = await import('/src/renderer/components/ConfirmationDialog.vue');
+      const host = document.createElement('div'); document.body.append(host);
+      const vnode = h(DialogHost); vnode.appContext = document.querySelector('#app').__vue_app__._context;
+      render(vnode, host);
+    })()`)
     await run(`
       window.electronAPI.workspaceMeta = { set: async () => ({ success: true }) };
       window.electronAPI.externalDocuments = { close: async () => {} };
       window.dialogResponse = 2;
       window.dialogs = 0;
-      window.electronAPI.app = { showMessageBox: async () => { dialogs++; return { response: dialogResponse } } };
       window.externalStore = document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('externalDocuments');
       void 0;
     `)
+    watchMessageDialogs(win.webContents, async request => {
+      const response = await run('dialogs++; dialogResponse')
+      if (response !== null) await request.answer(response)
+    })
     const seed = async (name, count) => {
       const content = '# Test\n\n' + 'Body paragraph with ordinary text.\n\n'.repeat(count)
       await run(`(() => {
@@ -40,12 +52,12 @@ app.whenReady().then(async () => {
       await run('document.fonts.ready')
       await wait(350)
     }
-    const closeAtFrame = async id => {
+    const closeAtFrame = async (id, confirming = false) => {
       const result = await run(`new Promise(resolve => {
         const tab = document.querySelector('[data-document-tab=' + ${JSON.stringify(JSON.stringify(id))} + ']');
         const siblings = [...tab.parentElement.children].filter(el => el !== tab && el.dataset.documentTab);
         const start = performance.now();
-        tab.querySelector('button').click();
+        ${confirming ? "document.querySelector('[data-message-dialog-response=\"1\"]').click();" : "tab.querySelector('button').click();"}
         const handlerMs = performance.now() - start;
         requestAnimationFrame(() => resolve({
           handlerMs, frameMs: performance.now() - start, removed: !tab.isConnected,
@@ -77,8 +89,11 @@ app.whenReady().then(async () => {
     assert.equal(await run('dialogs'), 1)
     assert.equal(await run("!!document.querySelector('[data-document-tab=\"file:dirty.md\"]')"), true)
     assert.equal(await run("store.isFileDirty('dirty.md')"), true)
-    await run('dialogResponse = 1')
-    await closeAtFrame('file:dirty.md')
+    await run('dialogResponse = null; document.querySelector(\'[data-document-tab="file:dirty.md"] button\').click()')
+    for (let i = 0; i < 100 && !await run('!!document.querySelector("[data-message-dialog-response]")'); i++) await wait(20)
+    assert.equal(await run('!!document.querySelector("[data-message-dialog-response]")'), true, 'discard waits for actual confirmation')
+    // Measure from the user's discard choice, not the earlier request to close.
+    await closeAtFrame('file:dirty.md', true)
     // Drag FLIP and ordinary hover colors are intentionally retained.
     for (const name of ['drag-a.md', 'drag-b.md', 'drag-c.md']) await seed(name, 1)
     const move = await run(`new Promise(resolve => {

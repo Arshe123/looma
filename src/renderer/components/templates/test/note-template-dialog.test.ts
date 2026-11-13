@@ -83,10 +83,11 @@ describe('note template picker and dialog UI', () => {
 
     expect(manager).toContain('noteTemplatesApi.create(input, props.store.revision)')
     expect(manager).toContain('noteTemplatesApi.update(selectedId.value!, input, props.store.revision)')
-    expect(manager).toContain('noteTemplatesApi.remove(selectedId.value, props.store.revision)')
+    expect(manager).toContain('noteTemplatesApi.remove(templateId, revision)')
     expect(manager).toContain('未命名模板')
     expect(manager).toContain("fileNameTemplate: '未命名笔记'")
-    expect(manager).toContain('window.confirm')
+    expect(manager).toContain('await confirmMessageDialog({')
+    expect(manager).not.toContain('window.confirm')
     expect(manager).toContain('confirmDiscard')
   })
 
@@ -145,7 +146,8 @@ describe('note template picker and dialog UI', () => {
   it('offers save, discard, and cancel before leaving a dirty template', () => {
     const manager = readSource('src/renderer/components/templates/NoteTemplateManager.vue')
 
-    expect(manager).toContain('window.electronAPI.app.showMessageBox')
+    expect(manager).toContain('await showMessageDialog({')
+    expect(manager).not.toContain('window.electronAPI.app.showMessageBox')
     expect(manager).toContain("buttons: ['保存', '放弃', '取消']")
     expect(manager).toContain('await save()')
   })

@@ -1,6 +1,7 @@
 // Build first. Real production renderer/preload/fs IPC; temporary profile and notes only.
-// Only native message-box responses and window visibility are controlled by this harness.
-const { app, BrowserWindow, dialog } = require('electron')
+// Self-drawn messages use their actual buttons; only window visibility is controlled.
+const { app, BrowserWindow } = require('electron')
+const watchMessageDialogs = require('./message-dialog-driver.cjs')
 const fs = require('node:fs')
 const path = require('node:path')
 const { tmpdir } = require('node:os')
@@ -32,16 +33,13 @@ for (const [name] of [...cases, ['cancel.md'], ['conflict.md']]) {
     : '# 清空验收\n\n需要主动删除的正文。')
 }
 const confirmations = []
-dialog.showMessageBox = (...args) => {
-  const options = args.at(-1)
-  if (!['确认清空笔记', '检测到外部修改'].includes(options.title)) {
-    return Promise.resolve({ response: options.cancelId ?? 1, checkboxChecked: false })
-  }
-  return new Promise(resolve => confirmations.push({ options, answer: response => resolve({ response, checkboxChecked: false }) }))
-}
 const errors = []
 app.on('web-contents-created', (_event, contents) => {
   contents.on('console-message', (_event, level, message) => { if (level >= 3) errors.push(message) })
+  watchMessageDialogs(contents, async request => {
+    if (['确认清空笔记', '检测到外部修改'].includes(request.options.title)) confirmations.push(request)
+    else await request.answer(request.options.cancelId)
+  })
 })
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function until(check, label) {
@@ -108,7 +106,8 @@ const watchdog = setTimeout(() => { console.error('FAIL clearing verification st
     await wait(250)
     assert.equal(confirmations.length, start + 1, `${name}: one pending confirmation`)
     assert.equal(confirmations[start].options.title, '确认清空笔记')
-    confirmations[start].answer(0)
+    assert.notEqual(fs.readFileSync(path.join(workspace, name), 'utf8'), '', 'disk is unchanged before confirmation')
+    await confirmations[start].answer(0)
     await clean(name)
     await wait(1200)
     assert.equal(confirmations.length, start + 1, `${name}: no false conflict or repeated clear dialog`)
@@ -119,7 +118,7 @@ const watchdog = setTimeout(() => { console.error('FAIL clearing verification st
   const cancelled = confirmations.length
   await clear('cancel.md')
   await until(() => confirmations.length > cancelled, 'cancel confirmation')
-  confirmations[cancelled].answer(1)
+  await confirmations[cancelled].answer(1)
   await until(async () => await run('!fixtureStore.openedTextFileContents["cancel.md"].isSaving'), 'cancel completed')
   await run('activeEditable().blur()')
   await wait(1200)
@@ -128,7 +127,7 @@ const watchdog = setTimeout(() => { console.error('FAIL clearing verification st
   assert.equal(await run('fixtureStore.isFileDirty("cancel.md")'), true)
   await saveShortcut()
   await until(() => confirmations.length === cancelled + 2, 'explicit save retries cancelled revision')
-  confirmations[cancelled + 1].answer(0)
+  await confirmations[cancelled + 1].answer(0)
   await clean('cancel.md')
   console.log('PASS cancel: disk preserved, no automatic repeat, actual save shortcut explicitly retries')
 
@@ -137,16 +136,16 @@ const watchdog = setTimeout(() => { console.error('FAIL clearing verification st
   await clear('conflict.md')
   await until(() => confirmations.length > conflict, 'initial conflict-case clear confirmation')
   fs.writeFileSync(path.join(workspace, 'conflict.md'), '外部程序的新内容')
-  confirmations[conflict].answer(0)
+  await confirmations[conflict].answer(0)
   await until(async () => await run('fixtureStore.openedTextFileContents["conflict.md"].recoveryConflict && !fixtureStore.openedTextFileContents["conflict.md"].isSaving'), 'real conflict retained')
   assert.equal(fs.readFileSync(path.join(workspace, 'conflict.md'), 'utf8'), '外部程序的新内容')
   await saveShortcut()
   await until(() => confirmations.length === conflict + 2, 'overwrite confirmation')
   assert.equal(confirmations[conflict + 1].options.title, '检测到外部修改')
   assert.ok(!confirmations[conflict + 1].options.message.includes('关闭期间'))
-  confirmations[conflict + 1].answer(0)
+  await confirmations[conflict + 1].answer(0)
   await until(() => confirmations.length === conflict + 3, 'clear external content confirmation')
-  confirmations[conflict + 2].answer(0)
+  await confirmations[conflict + 2].answer(0)
   await clean('conflict.md')
   await wait(1200)
   assert.equal(confirmations.length, conflict + 3, 'approved overwrite succeeds without a confirmation loop')

@@ -49,12 +49,14 @@ describe('workspace modal state', () => {
     expect(store.confirmationDialogDanger).toBe(false)
   })
 
-  it('resolves a superseded confirmation as cancelled', async () => {
+  it('queues confirmations instead of replacing an unanswered request', async () => {
     const store = useWorkspaceStore()
     const first = store.requestConfirmation({ title: '第一次', message: 'first' })
     const second = store.requestConfirmation({ title: '第二次', message: 'second' })
 
-    await expect(first).resolves.toBe(false)
+    expect(store.confirmationDialogTitle).toBe('第一次')
+    store.acceptConfirmation()
+    await expect(first).resolves.toBe(true)
     expect(store.confirmationDialogTitle).toBe('第二次')
 
     store.cancelConfirmation()
@@ -63,7 +65,7 @@ describe('workspace modal state', () => {
 
   it('keeps fullscreen dialogs self-dismissible and removes native confirm from history actions', () => {
     const inputDialog = readFileSync(resolve(process.cwd(), 'src/renderer/components/InputDialog.vue'), 'utf8')
-    const confirmationDialog = readFileSync(resolve(process.cwd(), 'src/renderer/components/ConfirmationDialog.vue'), 'utf8')
+    const confirmationDialog = readFileSync(resolve(process.cwd(), 'src/renderer/components/MessageDialog.vue'), 'utf8')
     const historyPanel = readFileSync(resolve(process.cwd(), 'src/renderer/components/ai/AiConversationHistoryPanel.vue'), 'utf8')
     const editorSettings = readFileSync(resolve(process.cwd(), 'src/renderer/components/settings/EditorSettings.vue'), 'utf8')
 

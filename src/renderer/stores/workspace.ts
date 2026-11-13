@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { useExternalDocumentsStore } from './externalDocuments'
+import { confirmMessageDialog, showMessageDialog, useMessageDialogStore, type ConfirmationDialogOptions } from './message-dialog'
+export type { ConfirmationDialogOptions } from './message-dialog'
 import { DEFAULT_THEME_PALETTE, getStoredThemePalette, normalizeThemePalette, THEME_PALETTE_STORAGE_KEY, type ThemePalette } from '../theme'
 import {
   DEFAULT_ACTIVE_SIDEBAR_PANEL,
@@ -52,7 +54,6 @@ import type { Result } from '@/shared/types/Result'
 export type { AgentDiffViewState, AiAssistantConversation, AiAssistantMessage, AiAssistantMessageAction, AiAssistantMessageRole, AiAssistantState, AiAssistantTimelineOutput, AiAssistantTimelineOutputType, AiAssistantTimelineStep, AiAssistantTimelineStepStatus, EditorSession, FileWorkspaceTab, FsEntry, OpenTextFileState, ResolvedThemeName, SettingsSectionId, SidebarPanelId, SidebarPanelState, SystemPageId, SystemWorkspaceTab, ThemeName, UndoAction, Workspace, WorkspaceMeta, WorkspaceTab } from './workspace-types'
 
 let pendingTextInputResolve: ((value: string | null) => void) | null = null
-let pendingConfirmationResolve: ((confirmed: boolean) => void) | null = null
 const DRAFT_RECOVERY_DEBOUNCE_MS = 300
 const draftRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const pendingExternalTextRefreshes = new Set<string>()
@@ -62,13 +63,6 @@ let draftRecoveryRevisionCounter = 0
 const draftRecoveryKey = (workspaceId: string, relativePath: string) => `${workspaceId}\u0000${relativePath}`
 const createDraftRecoveryRevision = () => `${Date.now()}-${++draftRecoveryRevisionCounter}`
 
-export type ConfirmationDialogOptions = {
-  title: string
-  message: string
-  confirmText?: string
-  cancelText?: string
-  danger?: boolean
-}
 let systemThemeCleanup: (() => void) | null = null
 
 const createAiConversationId = () => `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -409,16 +403,16 @@ export const useWorkspaceStore = defineStore('workspace', {
     inputDialogTitle: '' as string,
     inputDialogPlaceholder: '' as string,
     inputDialogValue: '' as string,
-    confirmationDialogOpen: false as boolean,
-    confirmationDialogTitle: '' as string,
-    confirmationDialogMessage: '' as string,
-    confirmationDialogConfirmText: '确定' as string,
-    confirmationDialogCancelText: '取消' as string,
-    confirmationDialogDanger: false as boolean,
     commandPaletteOpen: false as boolean,
     commandPaletteQuery: '' as string,
   }),
   getters: {
+    confirmationDialogOpen: (): boolean => Boolean(useMessageDialogStore().current),
+    confirmationDialogTitle: (): string => useMessageDialogStore().current?.options.title ?? '',
+    confirmationDialogMessage: (): string => useMessageDialogStore().current?.options.message ?? '',
+    confirmationDialogConfirmText: (): string => useMessageDialogStore().current?.options.buttons[0] ?? '确定',
+    confirmationDialogCancelText: (): string => useMessageDialogStore().current?.options.buttons.at(-1) ?? '取消',
+    confirmationDialogDanger: (): boolean => useMessageDialogStore().current?.options.dangerId !== undefined,
     isAiAssistantStateBlocked(state): boolean {
       return state.aiAssistantLoadStatus === 'loading' || state.aiAssistantLoadStatus === 'error'
     },
@@ -493,9 +487,7 @@ export const useWorkspaceStore = defineStore('workspace', {
   actions: {
     requestTextInput(title: string, defaultValue = '', placeholder = ''): Promise<string | null> {
       this.closeCommandPalette()
-      if (pendingConfirmationResolve || this.confirmationDialogOpen) {
-        this.cancelConfirmation()
-      }
+      if (this.confirmationDialogOpen) useMessageDialogStore().cancelAll()
       if (pendingTextInputResolve) {
         pendingTextInputResolve(null)
         pendingTextInputResolve = null
@@ -535,43 +527,17 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (pendingTextInputResolve || this.inputDialogOpen) {
         this.cancelTextInput()
       }
-      if (pendingConfirmationResolve) {
-        pendingConfirmationResolve(false)
-        pendingConfirmationResolve = null
-      }
-      this.confirmationDialogTitle = options.title
-      this.confirmationDialogMessage = options.message
-      this.confirmationDialogConfirmText = options.confirmText?.trim() || '确定'
-      this.confirmationDialogCancelText = options.cancelText?.trim() || '取消'
-      this.confirmationDialogDanger = Boolean(options.danger)
-      this.confirmationDialogOpen = true
-      return new Promise((resolve) => {
-        pendingConfirmationResolve = resolve
-      })
+      return confirmMessageDialog(options)
     },
 
     acceptConfirmation() {
-      const resolve = pendingConfirmationResolve
-      pendingConfirmationResolve = null
-      this.confirmationDialogOpen = false
-      this.confirmationDialogTitle = ''
-      this.confirmationDialogMessage = ''
-      this.confirmationDialogConfirmText = '确定'
-      this.confirmationDialogCancelText = '取消'
-      this.confirmationDialogDanger = false
-      resolve?.(true)
+      const dialog = useMessageDialogStore()
+      if (dialog.current) dialog.respond(dialog.current.id, 0)
     },
 
     cancelConfirmation() {
-      const resolve = pendingConfirmationResolve
-      pendingConfirmationResolve = null
-      this.confirmationDialogOpen = false
-      this.confirmationDialogTitle = ''
-      this.confirmationDialogMessage = ''
-      this.confirmationDialogConfirmText = '确定'
-      this.confirmationDialogCancelText = '取消'
-      this.confirmationDialogDanger = false
-      resolve?.(false)
+      const dialog = useMessageDialogStore()
+      if (dialog.current) dialog.respond(dialog.current.id, dialog.current.options.cancelId)
     },
 
     toggleTheme() {
@@ -1179,7 +1145,7 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     async confirmCloseDirtyTab(tab: WorkspaceTab): Promise<'save' | 'discard' | 'cancel'> {
       const title = getTabTitle(tab)
-      const result = await window.electronAPI.app.showMessageBox({
+      const result = await showMessageDialog({
         type: 'warning',
         title: '内容尚未保存',
         message: `${title} 有未保存的更改，关闭前要保存吗？`,
@@ -1684,7 +1650,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.setBusy(false)
       const name = ((await this.requestTextInput('新建工作空间', 'Workspace', '输入工作空间名称')) ?? '').trim()
       if (!name) return
-      const useTemplate = window.confirm('是否基于模板生成初始内容？\n\n确定：基于模板\n取消：空工作空间')
+      const useTemplate = await this.requestConfirmation({
+        title: '创建工作空间',
+        message: '是否基于模板生成初始内容？',
+        confirmText: '基于模板',
+        cancelText: '空工作空间',
+      })
       this.setBusy(true, '正在创建工作空间...')
       const r = await window.electronAPI.workspace.new(parent, name, useTemplate ? 'basic' : 'empty')
       this.setBusy(false)
@@ -1712,7 +1683,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       const fallback = this.workspaces.find((w) => w.id === id)
       const name = info?.name || fallback?.name || '该工作空间'
       const workspacePath = info?.path || fallback?.path || ''
-      await (window as any).electronAPI.app.showMessageBox({
+      await showMessageDialog({
         type: 'warning',
         title: '工作空间已丢失',
         message: `${name} 已被移动或删除，已从最近打开记录中移除。`,
@@ -2050,7 +2021,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       const ws = this.workspaces.find((w) => w.id === id)
       if (!ws) return
       if (!skipConfirm) {
-        const ok = window.confirm(`从列表移除工作空间：${ws.name}？`)
+        const ok = await this.requestConfirmation({
+          title: '移除工作空间？',
+          message: `从列表移除工作空间：${ws.name}？`,
+          confirmText: '移除',
+          danger: true,
+        })
         if (!ok) return
       }
       const r = await window.electronAPI.workspace.remove(id)
@@ -2664,11 +2640,12 @@ export const useWorkspaceStore = defineStore('workspace', {
         expectedContent = disk.data
         // A previous write may have succeeded before its acknowledgement was lost.
         if (disk.data !== next) {
-          const confirmation = await window.electronAPI.app.showMessageBox({
+          const confirmation = await showMessageDialog({
             type: 'warning',
             title: '检测到外部修改',
             message: `${pathBase(rel)} 的磁盘内容与当前编辑的保存基线不同。是否用当前未保存内容覆盖磁盘文件？`,
             buttons: ['覆盖磁盘文件', '取消'],
+            dangerId: 0,
             defaultId: 1,
             cancelId: 1,
           })
@@ -2681,11 +2658,12 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       const isClearingNonEmptyFile = next.length === 0 && Boolean(expectedContent?.length)
       if (isClearingNonEmptyFile) {
-        const confirmation = await window.electronAPI.app.showMessageBox({
+        const confirmation = await showMessageDialog({
           type: 'warning',
           title: '确认清空笔记',
           message: `${pathBase(rel)} 的内容将被清空，保存后文件会变为空白。是否继续？`,
           buttons: ['确认清空并保存', '取消'],
+          dangerId: 0,
           defaultId: 1,
           cancelId: 1,
         })
@@ -2751,9 +2729,13 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!this.hasUnsavedChanges) return true
       const r = await this.saveActiveFileContent()
       if (r.success) return true
-      const ok = window.confirm(
-        `自动保存失败：${r.error || '未知错误'}\n\n是否强制切换并丢弃未保存变更？\n\n确定：强制切换\n取消：取消切换`,
-      )
+      const ok = await this.requestConfirmation({
+        title: '自动保存失败',
+        message: `自动保存失败：${r.error || '未知错误'}\n\n是否强制切换并丢弃未保存变更？`,
+        confirmText: '强制切换',
+        cancelText: '取消切换',
+        danger: true,
+      })
       return ok
     },
 
@@ -2835,11 +2817,22 @@ export const useWorkspaceStore = defineStore('workspace', {
     async deleteEntries(relativePaths: string[]) {
       const ws = this.activeWorkspaceId
       if (!ws || relativePaths.length === 0 || this.isBusy) return
+      if (this.confirmationDialogOpen) return
+      const paths = [...relativePaths]
+      const confirmed = await this.requestConfirmation({
+        title: '确认删除？',
+        message: paths.length === 1
+          ? `确定将“${paths[0]}”移入回收站吗？\n删除文件夹会同时移入其中的所有内容。`
+          : `确定将选中的 ${paths.length} 个项目移入回收站吗？\n删除文件夹会同时移入其中的所有内容。`,
+        confirmText: '删除',
+        danger: true,
+      })
+      if (!confirmed || this.activeWorkspaceId !== ws || this.isBusy) return
       this.setBusy(true, '删除中...')
       
       const items: { trashRelativePath: string; restoreTo: string }[] = []
       const missingPaths: string[] = []
-      for (const p of relativePaths) {
+      for (const p of paths) {
         const r = await window.electronAPI.fs.delete(ws, normalizeDir(p))
         if (r.success && r.data) {
           items.push({ trashRelativePath: r.data.trashRelativePath, restoreTo: normalizeDir(p) })

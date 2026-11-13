@@ -1,5 +1,6 @@
 // npm run build first. Real main/preload/renderer; only isolated profile and files.
 const { app, BrowserWindow, dialog } = require('electron')
+const watchMessageDialogs = require('./message-dialog-driver.cjs')
 const fs = require('node:fs')
 const path = require('node:path')
 const assert = require('node:assert/strict')
@@ -38,6 +39,7 @@ async function until(check, label) {
 const errors = []
 app.on('web-contents-created', (_event, contents) => {
   contents.on('console-message', (_event, level, message) => { if (level >= 3) errors.push(message) })
+  watchMessageDialogs(contents, request => request.answer(1))
 })
 async function verify(win, file, label) {
   const run = code => win.webContents.executeJavaScript(code)

@@ -25,6 +25,7 @@ const cancel = () => {
 }
 
 const handleWindowKeydown = (event: KeyboardEvent) => {
+  if (workspaceStore.confirmationDialogOpen) return
   if (!workspaceStore.inputDialogOpen || event.key !== 'Escape') return
   event.preventDefault()
   event.stopPropagation()

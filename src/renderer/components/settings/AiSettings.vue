@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from '@/renderer/stores/settings'
+import { showMessageDialog } from '@/renderer/stores/message-dialog'
 import { useOllamaStore } from '@/renderer/stores/ollama'
 import { useProviderModels } from '@/renderer/composables/useProviderModels'
 import { getEmbeddingDiscoveryTarget } from '@/renderer/services/embeddingDiscovery'
@@ -153,7 +154,7 @@ const embedModelOptions = computed(() => buildModelOptions(
 }))
 
 const showInfo = async (title: string, message: string, detail?: string) => {
-  await window.electronAPI.app.showMessageBox({
+  await showMessageDialog({
     type: 'info',
     buttons: ['知道了'],
     defaultId: 0,
@@ -429,11 +430,12 @@ const pullModel = async (kind: ModelKind, targetModel?: string, selectAfterPull 
 const deleteModel = async (baseUrl: string, model: string) => {
   const name = model.trim()
   if (!name) return
-  const confirmation = await window.electronAPI.app.showMessageBox({
+  const confirmation = await showMessageDialog({
     type: 'warning',
     buttons: ['取消', '删除'],
     defaultId: 0,
     cancelId: 0,
+    dangerId: 1,
     title: '删除模型',
     message: `确定要删除模型 ${name} 吗？`,
     detail: '删除后需要重新下载才能再次使用该模型。',

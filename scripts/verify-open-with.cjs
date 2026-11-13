@@ -1,5 +1,6 @@
 // Build first: npm run build. Uses only temporary appData/userData/files.
 const { app, BrowserWindow, dialog } = require('electron')
+const watchMessageDialogs = require('./message-dialog-driver.cjs')
 const fs = require('node:fs/promises')
 const syncFs = require('node:fs')
 const path = require('node:path')
@@ -33,6 +34,10 @@ dialog.showMessageBox = async (...args) => { dialogs.push(args.at(-1)); return {
 const errors = []
 app.on('web-contents-created', (_event, contents) => {
   contents.on('console-message', (_e, level, message) => { if (level >= 3) errors.push(message) })
+  watchMessageDialogs(contents, async request => {
+    dialogs.push(request.options)
+    await request.answer(response)
+  })
 })
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function until(check, label) {
@@ -221,7 +226,7 @@ async function main() {
   assert.equal(containedSource.isDestroyed(), true)
   assert.equal(await ct('document.querySelectorAll(".external-document-tab").length'), 0)
   console.log('PASS Open Workspace cancellation preserves source; contained handoff reuses existing window and normal tab, migrates recovery without disk writes')
-  // Avoid a native workspace discard modal during fixture teardown.
+  // Avoid a workspace discard modal during fixture teardown.
   existingTarget.destroy()
   const multiple = mainModule.createWindow(undefined, true)
   const multi = code => multiple.webContents.executeJavaScript(code)

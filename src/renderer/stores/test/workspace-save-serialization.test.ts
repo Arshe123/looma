@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useWorkspaceStore } from '../workspace'
+import { showMessageDialog } from '../message-dialog'
+
+vi.mock('../message-dialog', async importOriginal => {
+  const actual = await importOriginal<typeof import('../message-dialog')>()
+  return { ...actual, showMessageDialog: vi.fn() }
+})
 
 const textState = (content: string) => ({
   content, loadedContent: content, isSaving: false, saveError: '',
@@ -8,8 +14,9 @@ const textState = (content: string) => ({
   nextOffset: content.length, totalBytes: content.length, loadRequestId: 1, useChunkedPreview: false,
 })
 const setup = (writeMarkdown: ReturnType<typeof vi.fn>, showMessageBox = vi.fn().mockResolvedValue({ response: 1 })) => {
-  (window as any).electronAPI = {
-    file: { writeMarkdown, readMarkdown: vi.fn().mockResolvedValue({ success: true, data: 'external change' }) }, app: { showMessageBox },
+  vi.mocked(showMessageDialog).mockImplementation(showMessageBox)
+  ;(window as any).electronAPI = {
+    file: { writeMarkdown, readMarkdown: vi.fn().mockResolvedValue({ success: true, data: 'external change' }) },
     draftRecovery: { save: vi.fn().mockResolvedValue({ success: true }), remove: vi.fn().mockResolvedValue({ success: true }) },
   }
   const store = useWorkspaceStore()
@@ -27,6 +34,7 @@ const barrier = () => {
 }
 
 beforeEach(() => {
+  vi.mocked(showMessageDialog).mockReset()
   vi.useFakeTimers()
   setActivePinia(createPinia())
   ;(globalThis as any).window = globalThis.window || globalThis

@@ -2,6 +2,7 @@
 // Optional --dev-renderer uses Vite 5189 with the SAME built production main/preload.
 // No OS clipboard: only file-transfer event transport is simulated. IPC/fs are real.
 const electron = require('electron')
+const watchMessageDialogs = require('./message-dialog-driver.cjs')
 const { app, ipcMain, dialog, nativeImage } = electron
 const fs = require('node:fs')
 const path = require('node:path')
@@ -54,7 +55,10 @@ ipcMain.handle = (channel, listener) => handle(channel, async (event, ...args) =
   return result
 })
 dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false })
-app.on('web-contents-created', (_event, contents) => contents.on('console-message', (_e, level, message) => { if (level >= 3) errors.push(message) }))
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('console-message', (_e, level, message) => { if (level >= 3) errors.push(message) })
+  watchMessageDialogs(contents, request => request.answer(1))
+})
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function until(check, label) {
   for (let i = 0; i < 200; i++) { if (await check()) return; await wait(100) }

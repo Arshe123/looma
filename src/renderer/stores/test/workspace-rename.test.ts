@@ -97,7 +97,9 @@ describe('workspace rename state', () => {
     store.activeWorkspaceId = workspace.id
     store.selectedPaths = ['old/note.md']
 
-    await store.deleteEntries(['old/note.md'])
+    const deletion = store.deleteEntries(['old/note.md'])
+    store.acceptConfirmation()
+    await deletion
 
     expect(store.selectedPaths).toEqual([])
     expect(store.lastError).toBe('')

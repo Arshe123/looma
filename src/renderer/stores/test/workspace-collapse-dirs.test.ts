@@ -32,6 +32,32 @@ describe('collapse all file tree folders', () => {
     expect(store.expandedDirs).toEqual([])
   })
 
+  it('collapses the target and descendants, retaining siblings and editor state', async () => {
+    const setMeta = vi.fn().mockResolvedValue({ success: true })
+    ;(window as any).electronAPI = { workspaceMeta: { set: setMeta } }
+    const store = useWorkspaceStore()
+    store.workspaces = [{ id: 'ws', name: 'Notes', path: '/notes', createdAt: 1, lastOpenedAt: 1 }]
+    store.activeWorkspaceId = 'ws'
+    store.expandedDirs = ['docs', 'docs/nested', 'docs/nested/deep', 'docs-other', 'other/nested']
+    store.selectedPaths = ['docs']
+    store.activeFileRelativePath = 'docs/nested/note.md'
+    const tabs = [...store.tabs]
+
+    await store.collapseDir('docs')
+
+    expect(store.expandedDirs).toEqual(['docs-other', 'other/nested'])
+    expect(store.selectedPaths).toEqual(['docs'])
+    expect(store.activeFileRelativePath).toBe('docs/nested/note.md')
+    expect(store.tabs).toEqual(tabs)
+    expect(setMeta).toHaveBeenCalledWith('ws', expect.objectContaining({ expandedDirs: ['docs-other', 'other/nested'] }))
+    // Even an already collapsed parent must forget hidden descendant expansions.
+    store.expandedDirs = ['docs/nested', 'other']
+    await store.collapseDir('docs')
+    expect(store.expandedDirs).toEqual(['other'])
+    await store.collapseDir('')
+    expect(store.expandedDirs).toEqual([])
+  })
+
   it('exposes the action through an accessible header button', () => {
     const source = readFileSync(new URL('../../components/FileTree.vue', import.meta.url), 'utf8')
     expect(source).toMatch(/<button\s[^>]*title="全部折叠"[^>]*aria-label="全部折叠"[^>]*@click="workspaceStore\.collapseAllDirs\(\)"[^>]*>/)

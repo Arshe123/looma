@@ -94,6 +94,8 @@ const isExpanded = (dirRelativePath: string) => expanded.value.has(dirRelativePa
 const toggle = async (dirRelativePath: string) => workspaceStore.toggleDirExpanded(dirRelativePath)
 
 const menuOpen = ref(false)
+const menuElement = ref<HTMLElement | null>(null)
+const menuPositioned = ref(false)
 const menuX = ref(0)
 const menuY = ref(0)
 const selectedFile = ref<FsEntry | null>(null)
@@ -236,15 +238,27 @@ const closeMenu = () => {
   menuOpen.value = false
 }
 
-const openMenu = (event: MouseEvent, row: FsEntry) => {
+const openMenu = async (event: MouseEvent, row: FsEntry) => {
   event.preventDefault()
   selectedFile.value = row
+  menuPositioned.value = false
+  menuX.value = event.clientX
+  menuY.value = event.clientY
+  menuOpen.value = true
+  await nextTick()
+  if (!menuOpen.value || !menuElement.value) return
   const pad = 8
-  const width = 180
-  const height = 320
+  const { width, height } = menuElement.value.getBoundingClientRect()
   menuX.value = Math.max(pad, Math.min(event.clientX, window.innerWidth - width - pad))
   menuY.value = Math.max(pad, Math.min(event.clientY, window.innerHeight - height - pad))
-  menuOpen.value = true
+  menuElement.value.scrollTop = 0
+  menuPositioned.value = true
+}
+
+const collapseSelectedDir = () => {
+  const entry = selectedFile.value
+  closeMenu()
+  if (entry?.isDirectory) workspaceStore.collapseDir(entry.relativePath).catch(console.error)
 }
 
 const handleRowClick = (_event: MouseEvent, row: FsEntry, isMulti: boolean) => {
@@ -716,6 +730,7 @@ const retryRootLoad = () => {
 }
 
 onMounted(() => {
+  window.addEventListener('resize', closeMenu)
   window.addEventListener('pointerdown', onGlobalPointerDown)
   window.addEventListener('focusin', onGlobalFocusIn)
   window.addEventListener('blur', onWindowBlur)
@@ -737,6 +752,7 @@ watch(() => workspaceStore.activeWorkspaceId, () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('resize', closeMenu)
   window.removeEventListener('pointerdown', onGlobalPointerDown)
   window.removeEventListener('focusin', onGlobalFocusIn)
   window.removeEventListener('blur', onWindowBlur)
@@ -944,10 +960,12 @@ onUnmounted(() => {
         </template>
       </div>
 
+      <Teleport to="body">
       <div
         v-if="menuOpen && selectedFile"
-        class="fixed z-50 w-[180px] rounded-lg border border-border-soft bg-panel shadow-xl py-1 text-text-main"
-        :style="{ left: `${menuX}px`, top: `${menuY}px` }"
+        ref="menuElement"
+        class="fixed z-50 w-[180px] max-w-[calc(100vw-16px)] max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg border border-border-soft bg-panel shadow-xl py-1 text-text-main"
+        :style="{ left: `${menuX}px`, top: `${menuY}px`, visibility: menuPositioned ? 'visible' : 'hidden' }"
         style="-webkit-app-region: no-drag"
         @pointerdown.stop
         @contextmenu.prevent
@@ -965,6 +983,14 @@ onUnmounted(() => {
           @click="addFolder"
         >
           新建文件夹
+        </button>
+        <button
+          v-if="selectedFile.isDirectory"
+          title="折叠"
+          class="w-full px-3 py-2 text-left text-sm hover:bg-accent-soft"
+          @click="collapseSelectedDir"
+        >
+          折叠
         </button>
         <button
           v-if="workspaceStore.selectedPaths.length === 1"
@@ -1021,6 +1047,7 @@ onUnmounted(() => {
           在文件资源管理器中显示
         </button>
       </div>
+      </Teleport>
     </div>
   </div>
 

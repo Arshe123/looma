@@ -32,7 +32,7 @@ const emit = defineEmits<{
 <template>
   <g class="knowledge-scene">
     <g class="graph-edges">
-      <g v-for="geometry in edges" :key="geometry.edge.id" class="graph-edge" :style="{ '--graph-hue': graphDirectoryHue(geometry.edge.source) }" :class="{ 'is-selected': selectedEdgeId === geometry.edge.id }">
+      <g v-for="geometry in edges" :key="geometry.edge.id" class="graph-edge" :style="{ '--graph-hue': graphDirectoryHue(geometry.edge.source) }" :class="{ 'is-selected': selectedEdgeId === geometry.edge.id, 'is-active': activePath && (geometry.edge.source === activePath || geometry.edge.target === activePath) }">
         <path :d="geometry.lineD" class="edge-line" />
         <path v-if="geometry.headD" :d="geometry.headD" class="edge-head" />
         <path :d="geometry.d" class="edge-target" data-graph-control role="button" tabindex="0" :aria-label="`${geometry.edge.source} 引用 ${geometry.edge.target}，查看引用片段`" @click="emit('edge', geometry.edge, $event)" @keydown.enter.prevent="emit('edge', geometry.edge, $event)" @keydown.space.prevent="emit('edge', geometry.edge, $event)"><title>{{ geometry.edge.source }} → {{ geometry.edge.target }}</title></path>
@@ -52,10 +52,10 @@ const emit = defineEmits<{
 .graph-edge,.graph-node{--graph-color:hsl(var(--graph-hue,140) var(--graph-saturation) var(--graph-lightness))}
 [role=button]:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .graph-edge{opacity:.65}
-.graph-edge.is-selected,.graph-edge:hover{opacity:1}
+.graph-edge.is-selected,.graph-edge.is-active,.graph-edge:hover{opacity:1}
 .edge-line{fill:none;stroke:var(--graph-color);stroke-width:1.4;stroke-linecap:butt;pointer-events:none}
 .edge-head{fill:var(--graph-color);stroke:none;pointer-events:none}
-.graph-edge.is-selected .edge-line,.graph-edge:hover .edge-line{stroke-width:2.4}
+.graph-edge.is-selected .edge-line,.graph-edge.is-active .edge-line,.graph-edge:hover .edge-line{stroke-width:2.4}
 .edge-target{fill:none;stroke:transparent;stroke-width:14;cursor:pointer}
 .graph-node{pointer-events:none}
 .graph-node.is-dimmed{opacity:.38}

@@ -30,6 +30,8 @@ describe('independent workspace panels', () => {
     [{ activeSidebarPanel: 'files' }, true, null],
     [{ activeSidebarPanel: 'ai' }, true, 'ai'],
     [{ activeSidebarPanel: 'outline' }, true, 'outline'],
+    [{ activeSidebarPanel: 'graph' }, true, 'graph'],
+    [{ activeSidebarPanel: 'files', fileSidebarOpen: false, activeAuxiliaryPanel: 'graph' }, false, 'graph'],
     [{ activeSidebarPanel: null }, false, null],
     [{}, true, null],
     [{ activeSidebarPanel: 'ai', fileSidebarOpen: false, activeAuxiliaryPanel: null }, false, null],
@@ -57,6 +59,21 @@ describe('independent workspace panels', () => {
     expect(window.electronAPI.workspaceMeta.set).toHaveBeenLastCalledWith('test', expect.objectContaining({
       fileSidebarOpen: false, activeAuxiliaryPanel: 'outline',
     }))
+  })
+
+  it('opens the relationship graph independently and persists its selected panel', async () => {
+    const store = useWorkspaceStore()
+    store.activeWorkspaceId = 'test'
+    store.toggleSidebarPanel('graph')
+    expect(store.fileSidebarOpen).toBe(true)
+    expect(store.activeAuxiliaryPanel).toBe('graph')
+    await store.saveWorkspaceMeta()
+    expect(window.electronAPI.workspaceMeta.set).toHaveBeenLastCalledWith('test', expect.objectContaining({
+      activeSidebarPanel: 'graph', activeAuxiliaryPanel: 'graph',
+    }))
+    store.toggleSidebarPanel('graph')
+    expect(store.activeAuxiliaryPanel).toBe(null)
+    expect(store.fileSidebarOpen).toBe(true)
   })
 
   it('selects a theme explicitly and follows system changes only in system mode', () => {

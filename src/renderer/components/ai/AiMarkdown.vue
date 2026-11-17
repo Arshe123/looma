@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount } from 'vue'
-import { renderMarkdown } from '@/shared/utils/markdown-renderer'
+import { renderMarkdown, type MarkdownRenderOptions } from '@/shared/utils/markdown-renderer'
 import { getCodeHighlightSegments } from '@/shared/utils/markdown-code-highlight'
 import '@/renderer/styles/rich-text-presentation.css'
 import '../shared/code-block-presentation.css'
 
 const props = defineProps<{
   content: string
+  references?: MarkdownRenderOptions['references']
 }>()
 
-const html = computed(() => renderMarkdown(props.content, { highlightCode: getCodeHighlightSegments }))
+const html = computed(() => renderMarkdown(props.content, { highlightCode: getCodeHighlightSegments, references: props.references }))
 
 let resetTimer: number | null = null
 let activeCopyButton: HTMLButtonElement | null = null

@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest'
 import { renderMarkdown, renderMarkdownWithLineData } from '../markdown-renderer'
 
 describe('renderMarkdown note ref links', () => {
+  it('reuses the source reference definitions when rendering an isolated snippet without mutating them', () => {
+    const references = Object.freeze({ TARGET: Object.freeze({ href: '../notes/target.md#L12', title: '目标' }) })
+    const html = renderMarkdown('查看 [**目标**][target]，使用 `code`。', { references })
+    expect(html).toContain('<strong>目标</strong>')
+    expect(html).toContain('<code>code</code>')
+    expect(html).toContain('href="../notes/target.md#L12"')
+    expect(html).toContain('looma-note-ref')
+    expect(() => renderMarkdown('[other]: other.md\n\n[other]', { references })).not.toThrow()
+    expect(() => renderMarkdownWithLineData('[other]: other.md\n\n[other]', 0, null, { references })).not.toThrow()
+    expect(Object.keys(references)).toEqual(['TARGET'])
+  })
   it('recognizes legacy note destinations containing spaces in both previews', () => {
     const source = '[国家疾控管理后台](../医渡云相关信息.md#4. 国家疾控管理后台)'
     for (const html of [renderMarkdown(source), renderMarkdownWithLineData(source, 8)]) {

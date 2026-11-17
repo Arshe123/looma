@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Bot, Folders, TableOfContents, Settings, UserRound } from 'lucide-vue-next'
+import { Bot, Compass, Folders, TableOfContents, Settings, UserRound } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { useExternalDocumentsStore } from '@/renderer/stores/externalDocuments'
 import type { SidebarPanelId } from '@/renderer/stores/workspace'
@@ -149,6 +149,19 @@ onUnmounted(() => {
           :title="isPanelOpen('ai') ? '关闭 AI 助手' : 'AI 助手'"
         >
           <Bot :size="20" />
+        </button>
+
+        <button
+          @click="togglePanel('graph')"
+          :aria-pressed="isPanelOpen('graph')"
+          aria-label="关系图谱"
+          :class="[
+            'p-2 rounded-md text-text-muted cursor-pointer',
+            isPanelOpen('graph') ? 'bg-accent-soft text-text-main' : 'hover:bg-accent-soft hover:text-text-main'
+          ]"
+          :title="isPanelOpen('graph') ? '关闭关系图谱' : '打开关系图谱'"
+        >
+          <Compass :size="20" />
         </button>
 
         <!-- <button class="p-2 rounded-md text-text-subtle cursor-not-allowed" title="Git History (Coming Soon)" disabled>

@@ -27,7 +27,7 @@ type DraftRecoveryResultPayload =
   | { status: 'none' }
   | { status: 'restorable' | 'conflict'; draft: DraftRecoveryRecordPayload };
 
-type SidebarPanelId = 'files' | 'outline' | 'ai';
+type SidebarPanelId = 'files' | 'outline' | 'ai' | 'graph';
 
 interface SidebarPanelState {
   id: SidebarPanelId;
@@ -143,7 +143,7 @@ interface WorkspaceMetaPayload {
   outlineExpansionStateVersion?: 1;
   activeSidebarPanel?: SidebarPanelId | null;
   fileSidebarOpen?: boolean;
-  activeAuxiliaryPanel?: 'outline' | 'ai' | null;
+  activeAuxiliaryPanel?: 'outline' | 'ai' | 'graph' | null;
   sidebarPanels?: SidebarPanelState[];
   fileSortMode?: 'name' | 'created-asc' | 'created-desc';
   fileCreationTimes?: Record<string, number>;
@@ -433,7 +433,7 @@ interface ElectronAPI {
   };
   fs: {
     listDir: (workspaceId: string, dirRelativePath: string) => Promise<Result<Array<{ name: string; relativePath: string; isDirectory: boolean; size: number; mtimeMs: number; birthtimeMs: number }>>>;
-    listNotes: (workspaceId: string) => Promise<Result<string[]>>;
+    listNotes: <T extends boolean = false>(workspaceId: string, options?: { watchDirectories?: boolean; includeCreatedAt?: T }) => Promise<Result<T extends true ? Array<{ path: string; createdAt: number }> : string[]>>;
     rename: (workspaceId: string, targetRelativePath: string, newName: string) => Promise<Result<string>>;
     createFolder: (workspaceId: string, parentDirRelativePath: string, name: string) => Promise<Result<string>>;
     createFile: (workspaceId: string, parentDirRelativePath: string, name: string) => Promise<Result<string>>;

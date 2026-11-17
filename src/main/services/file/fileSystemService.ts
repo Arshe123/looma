@@ -331,10 +331,11 @@ export const fileSystemService = {
    * 递归列出工作区内所有可引用的笔记文件（.md / .txt）。
    * 跳过隐藏目录（.looma 等），供笔记引用选择器使用。
    */
-  async listNotes(workspacePath: string): Promise<Result<string[]>> {
+  async listNotes(workspacePath: string, onDirectory?: (relativePath: string) => void, includeCreatedAt = false): Promise<Result<Array<string | { path: string; createdAt: number }>>> {
     try {
       const notes: string[] = []
       const walk = async (dirAbs: string) => {
+        onDirectory?.(toPosix(path.relative(workspacePath, dirAbs)) || '.')
         const items = await fs.readdir(dirAbs, { withFileTypes: true })
         for (const item of items) {
           if (item.name.startsWith('.')) continue
@@ -351,7 +352,19 @@ export const fileSystemService = {
       }
       await walk(workspacePath)
       notes.sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
-      return { success: true, data: notes }
+      if (!includeCreatedAt) return { success: true, data: notes }
+      const inventory = new Array<{ path: string; createdAt: number }>(notes.length)
+      let cursor = 0
+      await Promise.all(Array.from({ length: Math.min(4, notes.length) }, async () => {
+        while (cursor < notes.length) {
+          const index = cursor++, relativePath = notes[index]
+          try {
+            const stat = await fs.stat(path.join(workspacePath, relativePath))
+            inventory[index] = { path: relativePath, createdAt: stat.birthtimeMs > 0 ? stat.birthtimeMs : 0 }
+          } catch { inventory[index] = { path: relativePath, createdAt: 0 } }
+        }
+      }))
+      return { success: true, data: inventory }
     } catch (error: any) {
       return { success: false, error: `列出笔记失败: ${error?.message ?? String(error)}` }
     }

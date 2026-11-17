@@ -5,8 +5,10 @@ import { normalizeMarkdownNoteLinks } from './markdown-note-links'
 import { matchMarkdownHighlight, matchMarkdownPunctuationStrong } from './markdown-inline-grammar'
 import type { CodeHighlightSegment } from './markdown-code-highlight'
 import { findMarkdownNoteTitle, readMarkdownNoteStats, noteStatsLabel } from './note-reading-time'
+import type { MarkdownReference } from './markdown-reference-index'
 
 export type MarkdownRenderOptions = {
+  references?: Readonly<Record<string, MarkdownReference>>
   codeBlockCopy?: boolean
   highlightCode?: (source: string, language: string) => CodeHighlightSegment[]
 }
@@ -200,7 +202,11 @@ markdown.renderer.rules.link_open = (tokens, idx, options, env, self) => {
 }
 
 export const renderMarkdown = (content: string, options: MarkdownRenderOptions = {}) =>
-  markdown.render(normalizeMarkdownNoteLinks(content || ''), options)
+  markdown.render(normalizeMarkdownNoteLinks(content || ''), {
+    ...options,
+    // Parsing local definitions must not mutate a source note's shared index.
+    references: options.references ? { ...options.references } : undefined,
+  })
 
 /**
  * 渲染 markdown 并携带源码行号信息（data-line 属性）。
@@ -216,7 +222,7 @@ export const getMarkdownNoteTitleMetadata = (content: string, isPartial: boolean
 }
 
 export const renderMarkdownWithLineData = (content: string, lineBase: number, noteTitle?: NoteTitleMetadata | null, options: MarkdownRenderOptions = {}) => {
-  const env = { ...options, lineBase }
+  const env = { ...options, lineBase, references: options.references ? { ...options.references } : undefined }
   const tokens = markdown.parse(normalizeMarkdownNoteLinks(content || ''), env)
   if (noteTitle) {
     const index = tokens.findIndex(token => token.type === 'heading_open' && token.tag === 'h1'

@@ -2,6 +2,7 @@ import { ipcMain, shell } from 'electron';
 import { getWorkspacePathById } from './workspaceIpc';
 import { fileSystemService, fileWatchService } from '../services/file/fileSystemService';
 import path from 'path';
+import { getWindowWorkspace } from '../services/workspace/windowWorkspaceContext';
 
 ipcMain.handle('fs:listDir', async (_, workspaceId: string, dirRelativePath: string) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
@@ -9,10 +10,18 @@ ipcMain.handle('fs:listDir', async (_, workspaceId: string, dirRelativePath: str
   return await fileSystemService.listDir(workspacePath, dirRelativePath);
 });
 
-ipcMain.handle('fs:listNotes', async (_, workspaceId: string) => {
+ipcMain.handle('fs:listNotes', async (event, workspaceId: string, options?: { watchDirectories?: boolean; includeCreatedAt?: boolean }) => {
   const workspacePath = await getWorkspacePathById(workspaceId);
   if (!workspacePath) return { success: false, error: 'Workspace not found' };
-  return await fileSystemService.listNotes(workspacePath);
+  const directories: string[] = [];
+  const result = await fileSystemService.listNotes(workspacePath, options?.watchDirectories === true
+    ? relativePath => { directories.push(relativePath); } : undefined, options?.includeCreatedAt === true);
+  // Include empty directories: their first note must appear without refreshing
+  // the graph or expanding the corresponding directory in the ordinary file tree.
+  if (options?.watchDirectories === true && !event.sender.isDestroyed() && getWindowWorkspace(event.sender) === workspaceId) {
+    fileWatchService.add(workspaceId, workspacePath, event.sender, directories);
+  }
+  return result;
 });
 
 ipcMain.handle('fs:createFolder', async (_, workspaceId: string, parentDirRelativePath: string, name: string) => {

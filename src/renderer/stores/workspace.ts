@@ -369,7 +369,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     activeAgentDiff: null as AgentDiffViewState | null,
     activeSidebarPanel: DEFAULT_ACTIVE_SIDEBAR_PANEL as SidebarPanelId | null,
     fileSidebarOpen: true,
-    activeAuxiliaryPanel: null as 'outline' | 'ai' | null,
+    activeAuxiliaryPanel: null as 'outline' | 'ai' | 'graph' | null,
     aiAssistant: createDefaultAiAssistantState() as AiAssistantState,
     aiAssistantLoadStatus: 'idle' as 'idle' | 'loading' | 'ready' | 'error',
     aiAssistantLoadRequestId: 0,
@@ -975,7 +975,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.saveWorkspaceMeta().catch(() => {})
     },
 
-    setActiveAuxiliaryPanel(id: 'outline' | 'ai' | null) {
+    setActiveAuxiliaryPanel(id: 'outline' | 'ai' | 'graph' | null) {
       this.activeAuxiliaryPanel = id
       this.activeSidebarPanel = id || (this.fileSidebarOpen ? 'files' : null)
       this.saveWorkspaceMeta().catch(() => {})
@@ -1898,8 +1898,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.fileSidebarOpen = typeof metaResult.data.fileSidebarOpen === 'boolean'
         ? metaResult.data.fileSidebarOpen : this.activeSidebarPanel !== null
       const auxiliary = metaResult.data.activeAuxiliaryPanel
-      this.activeAuxiliaryPanel = auxiliary === null || auxiliary === 'ai' || auxiliary === 'outline'
-        ? auxiliary : this.activeSidebarPanel === 'ai' || this.activeSidebarPanel === 'outline'
+      this.activeAuxiliaryPanel = auxiliary === null || auxiliary === 'ai' || auxiliary === 'outline' || auxiliary === 'graph'
+        ? auxiliary : this.activeSidebarPanel === 'ai' || this.activeSidebarPanel === 'outline' || this.activeSidebarPanel === 'graph'
           ? this.activeSidebarPanel : null
       this.fileSortMode = metaResult.data.fileSortMode === 'created-asc' || metaResult.data.fileSortMode === 'created-desc'
         ? metaResult.data.fileSortMode

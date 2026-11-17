@@ -15,7 +15,7 @@ interface BuildWorkspaceMetaInput {
   outlineExpandedHeadingIds: Record<string, string[]>
   activeSidebarPanel?: SidebarPanelId | null
   fileSidebarOpen?: boolean
-  activeAuxiliaryPanel?: 'outline' | 'ai' | null
+  activeAuxiliaryPanel?: 'outline' | 'ai' | 'graph' | null
   fileSortMode?: 'name' | 'created-asc' | 'created-desc'
   fileCreationTimes?: Record<string, number>
   trashedFileCreationTimes?: Record<string, { restoreTo: string; entries: Record<string, number> }>

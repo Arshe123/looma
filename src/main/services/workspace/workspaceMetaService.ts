@@ -21,10 +21,10 @@ export interface WorkspaceMeta {
   fileSessions?: Record<string, any>
   outlineExpandedHeadingIds?: Record<string, string[]>
   outlineExpansionStateVersion?: 1
-  activeSidebarPanel?: 'files' | 'outline' | 'ai' | null
+  activeSidebarPanel?: 'files' | 'outline' | 'ai' | 'graph' | null
   fileSidebarOpen?: boolean
-  activeAuxiliaryPanel?: 'outline' | 'ai' | null
-  sidebarPanels?: { id: 'files' | 'outline' | 'ai'; size: number }[]
+  activeAuxiliaryPanel?: 'outline' | 'ai' | 'graph' | null
+  sidebarPanels?: { id: 'files' | 'outline' | 'ai' | 'graph'; size: number }[]
   fileSortMode?: 'name' | 'created-asc' | 'created-desc'
   fileCreationTimes?: Record<string, number>
   trashedFileCreationTimes?: Record<string, { restoreTo: string; entries: Record<string, number> }>
@@ -122,12 +122,12 @@ export const workspaceMetaService = {
             : {},
         outlineExpansionStateVersion: parsed.outlineExpansionStateVersion === 1 ? 1 as const : undefined,
         activeSidebarPanel:
-          parsed.activeSidebarPanel === null || parsed.activeSidebarPanel === 'files' || parsed.activeSidebarPanel === 'outline' || parsed.activeSidebarPanel === 'ai'
+          parsed.activeSidebarPanel === null || parsed.activeSidebarPanel === 'files' || parsed.activeSidebarPanel === 'outline' || parsed.activeSidebarPanel === 'ai' || parsed.activeSidebarPanel === 'graph'
             ? parsed.activeSidebarPanel
             : undefined,
         sidebarPanels: Array.isArray(parsed.sidebarPanels) ? parsed.sidebarPanels : undefined,
         fileSidebarOpen: typeof parsed.fileSidebarOpen === 'boolean' ? parsed.fileSidebarOpen : undefined,
-        activeAuxiliaryPanel: parsed.activeAuxiliaryPanel === null || parsed.activeAuxiliaryPanel === 'ai' || parsed.activeAuxiliaryPanel === 'outline'
+        activeAuxiliaryPanel: parsed.activeAuxiliaryPanel === null || parsed.activeAuxiliaryPanel === 'ai' || parsed.activeAuxiliaryPanel === 'outline' || parsed.activeAuxiliaryPanel === 'graph'
           ? parsed.activeAuxiliaryPanel : undefined,
         fileSortMode: parsed.fileSortMode === 'created-asc' || parsed.fileSortMode === 'created-desc'
           ? parsed.fileSortMode

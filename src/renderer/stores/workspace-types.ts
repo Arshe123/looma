@@ -145,7 +145,7 @@ export interface AiAssistantState {
   isTemporaryConversation?: boolean
 }
 
-export type SidebarPanelId = 'files' | 'outline' | 'ai'
+export type SidebarPanelId = 'files' | 'outline' | 'ai' | 'graph'
 export type SystemPageId = 'settings' | 'rag-index' | 'ai-history' | 'agent-diff' | 'help'
 export type SettingsSectionId = 'appearance' | 'editor' | 'ai' | 'memory'
 
@@ -194,7 +194,7 @@ export interface WorkspaceMeta {
   outlineExpansionStateVersion?: 1
   activeSidebarPanel?: SidebarPanelId | null
   fileSidebarOpen?: boolean
-  activeAuxiliaryPanel?: 'outline' | 'ai' | null
+  activeAuxiliaryPanel?: 'outline' | 'ai' | 'graph' | null
   sidebarPanels?: SidebarPanelState[]
   fileSortMode?: 'name' | 'created-asc' | 'created-desc'
   fileCreationTimes?: Record<string, number>

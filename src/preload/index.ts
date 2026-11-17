@@ -242,7 +242,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   fs: {
     listDir: (workspaceId: string, dirRelativePath: string) => ipcRenderer.invoke('fs:listDir', workspaceId, dirRelativePath),
-    listNotes: (workspaceId: string) => ipcRenderer.invoke('fs:listNotes', workspaceId),
+    listNotes: (workspaceId: string, options?: { watchDirectories?: boolean; includeCreatedAt?: boolean }) => ipcRenderer.invoke('fs:listNotes', workspaceId, options),
     createFolder: (workspaceId: string, parentDirRelativePath: string, name: string) =>
       ipcRenderer.invoke('fs:createFolder', workspaceId, parentDirRelativePath, name),
     createFile: (workspaceId: string, parentDirRelativePath: string, name: string) =>

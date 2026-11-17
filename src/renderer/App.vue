@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue';
 import { AUXILIARY_WIDTH_STORAGE_KEY, clampAuxiliaryWidth, parseAuxiliaryWidth } from '@/renderer/utils/auxiliary-layout';
 import { useExternalDocumentsStore } from '@/renderer/stores/externalDocuments';
 import { useWorkspaceStore } from '@/renderer/stores/workspace';
@@ -28,6 +28,8 @@ import {
   shouldOpenSidebarOnResize,
 } from '@/renderer/utils/sidebar-layout';
 import { matchesAppShortcut } from '@/shared/utils/app-shortcuts';
+
+const KnowledgeGraphPanel = defineAsyncComponent(() => import('@/renderer/components/knowledge/KnowledgeGraphPanel.vue'));
 
 const workspaceStore = useWorkspaceStore();
 const externalDocuments = useExternalDocumentsStore();
@@ -288,6 +290,7 @@ onUnmounted(() => {
           />
           <div class="h-full overflow-hidden rounded-[15px] bg-panel">
             <AiAssistant v-if="!editorOnly && workspaceStore.activeAuxiliaryPanel === 'ai'" />
+            <KnowledgeGraphPanel v-else-if="!editorOnly && workspaceStore.activeAuxiliaryPanel === 'graph'" />
             <OutlinePanel v-else />
           </div>
         </aside>

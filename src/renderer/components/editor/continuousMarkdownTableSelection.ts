@@ -16,6 +16,7 @@ import { InlineMarkdown } from '../../../shared/utils/tiptap-inline-markdown'
 import { ResizableMarkdownImage } from '../../../shared/utils/resizable-markdown-image'
 import { continuousClipboardHtmlToMarkdown, type ContinuousClipboardPayload } from './continuousMarkdownClipboard'
 import { serializeMarkdownAst } from '../../../shared/utils/markdown-rich-text'
+import { getTiptapClipboardPlainText } from '../../../shared/utils/tiptap-clipboard'
 
 const clipboardExtensions = [StarterKit, Table, TableRow, TableHeader, TableCell, InlineMarkdown, ResizableMarkdownImage]
 let clipboardCodec: { schema: ReturnType<typeof getSchema>; manager: MarkdownManager } | undefined
@@ -112,7 +113,7 @@ export function continuousTableSelectedText(state: EditorState): string | null {
   const source = continuousTableCopySource(state)
   if (source === null) return null
   const { schema, manager } = codec()
-  return schema.nodeFromJSON(manager.parse(source.replace(/\\\|/g, '|'))).textContent
+  return getTiptapClipboardPlainText(schema.nodeFromJSON(manager.parse(source.replace(/\\\|/g, '|'))))
 }
 /** Native ordinary cut uses a rectangular HTML slice but linear min/max text ranges.
  * Build only the explicitly requested row band; no editor/view or whole-note parse. */

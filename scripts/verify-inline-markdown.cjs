@@ -95,7 +95,7 @@ app.whenReady().then(async () => {
     await fixture('a **粗体** [引用](note.md) z')
     await run('editor().commands.setTextSelection({from:4,to:19})')
     const copy = await run(`import('/src/shared/utils/tiptap-clipboard.ts').then(m=>m.getTiptapClipboardCopyText(editor().state))`)
-    assert.equal(copy, await run('editor().state.doc.textBetween(4,19,"\\n","")'), 'cross-region copy uses the selected source')
+    assert.equal(copy, '粗体 引用', 'cross-region copy omits delimiters and link destinations even for partial syntax selections')
     await key('Backspace'); await wait(200)
     const deleted = await run('props.content')
     assert.ok(deleted.length < 'a **粗体** [引用](note.md) z'.length)

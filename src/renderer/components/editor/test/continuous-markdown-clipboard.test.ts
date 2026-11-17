@@ -19,6 +19,30 @@ function fixture(source: string, overrides: Partial<ContinuousMarkdownClipboardO
 }
 
 describe('continuous clipboard', () => {
+  it('copies partial inline selections using surrounding syntax, not fragment parsing', async () => {
+    const test = fixture('**粗体** 后')
+    test.view.dispatch({ selection: { anchor: 3, head: 8 } })
+    await test.controller.copy()
+    expect(test.writes).toEqual(['体 后'])
+    const link = fixture('[说明](note.md) 后')
+    link.view.dispatch({ selection: { anchor: 2, head: 15 } })
+    await link.controller.copy()
+    expect(link.writes).toEqual(['明 后'])
+  })
+  it('keeps inline context at both ends of a cross-block selection', async () => {
+    const source = '**开头**\n\n中间\n\n[结尾](note.md)'
+    const test = fixture(source)
+    test.view.dispatch({ selection: { anchor: 3, head: source.indexOf('尾') + 1 } })
+    await test.controller.copy()
+    expect(test.writes).toEqual(['头\n中间\n结尾'])
+  })
+  it('keeps Markdown literal when copying a fragment inside a code block', async () => {
+    const source = '```md\n**原样** [链接](note.md)\n```'
+    const test = fixture(source)
+    test.view.dispatch({ selection: { anchor: 6, head: source.lastIndexOf('\n') } })
+    await test.controller.copy()
+    expect(test.writes).toEqual(['**原样** [链接](note.md)'])
+  })
   it('includes structural heading context when copying only heading text as source', async () => {
     const test = fixture('## 标题其余')
     test.view.dispatch({ selection: { anchor: 3, head: 5 } })
@@ -43,7 +67,7 @@ describe('continuous clipboard', () => {
   it('matches ordinary source-backed plain copy and copies an image as Markdown only', async () => {
     const test = fixture('# 标题\n\n**粗体** [链接](note.md)\n\n- 第一项\n- 第二项')
     expect(await test.controller.copy()).toBe(true)
-    expect(test.writes).toEqual(['标题\n**粗体** [链接](note.md)\n第一项\n第二项'])
+    expect(test.writes).toEqual(['标题\n粗体 链接\n第一项\n第二项'])
     const image = '![说明](assets/a.png "title"){width=60%}'
     const selectedImage = fixture(image)
     await selectedImage.controller.copy()

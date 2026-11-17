@@ -1,6 +1,8 @@
 import type { JSONContent } from '@tiptap/core'
 import type { EditorState } from '@tiptap/pm/state'
 import { NodeSelection } from '@tiptap/pm/state'
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
+import { Transform } from '@tiptap/pm/transform'
 import {
   getDroppedFilePaths,
   isSupportedDroppedImagePath,
@@ -8,7 +10,7 @@ import {
 } from './external-file-drop'
 import { formatMarkdownImage } from './tiptap-image-insertion'
 import { normalizeNoteLinkHref } from './markdown-note-links'
-import { hasInlineMarkdownSource } from './tiptap-inline-markdown'
+import { getInlineMarkdownSpans, hasInlineMarkdownSource } from './tiptap-inline-markdown'
 
 type FileTransferLike = {
   types: ArrayLike<string>
@@ -60,6 +62,32 @@ export const selectionHasMarkdownSource = (state: EditorState) => {
   return hasMarkdownSyntax
 }
 
+/** Project source-backed syntax out of a temporary document, never the editor.
+ * Parse complete textblocks so selections inside a delimiter/link stay plain.
+ */
+export const getTiptapClipboardPlainText = (doc: ProseMirrorNode, from = 0, to = doc.content.size) => {
+  const hidden: { from: number; to: number }[] = []
+  doc.nodesBetween(from, to, (node, pos) => {
+    if (!node.isTextblock) return
+    if (node.type.spec.code) return false
+    const code: { from: number; to: number }[] = []
+    node.forEach((child, offset) => {
+      if (child.marks.some(mark => mark.type.spec.code)) code.push({ from: offset, to: offset + child.nodeSize })
+    })
+    for (const span of getInlineMarkdownSpans(node.textBetween(0, node.content.size, '', '\ufffc'))) {
+      if (code.some(range => range.from < span.to && range.to > span.from)) continue
+      hidden.push({ from: pos + 1 + span.from, to: pos + 1 + span.contentFrom },
+        { from: pos + 1 + span.contentTo, to: pos + 1 + span.to })
+    }
+    return false
+  })
+  const projection = new Transform(doc)
+  for (const range of hidden.sort((a, b) => b.from - a.from)) {
+    if (range.from < range.to) projection.delete(projection.mapping.map(range.from, 1), projection.mapping.map(range.to, -1))
+  }
+  return projection.doc.textBetween(projection.mapping.map(from), projection.mapping.map(to), '\n', '')
+}
+
 export const getTiptapClipboardCopyText = (state: EditorState) => {
   const { selection } = state
   if (selection instanceof NodeSelection && selection.node.type.name === 'image') {
@@ -73,7 +101,7 @@ export const getTiptapClipboardCopyText = (state: EditorState) => {
     })
   }
   if (selection.empty) return null
-  return state.doc.textBetween(selection.from, selection.to, '\n', '')
+  return getTiptapClipboardPlainText(state.doc, selection.from, selection.to)
 }
 
 export const partitionClipboardImagePaths = (paths: readonly string[]) => {

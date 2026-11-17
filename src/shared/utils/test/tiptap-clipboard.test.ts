@@ -19,7 +19,9 @@ it('copies internal note links with standard whitespace escapes', () => {
 const schema = new Schema({
   nodes: {
     doc: { content: 'block+' },
-    paragraph: { content: 'text*', group: 'block' },
+    paragraph: { content: 'inline*', group: 'block' },
+    codeBlock: { content: 'text*', group: 'block', code: true },
+    hardBreak: { inline: true, group: 'inline' },
     image: {
       group: 'block',
       selectable: true,
@@ -29,17 +31,61 @@ const schema = new Schema({
   },
   marks: {
     strong: {},
+    code: { code: true },
     link: { attrs: { href: {} } },
   },
 })
 
 describe('tiptap clipboard helpers', () => {
+  const copy = (source: string, from = 0, to = source.length, block = 'paragraph') => {
+    const doc = schema.nodes.doc.create(null, [schema.nodes[block].create(null, schema.text(source))])
+    const state = EditorState.create({ schema, doc, selection: TextSelection.create(doc, from + 1, to + 1) })
+    const before = state.doc.toJSON()
+    const text = getTiptapClipboardCopyText(state)
+    expect(state.doc.toJSON()).toEqual(before)
+    return text
+  }
+
+  it.each([
+    ['**粗体** *斜体* ~~删除~~ ==高亮==', '粗体 斜体 删除 高亮'],
+    ['[**重点**与*说明*](note.md "标题")', '重点与说明'],
+    ['前 `**原样** [链接](x)` 后', '前 **原样** [链接](x) 后'],
+    ['`` a`b `` 和 \\*字面星号\\*', 'a`b 和 *字面星号*'],
+    ['未闭合 **文字 与 [链接]( 和 <dev> &amp;', '未闭合 **文字 与 [链接]( 和 <dev> &amp;'],
+    ['😀**中文**和==**嵌套**==', '😀中文和嵌套'],
+  ])('copies visible inline text from %s without changing the document', (source, expected) => {
+    expect(copy(source)).toBe(expected)
+  })
+
+  it('uses complete inline context when a selection starts or ends inside syntax', () => {
+    expect(copy('**粗体** 后', 3, 8)).toBe('体 后')
+    expect(copy('[说明](note.md) 后', 2, 15)).toBe('明 后')
+    expect(copy('**粗体**', 0, 4)).toBe('粗体')
+  })
+
+  it('preserves literal Markdown inside code blocks and applied code marks', () => {
+    expect(copy('**粗体** [链接](note.md)', 0, undefined, 'codeBlock')).toBe('**粗体** [链接](note.md)')
+    const paragraph = schema.nodes.paragraph.create(null, schema.text('**原样**', [schema.marks.code.create()]))
+    const doc = schema.nodes.doc.create(null, [paragraph])
+    const state = EditorState.create({ schema, doc, selection: TextSelection.create(doc, 1, 7) })
+    expect(getTiptapClipboardCopyText(state)).toBe('**原样**')
+  })
+
+  it('keeps block boundaries and inline atoms out of source-offset calculations', () => {
+    const doc = schema.nodes.doc.create(null, [
+      schema.nodes.paragraph.create(null, [schema.text('**前**'), schema.nodes.hardBreak.create(), schema.text('[后](x)')]),
+      schema.nodes.paragraph.create(null, schema.text('==下一段==')),
+    ])
+    const state = EditorState.create({ schema, doc, selection: TextSelection.create(doc, 1, doc.content.size - 1) })
+    expect(getTiptapClipboardCopyText(state)).toBe('前后\n下一段')
+  })
+
   it('enables source copy for source-backed inline formats without stored marks', () => {
     const paragraph = schema.nodes.paragraph.create(null, schema.text('**加粗**'))
     let state = EditorState.create({ schema, doc: schema.nodes.doc.create(null, [paragraph]) })
     state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 1, 7)))
     expect(selectionHasMarkdownSource(state)).toBe(true)
-    expect(getTiptapClipboardCopyText(state)).toBe('**加粗**')
+    expect(getTiptapClipboardCopyText(state)).toBe('加粗')
   })
 
   it('captures pasted files through the same transfer shape as dropped files', () => {

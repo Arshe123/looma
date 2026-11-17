@@ -3,7 +3,7 @@ import { EditorState, type TransactionSpec } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import type { EditorView } from '@codemirror/view'
 import { parsedMarkdownState } from './parsed-markdown-state'
-import { continuousTableSelectionState, selectContinuousTableRectangle, getContinuousTableSelection, replaceContinuousTableSelection, readContinuousTableSelection, pasteContinuousTableSelection } from '../continuousMarkdownTableSelection'
+import { continuousTableSelectionState, selectContinuousTableRectangle, getContinuousTableSelection, replaceContinuousTableSelection, readContinuousTableSelection, pasteContinuousTableSelection, continuousTableSelectedText, continuousTableCopySource } from '../continuousMarkdownTableSelection'
 
 const source = '| A | B | C |\n| --- | --- | --- |\n| d | e | f |\n| g | h | i |'
 function fixture(text = source, readOnly = false) {
@@ -13,6 +13,14 @@ function fixture(text = source, readOnly = false) {
   return { view, transactions, text: () => state.doc.toString() }
 }
 describe('source-backed rectangular table selection', () => {
+  it('copies plain head-cell text while retaining Markdown for explicit source copy', () => {
+    const text = '| A | B |\n| --- | --- |\n| C | **粗体** [链接](note.md) |'
+    const f = fixture(text)
+    selectContinuousTableRectangle(f.view, text.indexOf('A'), 0, text.indexOf('粗体'), 1)
+    expect(continuousTableSelectedText(f.view.state)).toBe('粗体 链接')
+    expect(continuousTableCopySource(f.view.state)).toBe('**粗体** [链接](note.md)')
+    expect(f.text()).toBe(text)
+  })
   it('selects a rectangle without linear ranges, skipping the separator', () => {
     const f = fixture()
     expect(selectContinuousTableRectangle(f.view, source.indexOf('A'), 0, source.indexOf('h'), 1)).toBe(true)

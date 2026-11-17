@@ -17,6 +17,7 @@ import { EditorState, Transaction, type TransactionSpec } from '@codemirror/stat
 import { syntaxTree } from '@codemirror/language'
 import { isolateHistory } from '@codemirror/commands'
 import { hasInlineMarkdownSource } from '../../../shared/utils/tiptap-inline-markdown'
+import { getTiptapClipboardPlainText } from '../../../shared/utils/tiptap-clipboard'
 
 const extensions = [StarterKit.configure({ link: { openOnClick: false, autolink: false, linkOnPaste: false,
   isAllowedUri: (url, { defaultValidate }) => !/^[a-z][a-z0-9+.-]*:/i.test(Array.from(url).filter(char => char.charCodeAt(0) > 31 && !/\s/.test(char)).join('')) || defaultValidate(url),
@@ -28,12 +29,12 @@ function clipboardCodec() {
   return codec ??= { manager: new MarkdownManager({ extensions }), schema: getSchema(extensions) }
 }
 
-/** Ordinary Tiptap uses source-backed inline text, but structural blocks are plain. */
+/** Share ordinary rich-text copy semantics, including source-backed inline text. */
 export function continuousClipboardPlainText(source: string) {
   if (/^!\[[\s\S]*\]\([\s\S]*\)(?:\{width=\d+%\})?$/.test(source) && !source.includes('\n')) return source
   const { manager, schema } = clipboardCodec()
   const doc = schema.nodeFromJSON(manager.parse(source))
-  return doc.textBetween(0, doc.content.size, '\n', '')
+  return getTiptapClipboardPlainText(doc)
 }
 
 /** Parse only inert template contents: never attach clipboard HTML to a live DOM,
@@ -124,6 +125,39 @@ function selectionSource(state: EditorState, from: number, to: number, source: s
   return source
 }
 
+function selectionPlainText(state: EditorState, from: number, to: number, source: string): string {
+  const tree = syntaxTree(state)
+  // Only split partial boundary blocks; never recurse through every paragraph
+  // of a large select-all operation. The middle keeps the bounded slice codec.
+  for (const [position, side] of [[from, 1], [to, -1]] as const) {
+    for (let node = tree.resolveInner(position, side); node; node = node.parent) {
+      if (!/^(Paragraph|(?:ATX|Setext)Heading[1-6]|FencedCode|CodeBlock)$/.test(node.name)) continue
+      const boundary = side === 1 && from > node.from && node.to < to ? node.to
+        : side === -1 && to < node.to && node.from > from ? node.from : null
+      if (boundary !== null) return [
+        selectionPlainText(state, from, boundary, state.doc.sliceString(from, boundary)).replace(/\n+$/, ''),
+        selectionPlainText(state, boundary, to, state.doc.sliceString(boundary, to)).replace(/^\n+/, ''),
+      ].filter(Boolean).join('\n')
+      break
+    }
+  }
+  for (let node = tree.resolveInner(from, 1); node; node = node.parent) {
+    if (to > node.to) continue
+    if ((node.name === 'FencedCode' || node.name === 'CodeBlock') && from > node.from) return source
+    if (node.name !== 'Paragraph' && !/^(?:ATX|Setext)Heading[1-6]$/.test(node.name)) continue
+    const text = state.doc.sliceString(node.from, node.to)
+    const prefix = node.name.startsWith('ATX') ? /^[ \t]*#{1,6}[ \t]+/.exec(text)?.[0].length ?? 0 : 0
+    const end = node.name.startsWith('Setext') ? text.lastIndexOf('\n') : text.length
+    const { schema } = clipboardCodec()
+    const body = text.slice(prefix, end)
+    if (!body) return ''
+    const doc = schema.nodes.doc.create(null, schema.nodes.paragraph.create(null, schema.text(body)))
+    return getTiptapClipboardPlainText(doc, 1 + Math.min(body.length, Math.max(0, from - node.from - prefix)),
+      1 + Math.max(0, Math.min(body.length, to - node.from - prefix)))
+  }
+  return continuousClipboardPlainText(source)
+}
+
 export function createContinuousMarkdownClipboard(options: ContinuousMarkdownClipboardOptions) {
   let disposed = false
   let generation = 0
@@ -150,7 +184,7 @@ export function createContinuousMarkdownClipboard(options: ContinuousMarkdownCli
     if (!ranges.length) return null
     return ranges.map(({ from, to }) => {
       const text = options.readSource(from, to)
-      return options.sourceOnly?.() ? text : source ? selectionSource(view.state, from, to, text) : continuousClipboardPlainText(text)
+      return options.sourceOnly?.() ? text : source ? selectionSource(view.state, from, to, text) : selectionPlainText(view.state, from, to, text)
     }).join('\n')
   }
   const capabilities = (overrideText?: string) => {

@@ -64,7 +64,7 @@ app.whenReady().then(async () => {
       return {source,plain:receiver.getData('text/plain'),raw:raw.getData('text/plain')}
     })()`)
     assert.equal(native.source, '## 原生标题\n\n**原生粗体**', 'real host native paste must use the HTML adapter')
-    assert.equal(native.plain, '原生标题\n**原生粗体**')
+    assert.equal(native.plain, '原生标题\n原生粗体')
     assert.equal(native.raw, native.source, 'source mode must preserve literal Markdown')
     const menu = await win.webContents.executeJavaScript(`(async()=>{
       state.sourceOnly=false;await new Promise(resolve=>setTimeout(resolve,100));cm().dispatch({selection:{anchor:0,head:model.length}})

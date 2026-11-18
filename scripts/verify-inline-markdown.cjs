@@ -207,7 +207,7 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type:'mouseUp', button:'left', clickCount:1, ...dragPoints[1] })
     await wait(200)
     assert.equal(await run('editor().state.selection.empty'), false)
-    assert.equal(await run('document.querySelectorAll(".looma-inline-syntax").length'), 0, 'selected syntax expands after drag release')
+    assert.equal(await run('document.querySelectorAll(".looma-inline-syntax").length'), 2, 'selected syntax stays collapsed after drag release')
     console.log('PASS native drag selection without mid-gesture reflow')
 
     await fixture('a  z')

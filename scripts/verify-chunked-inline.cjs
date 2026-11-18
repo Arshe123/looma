@@ -45,6 +45,12 @@ app.whenReady().then(async () => {
         await run(`select(${offset})`); await focus(); await wait()
         assert.equal(await expanded(), inline, `entering ${inline} at ${offset} expands its entire source: ${await run('JSON.stringify({selection:model().selection,focused:cm().hasFocus,html:cm().contentDOM.innerHTML})')}`)
       }
+      for (const [anchor,head] of [[3,4],[4,3],[0,source.length]]) {
+        await run(`select(${anchor},${head})`); await wait()
+        assert.equal(await expanded(), '', 'text selections keep every inline family collapsed')
+      }
+      await run('select(3)'); await wait()
+      assert.equal(await expanded(), inline, 'collapsing the selection back to a caret expands source again')
       await run('select(0)'); await wait()
       assert.equal(await expanded(), '')
       assert.equal(await snapshot(), before, 'selection-only expansion must not write source/history or save')
@@ -127,7 +133,8 @@ app.whenReady().then(async () => {
     assert.equal(await expanded(), '', 'drag freezes the collapsed display until release')
     await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', ...points[1] })
     await wait(250)
-    assert.equal(await expanded(), '**bold**')
+    assert.equal(await run('cm().state.selection.main.empty'), false)
+    assert.equal(await expanded(), '', 'selected source stays collapsed after drag release')
     assert.equal(await snapshot(), beforeDrag)
     await run('cm().contentDOM.blur()'); await wait(250)
     assert.equal(await expanded(), '', 'blur clears expanded source')

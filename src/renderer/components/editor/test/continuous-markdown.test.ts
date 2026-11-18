@@ -39,15 +39,29 @@ describe('continuous Markdown presentation', () => {
     expect(inactive.marks.some(mark => mark.className === 'looma-continuous-bold')).toBe(true)
   })
 
-  it('highlights separate selected inline sources without painting plain text or code blocks', () => {
+  it('keeps selected inline sources rendered without exposing syntax or code blocks', () => {
     const source = '前 **外层 *内层* 文字** 后\n\n隔开的 ==高亮==\n\n```\n**字面内容**\n```'
     const doc = Text.of(source.split('\n'))
     const codeFrom = source.indexOf('```')
     const plan = buildContinuousMarkdownPlan(doc, [{ from: 0, to: doc.length }], {
       contextAt: offset => ({ fence: offset > codeFrom ? '`' : '', fenceLength: 3 }), metadata,
     }, { from: 0, to: doc.length })
-    expect(plan.marks.map(mark => source.slice(mark.from, mark.to))).toEqual(['**外层 *内层* 文字**', '==高亮=='])
-    expect(plan.replacements).toEqual([])
+    expect(plan.marks.some(mark => mark.className === 'looma-continuous-expanded-source')).toBe(false)
+    expect(plan.marks.map(mark => source.slice(mark.from, mark.to))).toEqual(['外层 *内层* 文字', '内层', '高亮'])
+    expect(plan.replacements).toHaveLength(6)
+    expect(doc.toString()).toBe(source)
+  })
+
+  it.each(['**bold**', '*italic*', '~~strike~~', '==highlight==', '`code`', '[label](note.md)', '**outer *inner* end**'])('only expands %s for a collapsed caret', source => {
+    const doc = Text.of([`a ${source} z`])
+    const options = { contextAt, metadata }
+    const visible = [{ from: 0, to: doc.length }]
+    const inactive = buildContinuousMarkdownPlan(doc, visible, options)
+    for (const selection of [{ from: 4, to: 5 }, { from: 0, to: doc.length }]) {
+      expect(buildContinuousMarkdownPlan(doc, visible, options, selection)).toEqual(inactive)
+    }
+    expect(buildContinuousMarkdownPlan(doc, visible, options, { from: 5, to: 5 }).marks
+      .filter(mark => mark.className === 'looma-continuous-expanded-source')).toHaveLength(1)
   })
 
   it('looks up an expanded link in bounded source without parsing literal code', () => {

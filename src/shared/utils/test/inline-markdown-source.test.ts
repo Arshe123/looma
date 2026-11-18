@@ -216,7 +216,8 @@ describe('permanent inline Markdown source', () => {
     state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 1, 10)))
     expect(inlineMarkdownKey.getState(state)!.decorations).toBe(frozen)
     state = state.apply(state.tr.setMeta(inlineMarkdownKey, { dragging: false }))
-    expect(inlineMarkdownKey.getState(state)!.decorations.find().filter(d => !d.spec.inlineHighlight && !d.spec.inlineHighlightBlock)).toHaveLength(0)
+    expect(inlineMarkdownKey.getState(state)!.decorations.find().filter(d => d.spec.syntax)).toHaveLength(2)
+    expect(inlineMarkdownKey.getState(state)!.decorations.find().filter(d => d.spec.inlineHighlight)).toHaveLength(0)
     expect(undoDepth(state)).toBe(0)
   })
 

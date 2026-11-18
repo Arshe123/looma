@@ -165,7 +165,7 @@ const decorate = (state: EditorState, focused: boolean) => {
     if (!node.isTextblock || node.type.spec.code) return
     const tags: Record<InlineMarkdownSpan['type'], string> = { bold: 'strong', italic: 'em', strike: 's', highlight: 'mark', inlineCode: 'code', link: 'a', escape: 'span' }
     const spans = spansForNode(node)
-    const activeSpans = focused ? spans.filter(span =>
+    const activeSpans = focused && state.selection.empty ? spans.filter(span =>
       state.selection.from <= pos + 1 + span.to && state.selection.to >= pos + 1 + span.from) : []
     // One inline box per outer expanded source range: nested syntax must not
     // paint the translucent background twice. Keep this in the frozen set.

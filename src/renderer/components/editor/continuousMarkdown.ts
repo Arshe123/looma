@@ -191,7 +191,7 @@ export function buildContinuousMarkdownPlan(
           ? getContinuousInlineSpans(doc, options.tree, position, end, options.references?.(), readInline, inlineCache).map(token => ({ ...token,
             from: token.from - position, to: token.to - position, contentFrom: token.contentFrom - position, contentTo: token.contentTo - position }))
           : getInlineMarkdownSpans(fragment)
-        const expanded = selection ? tokens.filter(token =>
+        const expanded = selection && selection.from === selection.to ? tokens.filter(token =>
           selection.from <= position + token.to && selection.to >= position + token.from
           && (options.tree || (!(token.from === 0 && position > line.from) && !(position + token.to === end && end < line.to)))) : []
         const outerExpanded = expanded.filter(token => !expanded.some(outer =>

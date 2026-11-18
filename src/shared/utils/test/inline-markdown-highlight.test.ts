@@ -16,14 +16,30 @@ const focus = (state: EditorState, from: number, to = from) => state.apply(state
   .setSelection(TextSelection.create(state.doc, from, to)).setMeta(inlineMarkdownKey, { focused: true }))
 
 describe('expanded inline source highlight', () => {
-  it('keeps separate ranges across gaps and textblocks', () => {
+  it('keeps inline syntax collapsed across gaps and textblocks in a text selection', () => {
     const first = 'a **bold** gap `code` z'
     const second = 'b [link](note.md) end'
     const state = EditorState.create({ schema, doc: schema.node('doc', null,
       [first, second].map(text => schema.node('paragraph', null, schema.text(text)))), plugins: [createInlineMarkdownPlugin()] })
     const selected = focus(state, 4, state.doc.content.size - 2)
-    expect(highlights(selected).map(d => selected.doc.textBetween(d.from, d.to))).toEqual(['**bold**', '`code`', '[link](note.md)'])
-    expect(blocks(selected)).toHaveLength(2)
+    expect(highlights(selected)).toHaveLength(0)
+    expect(blocks(selected)).toHaveLength(0)
+    expect(inlineMarkdownKey.getState(selected)!.decorations.find().filter(d => d.spec.syntax)).toHaveLength(6)
+    expect(selected.doc).toBe(state.doc)
+  })
+  it.each(['**bold**', '*italic*', '~~strike~~', '==highlight==', '`code`', '[label](note.md)', '**outer *inner* end**'])('only expands %s for a collapsed caret, not forward/reverse selections', source => {
+    const original = fixture(`a ${source} z`)
+    const expanded = focus(original, 6)
+    expect(highlights(expanded)).toHaveLength(1)
+    for (const [from, to] of [[5, 6], [6, 5], [1, original.doc.content.size - 1]]) {
+      const selected = focus(expanded, from, to)
+      expect(highlights(selected)).toHaveLength(0)
+      expect(blocks(selected)).toHaveLength(0)
+      expect(inlineMarkdownKey.getState(selected)!.decorations.find().some(d => d.spec.syntax)).toBe(true)
+      expect(selected.doc).toBe(original.doc)
+      expect(undoDepth(selected)).toBe(0)
+      expect(highlights(focus(selected, 6))).toHaveLength(1)
+    }
   })
   it.each(['composing', 'dragging'])('freezes highlight and block suppression together while %s', mode => {
     let state = focus(fixture('a **bold** z'), 6)

@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Sequence
 
+from agent.context_budget import active_budget
 from agent.decision_parser import (
     AgentDecisionParseError,
     AgentEmptyDecisionError,
@@ -68,10 +69,17 @@ class DeepSeekChatProvider(OpenAIChatProvider):
     ) -> AgentDecision:
         native_tools, allowed_tools = prepare_native_tool_schemas(tool_schemas)
         request_messages = self._agent_messages(messages, bool(native_tools))
+        budget = active_budget.get()
         last_error: _NativeDecisionError | None = None
 
         for attempt in range(2):
-            response = await self._create_agent_completion(request_messages, native_tools)
+            sent = request_messages
+            if budget is not None:
+                sent, _ = budget.fit(
+                    sent, tools=native_tools, default_output=_MIN_AGENT_MAX_TOKENS,
+                    configured_output=self.max_tokens,
+                )
+            response = await self._create_agent_completion(sent, native_tools)
             try:
                 return self._parse_native_decision(response, allowed_tools)
             except _NativeDecisionError as exc:
@@ -94,11 +102,12 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         messages: list[dict[str, Any]],
         native_tools: list[dict[str, Any]],
     ):
+        budget = active_budget.get()
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": self.agent_max_tokens,
+            "max_tokens": budget.output_tokens if budget is not None else self.agent_max_tokens,
         }
         if native_tools:
             kwargs["tools"] = native_tools

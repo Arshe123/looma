@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAiAssistantStore } from '../ai-assistant'
 import { useSettingsStore } from '../settings'
+import { getChatModelContextKey } from '../../../shared/utils/app-settings'
 import { useWorkspaceStore } from '../workspace'
 
 const canonicalEvent = (
@@ -74,6 +75,49 @@ describe('agent stream state', () => {
     const settings = useSettingsStore()
     settings.settings.ai.chat.provider = 'openai'
     settings.settings.ai.chat.model = 'gpt-4o-mini'
+  })
+
+  it('passes every earlier message through bounded summary requests', async () => {
+    const summarize = vi.mocked(window.electronAPI.agent.summarizeConversation)
+    const history = Array.from({ length: 201 }, (_, index) => ({ role: 'user' as const, content: `question ${index}` }))
+    expect(await useAiAssistantStore().summarizeConversationMessagesWithLlm(history, { maxChars: 1200 })).toBe('摘要')
+    const batches = summarize.mock.calls.map(([messages]) => messages)
+    expect(batches.every(batch => batch.length <= 100)).toBe(true)
+    expect(batches.flat().filter(message => message.role === 'user')).toEqual(history)
+    expect(batches[1][0]).toMatchObject({ role: 'system', content: expect.stringContaining('摘要') })
+  })
+
+  it('summarizes over-budget history even for a previously saved sliding-window preference', async () => {
+    const settings = useSettingsStore()
+    Object.assign(settings.settings.ai, { conversationContext: { strategy: 'sliding_window' } })
+    const chat = settings.settings.ai.chat
+    chat.modelContext = { key: getChatModelContextKey(chat), overrideTokens: 1000 }
+    const conversationId = createConversation()
+    const workspace = useWorkspaceStore()
+    for (let i = 0; i < 101; i++) {
+      workspace.appendAiAssistantMessageToConversation(conversationId, 'user', `问题 ${i}`)
+      workspace.appendAiAssistantMessageToConversation(conversationId, 'assistant', `回答 ${i}`)
+    }
+    await startAgent(conversationId)
+    expect(window.electronAPI.agent.summarizeConversation).toHaveBeenCalled()
+    expect(agentApi.start).toHaveBeenCalledWith(expect.any(String), 'workspace-1', expect.objectContaining({
+      history: expect.arrayContaining([expect.objectContaining({ role: 'system', content: expect.stringContaining('摘要') })]),
+    }))
+  })
+
+  it('sends history inside the token budget without summarizing solely for count or character size', async () => {
+    const conversationId = createConversation()
+    const workspace = useWorkspaceStore()
+    const longMessage = 'x'.repeat(300_001)
+    for (let i = 0; i < 101; i++) {
+      workspace.appendAiAssistantMessageToConversation(conversationId, 'user', `问题 ${i}`)
+      workspace.appendAiAssistantMessageToConversation(conversationId, 'assistant', i === 0 ? longMessage : `回答 ${i}`)
+    }
+    await startAgent(conversationId)
+    expect(window.electronAPI.agent.summarizeConversation).not.toHaveBeenCalled()
+    expect(agentApi.start).toHaveBeenCalledWith(expect.any(String), 'workspace-1', expect.objectContaining({
+      history: expect.arrayContaining([{ role: 'assistant', content: longMessage }, { role: 'user', content: '问题 100' }]),
+    }))
   })
 
   it.each(['run_completed', 'run_failed', 'run_cancelled', 'run_interrupted'])('projects actual memory changes only for the owning terminal turn: %s', async terminal => {
@@ -562,7 +606,7 @@ describe('agent stream state', () => {
   it('locks the conversation before asynchronous history preparation', async () => {
     const conversationId = createConversation()
     const store = useAiAssistantStore()
-    let resolveHistory!: (value: { history: []; stats: Record<string, never> }) => void
+    let resolveHistory!: (value: []) => void
     vi.spyOn(store, 'buildConversationHistoryForRequest').mockImplementation(() => new Promise(resolve => {
       resolveHistory = resolve as typeof resolveHistory
     }) as any)
@@ -571,7 +615,7 @@ describe('agent stream state', () => {
     const second = await store.startAgentInConversation({ workspaceId: 'workspace-1', conversationId, text: '第二次', aiName: 'AI' })
     expect(second.success).toBe(false)
 
-    resolveHistory({ history: [], stats: {} })
+    resolveHistory([])
     await first
     expect(agentApi.start).toHaveBeenCalledOnce()
   })
@@ -579,7 +623,7 @@ describe('agent stream state', () => {
   it('cancels an Agent during history preparation without starting IPC', async () => {
     const conversationId = createConversation()
     const store = useAiAssistantStore()
-    let resolveHistory!: (value: { history: []; stats: Record<string, never> }) => void
+    let resolveHistory!: (value: []) => void
     vi.spyOn(store, 'buildConversationHistoryForRequest').mockImplementation(() => new Promise(resolve => {
       resolveHistory = resolve as typeof resolveHistory
     }) as any)
@@ -587,7 +631,7 @@ describe('agent stream state', () => {
     const start = store.startAgentInConversation({ workspaceId: 'workspace-1', conversationId, text: '稍后取消', aiName: 'AI' })
     expect(store.isConversationRunningAgent(conversationId)).toBe(true)
     expect(await store.cancelAgentConversation(conversationId)).toEqual({ success: true })
-    resolveHistory({ history: [], stats: {} })
+    resolveHistory([])
 
     expect(await start).toEqual({ success: true, cancelled: true })
     expect(agentApi.start).not.toHaveBeenCalled()

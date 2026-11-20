@@ -5,6 +5,8 @@ import { createWriteStream } from 'node:fs'
 import fs from 'fs/promises'
 import path from 'path'
 import { promisify } from 'node:util'
+import type { Result } from '../../../shared/types/Result'
+import { normalizeContextTokenCount, type ChatContextLimits } from '../../../shared/utils/app-settings'
 
 const execFileAsync = promisify(execFile)
 const ollamaWindowsInstallerUrl = 'https://ollama.com/download/OllamaSetup.exe'
@@ -78,6 +80,36 @@ const listModels = async (baseUrl: string) => {
     return { success: true, data: { models } }
   } catch (error: any) {
     return { success: false, error: `无法连接 Ollama: ${error?.message ?? String(error)}。请确认 Ollama 已启动。` }
+  }
+}
+
+async function getChatModelContext(baseUrl: string, model: string): Promise<Result<Partial<ChatContextLimits> | null>> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 5000)
+  try {
+    if (typeof model !== 'string' || !model.trim()) throw new Error()
+    const url = new URL(normalizeOllamaBaseUrl(baseUrl))
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error()
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}/api/show`
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      body: JSON.stringify({ model }),
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      redirect: 'error',
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error()
+    const payload = await response.json()
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error()
+    const info = payload.model_info
+    const architecture = info?.['general.architecture']
+    const contextWindowTokens = typeof architecture === 'string'
+      ? normalizeContextTokenCount(info[`${architecture}.context_length`]) : undefined
+    return { success: true, data: contextWindowTokens ? { contextWindowTokens } : null }
+  } catch {
+    return { success: false, error: '无法读取 Ollama 模型上下文，请确认 Ollama 已启动且模型已下载。' }
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -373,6 +405,7 @@ const deleteModel = async (baseUrl: string, model: string) => {
 
 export const ollamaService = {
   listModels,
+  getChatModelContext,
   checkInstalled,
   downloadInstaller,
   cancelDownload,

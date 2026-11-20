@@ -5,6 +5,7 @@ from typing import Any, AsyncIterator, List
 
 import httpx
 
+from agent.context_budget import active_budget
 from agent.decision_parser import (
     AgentContextExhaustedError,
     AgentDecisionParseError,
@@ -139,6 +140,28 @@ class OllamaChatProvider(BaseChatProvider):
         self.base_url = config.base_url or "http://localhost:11434"
         self.temperature = config.temperature
         self.max_tokens = config.max_tokens
+        self._model_context_checked = False
+        self._model_context_limit: int | None = None
+
+    async def _agent_model_context_limit(self) -> int | None:
+        # The provider is scoped to a run. Do not request metadata on every
+        # completion, or depend on it being supported by a compatible server.
+        if not self._model_context_checked:
+            try:
+                async with httpx.AsyncClient(timeout=2.0, follow_redirects=False) as client:
+                    response = await client.post(f"{self.base_url}/api/show", json={"model": self.model})
+                    response.raise_for_status()
+                    data = response.json()
+                info = data.get("model_info") if isinstance(data, dict) else None
+                if isinstance(info, dict):
+                    arch = info.get("general.architecture")
+                    limit = info.get(f"{arch}.context_length") if isinstance(arch, str) else None
+                    if type(limit) is int and limit > 0:
+                        self._model_context_limit = limit
+            except (httpx.HTTPError, ValueError):
+                pass
+            self._model_context_checked = True
+        return self._model_context_limit
 
     async def complete_structured(
         self, messages: List[ChatMessage], tool_schemas: Any
@@ -147,12 +170,28 @@ class OllamaChatProvider(BaseChatProvider):
 
         native_tools, allowed_tools = prepare_native_tool_schemas(tool_schemas)
         request_messages = self._agent_messages(messages, bool(native_tools))
-        context_tokens = self._agent_context_tokens(request_messages, native_tools)
+        budget = active_budget.get()
+        context_cap = _MAX_AGENT_CONTEXT_TOKENS
+        if budget is not None:
+            context_cap = min(context_cap, budget.settings.context_window_tokens)
+            model_cap = await self._agent_model_context_limit()
+            if model_cap is not None:
+                context_cap = min(context_cap, model_cap)
+        context_tokens = self._agent_context_tokens(request_messages, native_tools) if budget is None else 0
+        retry_floor = 0
         last_error: _OllamaDecisionError | None = None
         for attempt in range(_MAX_AGENT_DECISION_ATTEMPTS):
+            sent = request_messages
+            if budget is not None:
+                sent, context_tokens = budget.fit(
+                    sent, tools=native_tools, provider_window=context_cap,
+                    default_output=_MIN_AGENT_OUTPUT_TOKENS, configured_output=self.max_tokens,
+                    system_overhead=512,
+                    allocate=lambda used: max(retry_floor, _MIN_AGENT_CONTEXT_TOKENS, 1 << (used - 1).bit_length()),
+                )
             try:
                 response = await self._create_agent_completion(
-                    request_messages, native_tools, context_tokens
+                    sent, native_tools, context_tokens
                 )
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code
@@ -169,11 +208,10 @@ class OllamaChatProvider(BaseChatProvider):
                     exc.code == "truncated_content"
                     and self._response_exhausted_context(response, context_tokens)
                 ):
-                    if context_tokens >= _MAX_AGENT_CONTEXT_TOKENS:
+                    if context_tokens >= context_cap:
                         raise AgentContextExhaustedError() from None
-                    context_tokens = min(
-                        context_tokens * 2, _MAX_AGENT_CONTEXT_TOKENS
-                    )
+                    retry_floor = min(context_tokens * 2, context_cap)
+                    context_tokens = retry_floor
                     continue
                 if attempt == _MAX_AGENT_DECISION_ATTEMPTS - 1:
                     break
@@ -237,6 +275,7 @@ class OllamaChatProvider(BaseChatProvider):
         native_tools: list[dict[str, Any]],
         context_tokens: int,
     ) -> dict[str, Any]:
+        budget = active_budget.get()
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -245,7 +284,8 @@ class OllamaChatProvider(BaseChatProvider):
             "options": {
                 "temperature": min(self.temperature, 0.2),
                 "num_ctx": context_tokens,
-                "num_predict": max(self.max_tokens or 0, _MIN_AGENT_OUTPUT_TOKENS),
+                "num_predict": (budget.output_tokens if budget is not None
+                                else max(self.max_tokens or 0, _MIN_AGENT_OUTPUT_TOKENS)),
             },
         }
         if native_tools:

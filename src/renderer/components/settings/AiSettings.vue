@@ -5,12 +5,18 @@ import { showMessageDialog } from '@/renderer/stores/message-dialog'
 import { useOllamaStore } from '@/renderer/stores/ollama'
 import { useProviderModels } from '@/renderer/composables/useProviderModels'
 import { getEmbeddingDiscoveryTarget } from '@/renderer/services/embeddingDiscovery'
+import { getChatModelDiscoveryTarget } from '@/renderer/services/chatModelDiscovery'
 import {
+  getChatContextLimits,
+  getChatModelContextKey,
   getDefaultChatProviderConfig,
   getDefaultEmbeddingProviderConfig,
   type AiProvider,
   type AppSettings,
+  type ChatContextLimits,
+  type ChatModelContextPatch,
 } from '@/shared/utils/app-settings'
+import { formatContextTokens, parseContextTokens } from '@/shared/utils/context-token-size'
 import ModelSelectCard, { type ModelOption } from './ModelSelectCard.vue'
 import {
   AlertCircle,
@@ -73,6 +79,10 @@ const openModelPicker = ref<ModelKind | null>(null)
 
 const aiSettings = computed(() => settingsStore.aiSettings)
 const llmBaseUrl = computed(() => aiSettings.value.chat.baseUrl || getDefaultChatProviderConfig(aiSettings.value.chat.provider).baseUrl || '')
+const chatContextKey = computed(() => getChatModelContextKey(aiSettings.value.chat))
+const chatContextRecord = computed(() => aiSettings.value.chatModelContexts[chatContextKey.value])
+const chatContextLimits = computed(() => getChatContextLimits(aiSettings.value.chat))
+const chatContextInputError = ref('')
 const embedBaseUrl = computed(() => aiSettings.value.embedding.baseUrl || getDefaultEmbeddingProviderConfig(aiSettings.value.embedding.provider).baseUrl || '')
 const supportsModelDiscovery = computed(() => aiSettings.value.chat.provider !== 'ollama')
 const {
@@ -84,11 +94,10 @@ const {
 } = useProviderModels(() => {
   if (!supportsModelDiscovery.value || !aiSettings.value.chat.apiKey?.trim()) return null
   return {
-    protocol: 'openai-compatible',
-    baseUrl: llmBaseUrl.value,
-    apiKey: aiSettings.value.chat.apiKey,
+    ...getChatModelDiscoveryTarget(llmBaseUrl.value),
+    apiKey: aiSettings.value.chat.apiKey.trim(),
   }
-})
+}, () => JSON.stringify([aiSettings.value.chat.provider, llmBaseUrl.value]))
 const isLlmOllama = computed(() => aiSettings.value.chat.provider === 'ollama')
 const isEmbedOllama = computed(() => aiSettings.value.embedding.provider === 'ollama')
 const embedDiscoveryTarget = computed(() => isEmbedOllama.value ? null : getEmbeddingDiscoveryTarget(embedBaseUrl.value))
@@ -139,7 +148,8 @@ const llmModelOptions = computed(() => buildModelOptions(
 ).map(option => {
   if (!supportsModelDiscovery.value) return option
   const discovered = discoveredModels.value.find(item => item.id === option.name)
-  return { ...option, desc: discovered ? `${discovered.name}` : '当前配置的模型（尚未由接口确认）' }
+  const tokens = discovered?.context?.contextWindowTokens
+  return { ...option, desc: discovered ? `${discovered.name}${tokens ? ` · 上下文 ${tokens} tokens` : ''}` : '当前配置的模型（尚未由接口确认）' }
 }))
 const embedModelOptions = computed(() => buildModelOptions(
   isEmbedOllama.value
@@ -193,34 +203,70 @@ const updateTopLevelSetting = async <K extends keyof AiSettings>(key: K, value: 
   await settingsStore.setAiSettings({ [key]: value } as Partial<AiSettings>)
 }
 
-const updateConversationContextSetting = async <K extends keyof AiSettings['conversationContext']>(key: K, value: AiSettings['conversationContext'][K]) => {
-  await settingsStore.setAiSettings({
-    conversationContext: {
-      ...aiSettings.value.conversationContext,
-      [key]: value,
-    },
-  })
+const patchChatModelContext = (key: string, patch: ChatModelContextPatch) =>
+  settingsStore.persist({ ai: { chatModelContexts: { [key]: patch } } })
+
+const applyDiscovery = (key: string, discovered: Partial<ChatContextLimits> | null) => {
+  if (key !== chatContextKey.value) return
+  if (JSON.stringify(discovered) === JSON.stringify(chatContextRecord.value?.discovered ?? null)) return
+  return patchChatModelContext(key, { discovered })
 }
 
+const setChatContextOverride = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const key = chatContextKey.value
+  const value = parseContextTokens(input.value)
+  chatContextInputError.value = ''
+  if (input.value.trim() && value === undefined) {
+    chatContextInputError.value = '请输入正整数或有效的容量（如 256K、1M），或留空恢复自动值。'
+  } else if (value !== chatContextRecord.value?.overrideTokens) {
+    await patchChatModelContext(key, { overrideTokens: value ?? null })
+    if (key === chatContextKey.value) chatContextInputError.value = settingsStore.lastError
+  }
+  if (key === chatContextKey.value) input.value = formatContextTokens(chatContextLimits.value.contextWindowTokens, true)
+}
+
+const clearChatContextOverride = async () => {
+  const key = chatContextKey.value
+  await patchChatModelContext(key, { overrideTokens: null })
+  if (key === chatContextKey.value) chatContextInputError.value = settingsStore.lastError
+}
+
+watch(chatContextKey, () => { chatContextInputError.value = '' })
+watch([chatContextKey, discoveredModels, hasDiscoveredModels, isDiscoveringModels, discoveryError], () => {
+  if (!supportsModelDiscovery.value || !hasDiscoveredModels.value || isDiscoveringModels.value || discoveryError.value) return
+  const model = discoveredModels.value.find(entry => entry.id === aiSettings.value.chat.model)
+  if (model) void applyDiscovery(chatContextKey.value, model.context ?? null)
+}, { flush: 'post' })
+
+const ollamaContextRefresh = ref(0)
+const ollamaContextLoading = ref(false)
+const ollamaContextError = ref('')
+watch([chatContextKey, () => ollamaStore.modelListVersion, ollamaContextRefresh], async ([key], _, onCleanup) => {
+  ollamaContextLoading.value = false
+  ollamaContextError.value = ''
+  const model = aiSettings.value.chat.model
+  if (!isLlmOllama.value || !model || !window.electronAPI?.ollama?.getChatModelContext) return
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
+  const isCurrent = () => !cancelled && key === chatContextKey.value
+  ollamaContextLoading.value = true
+  try {
+    const result = await window.electronAPI.ollama.getChatModelContext(llmBaseUrl.value, model)
+    if (!isCurrent()) return
+    if (!result.success || result.data === undefined) throw new Error()
+    await applyDiscovery(key, result.data)
+  } catch {
+    if (isCurrent()) ollamaContextError.value = '未能读取 Ollama 模型上下文。请查阅官方相关文档，或手动填写。'
+  } finally {
+    if (isCurrent()) ollamaContextLoading.value = false
+  }
+}, { immediate: true })
 
 const updateChatSetting = async <K extends keyof AiSettings['chat']>(key: K, value: AiSettings['chat'][K]) => {
   const provider = aiSettings.value.chat.provider
-  const nextChat = {
-    ...aiSettings.value.chat,
-    [key]: value,
-  }
   await settingsStore.setAiSettings({
-    chat: nextChat,
-    chatProviderConfigs: {
-      ...aiSettings.value.chatProviderConfigs,
-      [provider]: {
-        model: nextChat.model,
-        baseUrl: nextChat.baseUrl,
-        apiKey: nextChat.apiKey,
-        temperature: nextChat.temperature,
-        maxTokens: nextChat.maxTokens,
-      },
-    },
+    chat: { [key]: value },
   })
   if (provider === 'ollama' && key === 'baseUrl') {
     await ollamaStore.checkInstalled(llmBaseUrl.value)
@@ -229,25 +275,12 @@ const updateChatSetting = async <K extends keyof AiSettings['chat']>(key: K, val
 }
 
 const updateChatProvider = async (provider: AiProvider) => {
-  const currentProvider = aiSettings.value.chat.provider
-  const currentChat = aiSettings.value.chat
-  const chatProviderConfigs = {
-    ...aiSettings.value.chatProviderConfigs,
-    [currentProvider]: {
-      model: currentChat.model,
-      baseUrl: currentChat.baseUrl,
-      apiKey: currentChat.apiKey,
-      temperature: currentChat.temperature,
-      maxTokens: currentChat.maxTokens,
-    },
-  }
-  const nextConfig = chatProviderConfigs[provider] ?? getDefaultChatProviderConfig(provider)
+  const nextConfig = aiSettings.value.chatProviderConfigs[provider] ?? getDefaultChatProviderConfig(provider)
   await settingsStore.setAiSettings({
     chat: {
       provider,
       ...nextConfig,
     },
-    chatProviderConfigs,
   })
   closeModelPicker()
   if (provider === 'ollama') {
@@ -508,50 +541,6 @@ watch(
         <div class="grid min-w-0 gap-4">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 class="text-base font-bold text-text-main">对话上下文策略</h2>
-              <p class="mt-1 text-xs leading-5 text-text-muted">选择对话历史的组织方式：只带固定最近轮数，或超过固定轮数后自动总结早期对话。</p>
-            </div>
-            <span class="rounded-full border border-accent/20 bg-accent-soft px-3 py-1 text-[11px] font-medium text-accent">
-              Context Policy
-            </span>
-          </div>
-
-          <div class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] gap-4">
-            <label class="grid gap-2 text-sm text-text-main">
-              <span class="text-xs font-semibold text-text-main">上下文策略</span>
-              <select
-                class="h-11 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none focus:border-accent"
-                :value="aiSettings.conversationContext.strategy"
-                @change="updateConversationContextSetting('strategy', ($event.target as HTMLSelectElement).value as AiSettings['conversationContext']['strategy'])"
-              >
-                <option value="sliding_window">滑动窗口</option>
-                <option value="summary">摘要总结</option>
-              </select>
-              <p class="text-xs leading-5 text-text-muted">滑动窗口只携带最近固定轮数；摘要总结会在超过固定轮数后调用 LLM 压缩更早对话。</p>
-            </label>
-
-            <label class="grid gap-2 text-sm text-text-main">
-              <span class="text-xs font-semibold text-text-main">对话轮数</span>
-              <input
-                class="h-11 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none placeholder:text-text-subtle focus:border-accent"
-                :value="aiSettings.conversationContext.recentTurns"
-                type="number"
-                min="0"
-                max="50"
-                step="1"
-                @change="updateConversationContextSetting('recentTurns', Number(($event.target as HTMLInputElement).value))"
-              />
-              <p class="text-xs leading-5 text-text-muted">设置最近多少轮用户提问及对应回答原样加入对话历史；摘要总结模式超过该轮数后压缩更早对话。</p>
-            </label>
-          </div>
-        </div>
-      </section>
-
-      <section class="grid grid-cols-[2.4rem_minmax(0,1fr)] gap-3 border-b border-border-soft py-5">
-        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">02</div>
-        <div class="grid min-w-0 gap-4">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
               <h2 class="text-base font-bold text-text-main">对话模型设置</h2>
               <p class="mt-1 text-xs leading-5 text-text-muted">生成回答使用的模型，独立配置 Provider、API Key 和参数。</p>
             </div>
@@ -678,11 +667,51 @@ watch(
             @pull="(model, selectAfterPull) => pullModel('llm', model, selectAfterPull)"
             @delete="deleteModel(aiSettings.chat.baseUrl, aiSettings.chat.model)"
           />
+
+          <div class="grid max-w-lg gap-2">
+            <label for="chat-context-window" class="text-xs font-semibold text-text-main">上下文窗口（令牌）</label>
+            <div class="flex flex-wrap items-center gap-2">
+              <input
+                id="chat-context-window"
+                :key="chatContextKey"
+                class="h-11 min-w-0 flex-1 rounded-xl border border-border-soft bg-panel px-3 text-sm text-text-main outline-none focus:border-accent"
+                :value="formatContextTokens(chatContextLimits.contextWindowTokens, true)"
+                :disabled="!aiSettings.chat.model"
+                aria-describedby="chat-context-help"
+                type="text"
+                spellcheck="false"
+                @change="setChatContextOverride"
+              />
+              <button v-if="chatContextRecord?.overrideTokens" type="button" class="rounded-xl border border-border-soft px-3 py-2 text-xs text-text-main" @click="clearChatContextOverride">
+                恢复自动值
+              </button>
+              <button
+                v-if="isLlmOllama"
+                type="button"
+                class="rounded-xl border border-border-soft px-3 py-2 text-xs text-text-main disabled:opacity-50"
+                :disabled="ollamaContextLoading || !aiSettings.chat.model"
+                @click="ollamaContextRefresh++"
+              >
+                {{ ollamaContextLoading ? '正在检测…' : '检测上下文' }}
+              </button>
+            </div>
+            <p id="chat-context-help" class="text-xs leading-5 text-text-muted" aria-live="polite">
+              {{ chatContextRecord?.overrideTokens ? '手动设置' : chatContextRecord?.discovered?.contextWindowTokens ? '模型接口报告的窗口' : '默认值（接口未报告窗口）' }}。此值随当前模型保存。
+              <template v-if="chatContextRecord?.overrideTokens && chatContextRecord.discovered?.contextWindowTokens">
+                自动检测值：{{ formatContextTokens(chatContextRecord.discovered.contextWindowTokens) }}。
+              </template>
+              <template v-if="chatContextLimits.maxInputTokens">接口输入上限：{{ formatContextTokens(chatContextLimits.maxInputTokens) }}。</template>
+              <template v-if="chatContextLimits.maxOutputTokens">接口输出上限：{{ formatContextTokens(chatContextLimits.maxOutputTokens) }}。</template>
+              <template v-if="isLlmOllama && chatContextRecord?.discovered?.contextWindowTokens">检测值是模型规格，可能与 Ollama 当前分配的窗口不同。</template>
+              <template v-if="!chatContextRecord?.discovered?.contextWindowTokens">如需确认模型限制，请查阅官方相关文档。</template>
+            </p>
+            <p v-if="chatContextInputError || ollamaContextError" class="text-xs text-danger" role="status">{{ chatContextInputError || ollamaContextError }}</p>
+          </div>
         </div>
       </section>
 
       <section class="grid grid-cols-[2.4rem_minmax(0,1fr)] gap-3 py-5 pb-0">
-        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">03</div>
+        <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-panel-soft text-sm font-bold text-text-muted">02</div>
                 <div class="grid min-w-0 gap-4">
                   <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>

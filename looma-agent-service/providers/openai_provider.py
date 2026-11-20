@@ -3,6 +3,7 @@ from typing import AsyncIterator, List
 
 from openai import AsyncOpenAI
 
+from agent.context_budget import active_budget
 from schemas import ChatMessage, ChatModelConfig, EmbeddingModelConfig
 from providers.base import BaseChatProvider, BaseEmbeddingProvider, StructuredChatResponse
 
@@ -33,6 +34,9 @@ class OpenAIChatProvider(BaseChatProvider):
         self.model = config.model
         self.temperature = config.temperature
         self.max_tokens = config.max_tokens
+        self.official_endpoint = config.provider == "openai" and (
+            self.client.base_url.scheme == "https" and self.client.base_url.host == "api.openai.com"
+        )
 
     async def chat(self, messages: List[ChatMessage]) -> str:
         response = await self.client.chat.completions.create(
@@ -45,11 +49,14 @@ class OpenAIChatProvider(BaseChatProvider):
         return response.choices[0].message.content or ""
 
     async def chat_structured(self, messages: List[ChatMessage]) -> StructuredChatResponse:
+        budget = active_budget.get()
+        output = budget.output_tokens if budget is not None else self.max_tokens
+        official_agent_request = budget is not None and self.official_endpoint
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=_openai_chat_messages(messages),
             temperature=self.temperature,
-            max_tokens=self.max_tokens,
+            **({"max_completion_tokens": output} if official_agent_request else {"max_tokens": output}),
         )
         message = response.choices[0].message
         return StructuredChatResponse(

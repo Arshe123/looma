@@ -22,6 +22,7 @@ vi.mock('@/renderer/stores/settings', () => ({
 }))
 vi.mock('@/renderer/stores/ai-assistant', () => ({
   useAiAssistantStore: () => ({
+    contextUsageByConversationId: {},
     isConversationRunningAgent: () => false,
     isWorkspaceIndexing: () => false,
     isBuildIndexDisabled: () => false,

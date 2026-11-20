@@ -28,6 +28,9 @@ type NamedEditorShortcut =
   | 'inlineCode'
   | 'highlight'
 type EditorShortcutTarget = NamedEditorShortcut | number
+type AiSettingsPatch = Partial<Omit<AppSettings['ai'], 'chat'>> & {
+  chat?: Partial<AppSettings['ai']['chat']>
+}
 
 export const useSettingsStore = defineStore('settings', {
   state: () => ({
@@ -188,7 +191,7 @@ export const useSettingsStore = defineStore('settings', {
       await this.persist({ editor: { shortcuts: this.settings.editor.shortcuts, appShortcuts: this.settings.editor.appShortcuts } })
     },
 
-    async setAiSettings(next: Partial<AppSettings['ai']>) {
+    async setAiSettings(next: AiSettingsPatch) {
       this.settings.ai = normalizeAppSettings({
         ...this.settings,
         ai: {

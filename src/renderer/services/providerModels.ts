@@ -1,10 +1,13 @@
+import { normalizeDiscoveredChatContext, type ChatContextLimits } from '@/shared/utils/app-settings'
+
 export interface ProviderModel {
   id: string
   name: string
+  context?: Partial<ChatContextLimits>
 }
 
 export interface ListProviderModelsOptions {
-  protocol: 'openai-compatible' | 'openai-embedding' | 'openrouter-embedding' | 'dashscope-embedding'
+  protocol: 'openai-compatible' | 'openai-embedding' | 'openrouter-embedding' | 'dashscope-embedding' | 'dashscope-chat'
   baseUrl: string
   apiKey: string
   signal?: AbortSignal
@@ -29,12 +32,18 @@ export async function listProviderModels(options: ListProviderModelsOptions): Pr
   } catch {
     throw new ModelListError('服务地址格式不正确，请填写不含账号、查询参数或锚点的 HTTP(S) 地址。')
   }
-  const isDashscope = options.protocol === 'dashscope-embedding'
+  const dashscopeCapability = options.protocol === 'dashscope-embedding' ? 'TR'
+    : options.protocol === 'dashscope-chat' ? 'TG' : undefined
+  const catalogPath = url.pathname.replace(/\/+$/, '')
+  const isOfficialChatHost = options.protocol === 'openai-compatible' && url.protocol === 'https:' && !url.port
+  const isDeepSeek = isOfficialChatHost && url.hostname === 'api.deepseek.com' && ['', '/v1'].includes(catalogPath)
+  const isOpenRouter = isOfficialChatHost && url.hostname === 'openrouter.ai' && catalogPath === '/api/v1'
+  const isDashscope = dashscopeCapability !== undefined
   url.pathname = isDashscope
     ? '/api/v1/models'
     : `${url.pathname.replace(/\/+$/, '')}/${options.protocol === 'openrouter-embedding' ? 'embeddings/models' : 'models'}`
   if (isDashscope) {
-    url.searchParams.set('capabilities', 'TR')
+    url.searchParams.set('capabilities', dashscopeCapability)
     url.searchParams.set('page_size', '100')
   }
   const controller = new AbortController()
@@ -76,10 +85,24 @@ export async function listProviderModels(options: ListProviderModelsOptions): Pr
         const id = isDashscope ? entry?.model : entry?.id
         if (typeof id !== 'string' || !id.trim()) throw new ModelListError('模型列表响应格式不正确。')
         if (options.protocol === 'openai-embedding' && !openaiEmbeddingModels.has(id)) continue
-        if (isDashscope && (!Array.isArray(entry.capabilities) || !entry.capabilities.includes('TR'))) continue
+        // The documented TG-filtered chat response omits capabilities. Keep embedding strict.
+        if (isDashscope && (options.protocol === 'dashscope-embedding' || entry.capabilities !== undefined)
+          && (!Array.isArray(entry.capabilities) || !entry.capabilities.includes(dashscopeCapability))) continue
+        const context = isDeepSeek ? normalizeDiscoveredChatContext({
+          contextWindowTokens: entry.context_window,
+          maxOutputTokens: entry.max_output_tokens,
+        }) : options.protocol === 'dashscope-chat' ? normalizeDiscoveredChatContext({
+          contextWindowTokens: entry.model_info?.context_window,
+          maxInputTokens: entry.model_info?.max_input_tokens,
+          maxOutputTokens: entry.model_info?.max_output_tokens,
+        }) : isOpenRouter ? normalizeDiscoveredChatContext({
+          // top_provider limits describe one route, not the model listing as a whole.
+          contextWindowTokens: entry.context_length,
+        }) : undefined
         if (!models.has(id)) models.set(id, {
           id,
           name: typeof entry.name === 'string' && entry.name.trim() ? entry.name : id,
+          ...(context && { context }),
         })
       }
       received += entries.length

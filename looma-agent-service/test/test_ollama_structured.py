@@ -7,11 +7,14 @@ from agent.models import AgentFinalAnswer, AgentInvalidToolCall, AgentToolBatch,
 from agent.decision_parser import AgentContextExhaustedError
 from providers.ollama_provider import OllamaChatProvider, _ollama_chat_messages
 from schemas import (
+    AgentConfig,
+    AgentContextBudget,
     ChatMessage,
     ChatModelConfig,
     ChatToolCall,
     ChatToolFunction,
 )
+from test.test_agent_runtime import build_runtime, collect
 
 
 class _FakeResponse:
@@ -41,6 +44,8 @@ class _FakeResponse:
 class _FakeAsyncClient:
     payloads = []
     responses = []
+    metadata = None
+    show_calls = []
 
     def __init__(self, *args, **kwargs):
         pass
@@ -52,6 +57,9 @@ class _FakeAsyncClient:
         return False
 
     async def post(self, url, json):
+        if url.endswith("/api/show"):
+            self.show_calls.append(json)
+            return _FakeResponse(self.metadata or {}, status_code=200 if self.metadata else 404)
         self.payloads.append(json)
         if self.responses:
             value = self.responses.pop(0)
@@ -69,6 +77,8 @@ class OllamaStructuredCompletionTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         _FakeAsyncClient.payloads = []
         _FakeAsyncClient.responses = []
+        _FakeAsyncClient.metadata = None
+        _FakeAsyncClient.show_calls = []
         self.provider = OllamaChatProvider(ChatModelConfig(
             provider="ollama",
             model="qwen3.5:latest",
@@ -76,6 +86,29 @@ class OllamaStructuredCompletionTests(unittest.IsolatedAsyncioTestCase):
             temperature=0.7,
             max_tokens=4096,
         ))
+
+    async def test_runtime_matches_the_model_and_transport_caps_on_every_retry(self):
+        _FakeAsyncClient.metadata = {"model_info": {
+            "general.architecture": "qwen35", "qwen35.context_length": 8192,
+        }}
+        _FakeAsyncClient.responses = [{"message": {"content": ""}, "done_reason": "stop"}]
+        with patch("providers.ollama_provider.httpx.AsyncClient", _FakeAsyncClient):
+            events = await collect(
+                build_runtime(self.provider), input="current", history=[],
+                config=AgentConfig(enabled_tools=[]),
+                context_budget=AgentContextBudget(context_window_tokens=20000, max_output_tokens=1000),
+            )
+        self.assertEqual(events[-1]["type"], "done")
+        self.assertEqual(_FakeAsyncClient.show_calls, [{"model": self.provider.model}])
+        updates = [item for item in events if item["type"] == "context_usage"]
+        self.assertEqual(len(updates), len(_FakeAsyncClient.payloads))
+        self.assertEqual(len(updates), 2)
+        self.assertGreater(updates[1]["usedTokens"], updates[0]["usedTokens"])
+        for update, payload in zip(updates, _FakeAsyncClient.payloads):
+            self.assertEqual(update["limitTokens"], 8192)
+            self.assertEqual(payload["options"]["num_ctx"], update["limitTokens"])
+            self.assertEqual(payload["options"]["num_predict"], update["parts"]["outputReserve"])
+            self.assertEqual(update["parts"]["outputReserve"], 1000)
 
     async def test_structured_completion_uses_native_tools(self):
         _FakeAsyncClient.responses = [{

@@ -1,7 +1,8 @@
 import type { Result } from '../shared/types/Result'
+import type { AgentContextUsage } from '../shared/types/agent-context'
 import type { AgentEvent, AgentPendingFileReview, AgentSource } from '../shared/types/agent-events'
 import type { AgentRun, AgentTask } from '../shared/types/agent-state'
-import type { AppSettings as AppSettingsPayload } from '../shared/utils/app-settings'
+import type { AppSettings as AppSettingsPayload, ChatContextLimits } from '../shared/utils/app-settings'
 import type { NoteTemplateInput, NoteTemplateStore } from '../shared/utils/note-template'
 import type { UpdateActionResult, UpdateStartupResult, UpdateState } from '../shared/types/app-update'
 
@@ -273,7 +274,8 @@ type AgentStreamEventData =
   | { requestId: string; type: 'sources'; runId: string; sources: Array<Record<string, unknown>> }
   | { requestId: string; type: 'delta'; runId: string; text: string; content: string }
   | { requestId: string; type: 'done'; runId: string; status: 'completed' | 'cancelled'; answer?: string }
-  | { requestId: string; type: 'usage_updated'; runId: string; operationId: string; phase: 'decision' | 'tool' | 'finalization' | 'continuation'; provider?: string | null; model?: string | null; inputTokens?: number | null; outputTokens?: number | null; totalTokens?: number | null; latencyMs: number; cost?: { amount: number; currency: 'USD'; estimated: boolean } | null }
+  | { requestId: string; type: 'usage_updated'; runId: string; operationId: string; phase: 'decision' | 'tool' | 'finalization' | 'continuation'; provider?: string | null; model?: string | null; inputTokens?: number | null; outputTokens?: number | null; latencyMs: number; cost?: { amount: number; currency: 'USD'; estimated: boolean } | null }
+  | ({ requestId: string; type: 'context_usage'; runId: string } & AgentContextUsage)
   | { requestId: string; type: 'continuation_created' | 'run_interrupted' | 'recovery_failed'; runId: string; parentRunId?: string; reason?: string; message?: string }
   | { requestId: string; type: 'error'; runId: string; error: AgentErrorPayload };
 type AgentStreamEventPayload = AgentStreamEventData & { agentEvents?: AgentEvent[]; agentSources?: AgentSource[] };
@@ -390,6 +392,7 @@ interface ElectronAPI {
   };
   ollama: {
     listModels: (baseUrl: string) => Promise<Result<{ models: string[] }>>;
+    getChatModelContext: (baseUrl: string, model: string) => Promise<Result<Partial<ChatContextLimits> | null>>;
     checkInstalled: (baseUrl: string) => Promise<Result<{ installed: boolean; version?: string }>>;
     downloadInstaller: () => Promise<Result<{ installerPath: string }>>;
     cancelDownload: () => Promise<Result<void>>;

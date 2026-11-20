@@ -14,6 +14,24 @@ import { DEFAULT_FONT_PRESET, normalizeFontPreset, type FontPreset } from './fon
 
 export type AiProvider = 'ollama' | 'openai' | 'deepseek' | 'qwen' | 'custom'
 
+export const DEFAULT_CONTEXT_WINDOW_TOKENS = 256 * 1024
+
+export type ChatContextLimits = {
+  contextWindowTokens: number
+  maxInputTokens?: number
+  maxOutputTokens?: number
+}
+
+export type ChatModelContext = {
+  overrideTokens?: number
+  discovered?: Partial<ChatContextLimits>
+}
+
+export type ChatModelContextPatch = {
+  overrideTokens?: number | null
+  discovered?: Partial<ChatContextLimits> | null
+}
+
 export type ChatProviderConfig = {
   model: string
   baseUrl?: string
@@ -32,7 +50,6 @@ export type EmbeddingProviderConfig = {
 export type ChatProviderConfigs = Record<AiProvider, ChatProviderConfig>
 export type EmbeddingProviderConfigs = Record<AiProvider, EmbeddingProviderConfig>
 export type ChunkingStrategy = 'fixed' | 'markdown' | 'semantic' | 'parent_child' | 'code_aware'
-export type ConversationContextStrategy = 'sliding_window' | 'summary'
 
 export interface AppSettings {
   memory: {
@@ -54,11 +71,13 @@ export interface AppSettings {
   ai: {
     chat: ChatProviderConfig & {
       provider: AiProvider
+      modelContext?: ChatModelContext & { key: string }
     }
     embedding: EmbeddingProviderConfig & {
       provider: AiProvider
     }
     chatProviderConfigs: ChatProviderConfigs
+    chatModelContexts: Record<string, ChatModelContext>
     embeddingProviderConfigs: EmbeddingProviderConfigs
     vectorStorePath: string
     topK: number
@@ -69,13 +88,6 @@ export interface AppSettings {
     enableAiTimeline: boolean
     enableSourceCitation: boolean
     localFirstMode: boolean
-    conversationContext: {
-      strategy: ConversationContextStrategy
-      recentTurns: number
-      summaryMaxMessages: number
-      summaryMaxChars: number
-    }
-
   }
 }
 
@@ -215,6 +227,7 @@ const createDefaultAppSettings = (): AppSettings => {
         ...embeddingProviderConfigs.ollama,
       },
       chatProviderConfigs,
+      chatModelContexts: {},
       embeddingProviderConfigs,
       vectorStorePath: '.looma/rag-index',
       topK: 5,
@@ -225,13 +238,6 @@ const createDefaultAppSettings = (): AppSettings => {
       enableAiTimeline: true,
       enableSourceCitation: true,
       localFirstMode: true,
-      conversationContext: {
-        strategy: 'summary',
-        recentTurns: 20,
-        summaryMaxMessages: 24,
-        summaryMaxChars: 1200,
-      },
-
     },
   }
 }
@@ -284,23 +290,64 @@ const normalizeBoundedInteger = (raw: unknown, fallback: number, min: number, ma
 }
 
 
-const normalizeConversationContextStrategy = (raw: unknown, fallback: ConversationContextStrategy): ConversationContextStrategy =>
-  raw === 'sliding_window' || raw === 'summary' ? raw : fallback
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' ? value as Record<string, unknown> : {}
 
-const normalizeConversationContextSettings = (value: unknown, fallback: AppSettings['ai']['conversationContext']): AppSettings['ai']['conversationContext'] => {
+export const normalizeContextTokenCount = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+
+export function normalizeDiscoveredChatContext(value: unknown): Partial<ChatContextLimits> | undefined {
   const raw = asRecord(value)
-  const legacySummaryEnabled = raw.enableDistantSummary ?? raw.enable_distant_summary
-  const fallbackStrategy = normalizeBoolean(legacySummaryEnabled, fallback.strategy === 'summary') ? 'summary' : 'sliding_window'
+  const contextWindowTokens = normalizeContextTokenCount(raw.contextWindowTokens)
+  const maxInputTokens = normalizeContextTokenCount(raw.maxInputTokens)
+  const maxOutputTokens = normalizeContextTokenCount(raw.maxOutputTokens)
+  const result: Partial<ChatContextLimits> = {}
+  if (contextWindowTokens !== undefined) result.contextWindowTokens = contextWindowTokens
+  if (maxInputTokens !== undefined && maxInputTokens <= (contextWindowTokens ?? Infinity)) result.maxInputTokens = maxInputTokens
+  if (maxOutputTokens !== undefined && maxOutputTokens <= (contextWindowTokens ?? Infinity)) result.maxOutputTokens = maxOutputTokens
+  return Object.keys(result).length ? result : undefined
+}
+
+type ChatModelIdentity = Pick<AppSettings['ai']['chat'], 'provider' | 'baseUrl' | 'model'>
+
+export function getChatModelContextKey({ provider, baseUrl, model }: ChatModelIdentity): string {
+  return JSON.stringify([provider, (baseUrl || getDefaultChatProviderConfig(provider).baseUrl || '').trim().replace(/\/+$/, ''), model.trim()])
+}
+
+export function isChatModelContextKey(key: string): boolean {
+  if (!key.startsWith('[')) return false
+  try {
+    const parts: unknown = JSON.parse(key)
+    if (!Array.isArray(parts) || parts.length !== 3) return false
+    const [provider, baseUrl, model] = parts
+    return aiProviders.includes(provider) && typeof baseUrl === 'string' && typeof model === 'string' && !!model
+      && getChatModelContextKey({ provider, baseUrl, model }) === key
+  } catch { return false }
+}
+
+export function getChatContextLimits(chat: AppSettings['ai']['chat']): ChatContextLimits {
+  const context = chat.modelContext?.key === getChatModelContextKey(chat) ? chat.modelContext : undefined
+  const discovered = normalizeDiscoveredChatContext(context?.discovered)
   return {
-    strategy: normalizeConversationContextStrategy(raw.strategy ?? raw.contextStrategy ?? raw.context_strategy, fallbackStrategy),
-    recentTurns: normalizeBoundedInteger(raw.recentTurns ?? raw.recent_turns, fallback.recentTurns, 0, 50),
-    summaryMaxMessages: normalizeBoundedInteger(raw.summaryMaxMessages ?? raw.summary_max_messages, fallback.summaryMaxMessages, 0, 200),
-    summaryMaxChars: normalizeBoundedInteger(raw.summaryMaxChars ?? raw.summary_max_chars, fallback.summaryMaxChars, 200, 8000),
+    ...discovered,
+    contextWindowTokens: normalizeContextTokenCount(context?.overrideTokens) ?? discovered?.contextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS,
   }
 }
 
-const asRecord = (value: unknown): Record<string, unknown> =>
-  value && typeof value === 'object' ? value as Record<string, unknown> : {}
+export const getChatContextWindowTokens = (chat: AppSettings['ai']['chat']): number =>
+  getChatContextLimits(chat).contextWindowTokens
+
+const normalizeChatModelContexts = (value: unknown): AppSettings['ai']['chatModelContexts'] => {
+  const contexts: AppSettings['ai']['chatModelContexts'] = {}
+  for (const [key, raw] of Object.entries(asRecord(value))) {
+    if (!isChatModelContextKey(key)) continue
+    const record = asRecord(raw)
+    const overrideTokens = normalizeContextTokenCount(record.overrideTokens)
+    const discovered = normalizeDiscoveredChatContext(record.discovered)
+    if (overrideTokens !== undefined || discovered) contexts[key] = { overrideTokens, discovered }
+  }
+  return contexts
+}
 
 const normalizeChatProviderConfig = (
   value: unknown,
@@ -375,6 +422,7 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
   const embeddingProvider = normalizeAppSettingsProvider(rawEmbedding.provider, defaults.ai.embedding.provider)
 
   const chatProviderConfigs = normalizeChatProviderConfigs(rawAi.chatProviderConfigs)
+  const chatModelContexts = normalizeChatModelContexts(rawAi.chatModelContexts)
   const embeddingProviderConfigs = normalizeEmbeddingProviderConfigs(rawAi.embeddingProviderConfigs)
 
   const activeChatConfig = normalizeChatProviderConfig({
@@ -386,6 +434,8 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
     maxTokens: rawChat.maxTokens ?? chatProviderConfigs[chatProvider].maxTokens,
   }, chatProviderConfigs[chatProvider])
   chatProviderConfigs[chatProvider] = activeChatConfig
+  const activeContextKey = getChatModelContextKey({ ...activeChatConfig, provider: chatProvider })
+  const activeModelContext = chatModelContexts[activeContextKey]
 
   const activeEmbeddingConfig = normalizeEmbeddingProviderConfig({
     ...embeddingProviderConfigs[embeddingProvider],
@@ -417,12 +467,14 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
       chat: {
         provider: chatProvider,
         ...activeChatConfig,
+        ...(activeModelContext && { modelContext: { key: activeContextKey, ...activeModelContext } }),
       },
       embedding: {
         provider: embeddingProvider,
         ...activeEmbeddingConfig,
       },
       chatProviderConfigs,
+      chatModelContexts,
       embeddingProviderConfigs,
       vectorStorePath: normalizeNonEmptyString(rawAi.vectorStorePath, defaults.ai.vectorStorePath),
       topK: normalizeBoundedInteger(rawAi.topK ?? rawAi.top_k, defaults.ai.topK, 1, 50),
@@ -433,8 +485,6 @@ export const normalizeAppSettings = (value: unknown): AppSettings => {
       enableAiTimeline: normalizeBoolean(rawAi.enableAiTimeline, defaults.ai.enableAiTimeline),
       enableSourceCitation: normalizeBoolean(rawAi.enableSourceCitation, defaults.ai.enableSourceCitation),
       localFirstMode: normalizeBoolean(rawAi.localFirstMode, defaults.ai.localFirstMode),
-      conversationContext: normalizeConversationContextSettings(rawAi.conversationContext ?? rawAi.conversation_context, defaults.ai.conversationContext),
-
     },
   }
 }

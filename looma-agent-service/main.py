@@ -265,6 +265,7 @@ async def agent_run_events(request: AgentRunRequest) -> AsyncIterator[str]:
             memory=request.memory.model_dump() if request.memory is not None else None,
             config=request.agent,
             run_id=run_id,
+            context_budget=request.context_budget,
         ):
             runtime_event["taskId"] = request.task_id
             line = _agent_ndjson(runtime_event)

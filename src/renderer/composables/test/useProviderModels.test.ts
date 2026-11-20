@@ -15,6 +15,26 @@ const setup = () => {
 }
 
 describe('客户端模型发现状态', () => {
+  it('does not reuse chat metadata when providers share an endpoint and key', async () => {
+    let finishFirst!: (value: Response) => void
+    const request = vi.fn().mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve }))
+      .mockResolvedValueOnce(new Response('{"data":[{"id":"same-id","context_window":32768}]}'))
+    vi.stubGlobal('fetch', request)
+    const scope = effectScope()
+    scopes.push(scope)
+    const provider = ref('deepseek')
+    const state = scope.run(() => useProviderModels(
+      () => ({ protocol: 'openai-compatible', baseUrl: 'https://api.deepseek.com', apiKey: 'same-key' }),
+      () => provider.value,
+    ))!
+    provider.value = 'custom'
+    finishFirst(new Response('{"data":[{"id":"same-id","context_window":65536}]}'))
+    await settle()
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(request.mock.calls[0]![1].signal.aborted).toBe(true)
+    expect(state.models.value[0]?.context?.contextWindowTokens).toBe(32768)
+  })
+
   it('配置对象被替换但连接信息不变时不重复请求', async () => {
     const request = vi.fn().mockImplementation(() => Promise.resolve(new Response('{"data":[]}')))
     vi.stubGlobal('fetch', request)

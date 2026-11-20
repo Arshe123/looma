@@ -211,6 +211,12 @@ class UserProfileBridgeConfig(StrictAgentModel):
     token: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
+class AgentContextBudget(StrictAgentModel):
+    context_window_tokens: int = Field(default=256 * 1024, gt=0, strict=True)
+    max_input_tokens: Optional[int] = Field(default=None, gt=0, strict=True)
+    max_output_tokens: Optional[int] = Field(default=None, gt=0, strict=True)
+
+
 class AgentRunRequest(StrictAgentModel):
     workspace_memory_bridge: Optional[UserProfileBridgeConfig] = None
     user_profile_bridge: Optional[UserProfileBridgeConfig] = None
@@ -230,6 +236,7 @@ class AgentRunRequest(StrictAgentModel):
     knowledge: Optional[KnowledgeConfig] = None
     ai_config: Optional[AIConfig] = None
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    context_budget: Optional[AgentContextBudget] = None
     history: list[ChatMessage] = Field(default_factory=list)
 
     @validator("task_id", "run_id", "parent_run_id")

@@ -19,6 +19,7 @@ import { getWorkspacePathById } from './workspaceIpc'
 import { appSettingsService } from './appSettingsIpc'
 import { workspaceService } from '../services/workspace/workspaceService'
 import { getWindowWorkspace } from '../services/workspace/windowWorkspaceContext'
+import { getChatContextLimits } from '../../shared/utils/app-settings'
 
 const MAX_ACTIVE_AGENT_RUNS_PER_SENDER = 4
 const MAX_ACTIVE_AGENT_RUNS_GLOBAL = 32
@@ -1040,14 +1041,14 @@ ipcMain.handle('agent:runStream:start', async (event, requestId: unknown, worksp
     return { success: false, error: 'Unable to initialize Agent ledger' }
   }
 
-  await appSettingsService.getSettings()
+  const settings = (await appSettingsService.getSettings()).data
   if (activeAgentRuns.get(key) !== run || controller.signal.aborted || memoryCleanupBusy) {
     cleanupRun(key, run)
     return { success: false, error: '运行已取消，请新建对话。' }
   }
   void aiService.streamAgent(
     workspacePath,
-    { ...options, taskId, runId, userProfileStore: memoryStore(), workspaceMemoryStore: workspaceMemoryStore(workspaceId), canUpdateWorkspaceMemory: workspaceMemoryStore(workspaceId).canAutoMaintain, receiptContext: { workspaceId, taskId: run.taskId, runId }, canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
+    { ...options, taskId, runId, contextBudget: settings ? getChatContextLimits(settings.ai.chat) : undefined, userProfileStore: memoryStore(), workspaceMemoryStore: workspaceMemoryStore(workspaceId), canUpdateWorkspaceMemory: workspaceMemoryStore(workspaceId).canAutoMaintain, receiptContext: { workspaceId, taskId: run.taskId, runId }, canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
     payload => sendEvent(key, run, requestId, payload),
     controller.signal,
   ).then(async (result) => {
@@ -1204,14 +1205,14 @@ ipcMain.handle('agent:runStream:resume', async (event, requestId: unknown, works
     return { success: false, error: 'Unable to persist Agent continuation' }
   }
 
-  await appSettingsService.getSettings()
+  const settings = (await appSettingsService.getSettings()).data
   if (activeAgentRuns.get(key) !== run || controller.signal.aborted || memoryCleanupBusy) {
     cleanupRun(key, run)
     return { success: false, error: '运行已取消，请新建对话。' }
   }
   void aiService.streamAgent(
     workspacePath,
-    { ...options, userProfileStore: memoryStore(), workspaceMemoryStore: workspaceMemoryStore(workspaceId), canUpdateWorkspaceMemory: workspaceMemoryStore(workspaceId).canAutoMaintain, receiptContext: { workspaceId, taskId: run.taskId, runId }, canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
+    { ...options, contextBudget: settings ? getChatContextLimits(settings.ai.chat) : undefined, userProfileStore: memoryStore(), workspaceMemoryStore: workspaceMemoryStore(workspaceId), canUpdateWorkspaceMemory: workspaceMemoryStore(workspaceId).canAutoMaintain, receiptContext: { workspaceId, taskId: run.taskId, runId }, canUpdateUserProfile: appSettingsService.canAutoMaintainUserProfile },
     payload => sendEvent(key, run, requestId, payload),
     controller.signal,
   ).then(async (result) => {

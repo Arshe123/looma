@@ -2,7 +2,11 @@ import fs from 'fs/promises'
 import path from 'path'
 import { randomUUID } from 'node:crypto'
 import type { Result } from '../../../shared/types/Result'
-import { defaultAppSettings, normalizeAppSettings, type AppSettings } from '../../../shared/utils/app-settings'
+import {
+  defaultAppSettings, isChatModelContextKey, normalizeAppSettings,
+  normalizeContextTokenCount, normalizeDiscoveredChatContext,
+  type AppSettings, type ChatModelContext,
+} from '../../../shared/utils/app-settings'
 
 export { defaultAppSettings }
 export const makeAppSettingsPath = (appDataPath: string) => path.join(appDataPath, 'workspace-meta', 'looma', 'settings.json')
@@ -78,19 +82,46 @@ export const createAppSettingsService = (settingsPath: string) => {
 }
 
 // Validate known paths before merging, never fill missing fields from a stale snapshot.
-function mergeSettingsPatch(current: unknown, patch: unknown, schema: unknown): unknown {
+function mergeSettingsPatch(current: unknown, patch: unknown, schema: unknown, path = ''): unknown {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('无效的设置更新。')
   const output = { ...current as Record<string, unknown> }
   const shape = schema as Record<string, unknown>
   for (const [key, value] of Object.entries(patch)) {
     if (!Object.prototype.hasOwnProperty.call(shape, key)) throw new Error('未知的设置字段。')
     const expected = shape[key]
-    if (expected && typeof expected === 'object' && !Array.isArray(expected)) {
-      output[key] = mergeSettingsPatch(output[key], value, expected)
+    const fieldPath = path ? `${path}.${key}` : key
+    if (fieldPath === 'ai.chatModelContexts') {
+      output[key] = mergeChatModelContextPatch(output[key] as AppSettings['ai']['chatModelContexts'], value)
+    } else if (expected && typeof expected === 'object' && !Array.isArray(expected)) {
+      output[key] = mergeSettingsPatch(output[key], value, expected, fieldPath)
     } else {
       if (Array.isArray(expected) ? !Array.isArray(value) : expected !== undefined && typeof value !== typeof expected) throw new Error('无效的设置值。')
       output[key] = value
     }
   }
   return output
+}
+
+function mergeChatModelContextPatch(current: Record<string, ChatModelContext>, patch: unknown) {
+  const invalid = () => new Error('无效的模型上下文设置。')
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw invalid()
+  const result = { ...current }
+  for (const [key, updates] of Object.entries(patch)) {
+    if (!isChatModelContextKey(key) || !updates || typeof updates !== 'object' || Array.isArray(updates)) throw invalid()
+    const record = { ...result[key] }
+    for (const [field, value] of Object.entries(updates)) {
+      if (field === 'overrideTokens') {
+        const normalized = normalizeContextTokenCount(value)
+        if (value !== null && normalized === undefined) throw invalid()
+        record.overrideTokens = normalized
+      } else if (field === 'discovered') {
+        const normalized = normalizeDiscoveredChatContext(value)
+        if (value !== null && (!normalized || typeof value !== 'object' || Object.keys(normalized).length !== Object.keys(value).length)) throw invalid()
+        // Replace, not merge: omitted provider fields are no longer current.
+        record.discovered = normalized
+      } else throw invalid()
+    }
+    result[key] = record
+  }
+  return result
 }

@@ -17,7 +17,10 @@ from agent.models import (
 from agent.runtime import AgentRuntime
 from agent.tools.base import AgentTool, AgentToolContext, StrictToolArgs
 from agent.tools.registry import ToolRegistry
-from schemas import AIConfig, AgentConfig, AgentRunRequest, ChatMessage, ToolName, WorkspaceContext
+from schemas import (
+    AIConfig, AgentConfig, AgentContextBudget, AgentRunRequest, ChatMessage,
+    ChatToolCall, ChatToolFunction, ToolName, WorkspaceContext,
+)
 
 
 class EchoArgs(StrictToolArgs):
@@ -116,14 +119,20 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             run_id="run-fixed",
         )
 
-        self.assertEqual([e["type"] for e in events], ["run_started", "usage_updated", "delta", "done"])
+        self.assertEqual([e["type"] for e in events], ["run_started", "context_usage", "usage_updated", "delta", "done"])
         self.assertTrue(all(e["runId"] == "run-fixed" for e in events))
-        usage = events[1]
+        context = events[1]
+        self.assertEqual(context["limitTokens"], 262144)
+        self.assertTrue(context["estimated"])
+        self.assertEqual(set(context["parts"]), {"system", "memory", "history", "input", "tools", "outputReserve"})
+        self.assertEqual(context["usedTokens"], sum(context["parts"].values()))
+        self.assertGreater(context["parts"]["history"], 0)
+        usage = events[2]
         self.assertEqual(usage["phase"], "final")
         self.assertGreaterEqual(usage["latencyMs"], 0)
-        self.assertEqual(events[2]["text"], "完成")
-        self.assertEqual(events[2]["content"], "完成")
-        self.assertEqual(events[3], {"type": "done", "runId": "run-fixed", "status": "completed", "answer": "完成"})
+        self.assertEqual(events[3]["text"], "完成")
+        self.assertEqual(events[3]["content"], "完成")
+        self.assertEqual(events[4], {"type": "done", "runId": "run-fixed", "status": "completed", "answer": "完成"})
         self.assertTrue(events[0]["startedAt"].endswith("Z"))
         json.dumps(events, ensure_ascii=False)
         self.assertEqual(history, [ChatMessage(role="assistant", content="旧消息")])
@@ -134,6 +143,66 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent[-2].role, "system")
         self.assertIn("本轮开始时的系统时间", sent[-2].content)
         self.assertEqual(sent[-1], ChatMessage(role="user", content="开始"))
+
+    async def test_oversize_input_does_not_call_provider(self):
+        provider = FakeProvider([])
+        events = await collect(
+            build_runtime(provider), input="大" * 10_000, history=[],
+            config=AgentConfig(enabled_tools=[]),
+            context_budget=AgentContextBudget(context_window_tokens=12000, max_input_tokens=4000),
+        )
+        self.assertEqual(provider.calls, [])
+        self.assertEqual([event["type"] for event in events], ["run_started", "error"])
+        self.assertEqual(events[-1]["error"]["code"], "decision_context_exhausted")
+
+    async def test_context_limit_is_not_a_turn_count_and_history_tool_pairs_are_atomic(self):
+        provider = FakeProvider([AgentFinalAnswer(type="final", answer="done")])
+        turns = [ChatMessage(role="user", content=f"turn {i}") for i in range(120)]
+        good_call = ChatMessage(role="assistant", tool_calls=[ChatToolCall(
+            id="good", function=ChatToolFunction(name="file_read", arguments={"path": "example.md"}),
+        )])
+        good_result = ChatMessage(role="tool", tool_call_id="good", content="result")
+        incomplete = ChatMessage(role="assistant", tool_calls=[ChatToolCall(
+            id="missing", function=ChatToolFunction(name="file_read", arguments={}),
+        )])
+        orphan = ChatMessage(role="tool", tool_call_id="orphan", content="ignore")
+        events = await collect(
+            build_runtime(provider), input="current", history=[*turns, good_call, good_result, incomplete, orphan],
+            config=AgentConfig(enabled_tools=[]),
+        )
+        self.assertEqual(events[-1]["type"], "done")
+        self.assertEqual(provider.calls[0][0][1:-2], [*turns, good_call, good_result])
+
+    async def test_budget_evicts_old_turns_and_compacts_complete_latest_batch_for_final(self):
+        tool = FakeTool(result={"blob": "旧" * 3900})
+        call = AgentToolCall(type="tool_call", thought_summary="搜索", tool=tool.name, arguments={"value": "q"})
+        call._provider_state["tool_call_id"] = "call_same"
+        provider = FakeProvider([call, AgentFinalAnswer(type="final", answer="完成")])
+        old = [ChatMessage(role="user", content="OLD" * 5000), ChatMessage(role="assistant", content="old reply")]
+        recent = [ChatMessage(role="user", content="recent"), ChatMessage(role="assistant", content="recent reply")]
+        events = await collect(
+            build_runtime(provider, tool), input="current input", history=[*old, *recent],
+            memory={"soul": {"content": "persona"}},
+            config=AgentConfig(enabled_tools=[tool.name], max_iterations=1),
+            context_budget=AgentContextBudget(context_window_tokens=8000, max_input_tokens=5000, max_output_tokens=600),
+        )
+        self.assertEqual(events[-1]["type"], "done")
+        updates = [event for event in events if event["type"] == "context_usage"]
+        self.assertEqual(len(updates), 2)
+        for event in updates:
+            self.assertEqual(event["limitTokens"], 8000)
+            self.assertEqual(event["parts"]["outputReserve"], 600)
+            self.assertEqual(event["usedTokens"], sum(event["parts"].values()))
+            self.assertLessEqual(event["usedTokens"] - 600, 5000)
+        decision, final = [messages for messages, _ in provider.calls]
+        self.assertTrue(all(message not in decision for message in old))
+        self.assertTrue(all(message in decision for message in recent))
+        self.assertIn("current input", [message.content for message in final])
+        self.assertIn("不得再调用工具", final[-1].content)
+        self.assertEqual(provider.calls[-1][1], [])
+        self.assertEqual(final[-3].tool_calls[0].id, "call_same")
+        self.assertEqual(final[-2].tool_call_id, "call_same")
+        self.assertTrue(json.loads(final[-2].content)["modelContext"]["structuredData"]["omittedForContextBudget"])
 
     async def test_tool_then_final_has_schema_ids_bounded_sanitized_observation_and_sources(self):
         secret = "TOP-SECRET-DETAIL"
@@ -157,7 +226,7 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
 
         types = [e["type"] for e in events]
-        self.assertEqual(types, ["run_started", "usage_updated", "timeline", "tool_call", "tool_result", "sources", "timeline", "usage_updated", "delta", "done"])
+        self.assertEqual(types, ["run_started", "context_usage", "usage_updated", "timeline", "tool_call", "tool_result", "sources", "timeline", "context_usage", "usage_updated", "delta", "done"])
         running = next(e for e in events if e["type"] == "timeline" and e["status"] == "running")
         call = next(e for e in events if e["type"] == "tool_call")
         result = next(e for e in events if e["type"] == "tool_result")
@@ -507,7 +576,7 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             config=AgentConfig(enabled_tools=[]),
         )
 
-        self.assertEqual([event["type"] for event in events], ["run_started", "error"])
+        self.assertEqual([event["type"] for event in events], ["run_started", "context_usage", "error"])
         error = events[-1]["error"]
         self.assertEqual(error["code"], "decision_empty")
         self.assertEqual(error["message"], "模型本次未生成有效回答，请重试或切换模型。")
@@ -525,10 +594,10 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
             config=AgentConfig(enabled_tools=[]),
         )
 
-        self.assertEqual([event["type"] for event in events], ["run_started", "error"])
+        self.assertEqual([event["type"] for event in events], ["run_started", "context_usage", "error"])
         error = events[-1]["error"]
         self.assertEqual(error["code"], "decision_context_exhausted")
-        self.assertIn("模型上下文已满", error["message"])
+        self.assertIn("缩短当前输入", error["message"])
         self.assertEqual(error["technical_detail"], "AgentContextExhaustedError")
         self.assertFalse(error["retryable"])
 
@@ -905,6 +974,45 @@ class AgentRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentMainStreamTest(unittest.IsolatedAsyncioTestCase):
+    async def test_run_request_budget_controls_ndjson_and_json_repair_wire_calls(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        import main
+        from providers.openai_provider import OpenAIChatProvider
+
+        request = AgentRunRequest.model_validate({
+            "task_id": "task_budget", "run_id": "run_budget", "input": "the current request",
+            "agent": {"enabled_tools": []},
+            "ai_config": {"chat": {"provider": "openai", "model": "test", "api_key": "fake",
+                                   "base_url": "https://api.openai.com/v1"}},
+            "context_budget": {"context_window_tokens": 12000, "max_input_tokens": 9500, "max_output_tokens": 750},
+            "history": [{"role": "user", "content": "outdated" * 8000}],
+        })
+        assert request.ai_config is not None
+        provider = OpenAIChatProvider(request.ai_config.chat)
+        def completion(text):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
+
+        create = AsyncMock(side_effect=[completion("invalid " * 4000), completion('{"type":"final","answer":"done"}')])
+        with patch.object(main, "resolve_request_config", side_effect=lambda value: value), \
+             patch.object(main, "create_chat_provider", return_value=provider), \
+             patch.object(provider.client.chat.completions, "create", create):
+            events = [json.loads(line) async for line in main.agent_run_events(request)]
+        self.assertEqual(events[-1]["type"], "done")
+        updates = [item for item in events if item["type"] == "context_usage"]
+        self.assertEqual(len(updates), 2)
+        for event, call in zip(updates, create.await_args_list):
+            self.assertEqual((event["taskId"], event["runId"]), ("task_budget", "run_budget"))
+            self.assertEqual(event["limitTokens"], 12000)
+            self.assertLessEqual(event["usedTokens"] - 750, 9500)
+            self.assertEqual(event["parts"]["history"], 0)
+            self.assertEqual(event["parts"]["outputReserve"], call.kwargs["max_completion_tokens"])
+            self.assertIn("the current request", [msg.get("content") for msg in call.kwargs["messages"]])
+        repair = create.await_args_list[-1].kwargs["messages"]
+        self.assertIn("请重新生成", repair[-1]["content"])
+        self.assertFalse(any(msg["role"] == "assistant" for msg in repair))
+
     async def test_agent_run_events_returns_complete_ndjson_lines_with_run_ids(self):
         import main
 

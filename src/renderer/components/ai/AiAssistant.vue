@@ -6,7 +6,9 @@ import { useSettingsStore } from '@/renderer/stores/settings'
 import { useAiAssistantStore } from '@/renderer/stores/ai-assistant'
 import { normalizeAiAssistantSourcePath } from '@/renderer/stores/workspace-ai-utils'
 import type { AiAssistantMessage, AiAssistantMessageAction } from '@/renderer/stores/workspace'
+import { getChatContextWindowTokens } from '@/shared/utils/app-settings'
 import AgentMemoryUpdateNotice from './AgentMemoryUpdateNotice.vue'
+import AgentContextUsageRing from './AgentContextUsageRing.vue'
 import AiMarkdown from './AiMarkdown.vue'
 import AiQuestionNav from './AiQuestionNav.vue'
 import { useAiChatHistory } from './useAiChatHistory'
@@ -38,6 +40,12 @@ const aiContextMenu = ref({
 const hasWorkspace = computed(() => Boolean(workspaceStore.activeWorkspaceId))
 const activeConversation = computed(() => workspaceStore.activeAiAssistantConversation)
 const activeConversationId = computed(() => workspaceStore.aiAssistant.activeConversationId)
+const contextUsage = computed(() => {
+  const id = activeConversationId.value
+  if (!hasWorkspace.value || workspaceStore.isAiAssistantStateBlocked || workspaceStore.aiAssistant.isTemporaryConversation || !id) return undefined
+  return aiAssistStore.contextUsageByConversationId[id]
+})
+const contextWindowTokens = computed(() => getChatContextWindowTokens(settingsStore.aiSettings.chat))
 const messages = computed(() => activeConversation.value.messages)
 const {
   visibleMessages, questions, hasEarlier, loadingEarlier, loadEarlier,
@@ -440,6 +448,7 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
           >
             <Plus :size="16" />
           </button>
+
         </div>
       </div>
     </header>
@@ -648,18 +657,24 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
         :conversation-id="activeConversationId"
       />
       <form
-        class="rounded-2xl border border-border-soft bg-panel-soft p-2.5 shadow-sm"
+        class="relative rounded-2xl border border-border-soft bg-panel-soft p-2.5 shadow-sm"
         @submit.prevent="askQuestion"
       >
         <textarea
           ref="composerRef"
           v-model="question"
-          class="min-h-[58px] max-h-[168px] w-full resize-none overflow-y-hidden bg-transparent text-sm leading-6 text-text-main outline-none placeholder:text-text-subtle disabled:text-text-muted select-text"
+          class="min-h-[58px] max-h-[168px] w-full resize-none overflow-y-hidden bg-transparent pr-10 text-sm leading-6 text-text-main outline-none placeholder:text-text-subtle disabled:text-text-muted select-text"
           :placeholder="inputPlaceholder"
           :disabled="!hasWorkspace || isGenerating || workspaceStore.isAiAssistantStateBlocked"
           @keydown="handleComposerKeydown"
           @contextmenu="openComposerContextMenu"
         />
+        <div class="absolute right-2.5 top-2.5 z-20">
+          <AgentContextUsageRing
+            :usage="contextUsage"
+            :fallback-limit-tokens="contextWindowTokens"
+          />
+        </div>
         <div class="flex items-center justify-between gap-2 pt-2">
           <div class="flex min-w-0 items-center gap-1.5 overflow-hidden">
             <!-- <button

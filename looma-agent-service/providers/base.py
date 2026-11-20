@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, List
 
+from agent.context_budget import active_budget
 from agent.decision_parser import (
     AgentDecisionParseError,
     parse_agent_decision_text,
@@ -71,7 +72,17 @@ class BaseChatProvider(ABC):
         prompted_messages, allowed_tools = prepare_agent_decision_messages(
             messages, tool_schemas
         )
-        first_response = await self.chat_structured(prompted_messages)
+        budget = active_budget.get()
+
+        async def request(messages: list[ChatMessage]):
+            if budget is not None:
+                messages, _ = budget.fit(
+                    messages, tools=tool_schemas, embedded_tools=True,
+                    configured_output=getattr(self, "max_tokens", None),
+                )
+            return await self.chat_structured(messages)
+
+        first_response = await request(prompted_messages)
         first_content = _structured_content(first_response)
         try:
             decision = parse_agent_decision_text(first_content, allowed_tools=allowed_tools)
@@ -90,7 +101,7 @@ class BaseChatProvider(ABC):
                     "仅输出一个 JSON（json）object；不要输出 Markdown、代码围栏、DSML 或解释。"
                 ),
             ))
-            second_response = await self.chat_structured(repair_messages)
+            second_response = await request(repair_messages)
             decision = parse_agent_decision_text(
                 _structured_content(second_response), allowed_tools=allowed_tools
             )

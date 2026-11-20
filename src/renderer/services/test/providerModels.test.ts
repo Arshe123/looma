@@ -1,9 +1,53 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { listProviderModels } from '../providerModels'
+import { getChatModelDiscoveryTarget } from '../chatModelDiscovery'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
 const config = { protocol: 'openai-compatible' as const, baseUrl: 'https://api.deepseek.com', apiKey: 'test-key' }
+
+it('uses the documented DeepSeek endpoint and ignores invalid fields and lookalike hosts', async () => {
+  const request = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ data: [
+    { id: 'one', context_window: 65536, max_output_tokens: 4096 },
+    { id: 'two', context_window: '128k', max_output_tokens: -1 },
+  ] }))))
+  vi.stubGlobal('fetch', request)
+  await expect(listProviderModels({ ...getChatModelDiscoveryTarget('https://api.deepseek.com/v1/'), apiKey: 'test-key' })).resolves.toEqual([
+    { id: 'one', name: 'one', context: { contextWindowTokens: 65536, maxOutputTokens: 4096 } },
+    { id: 'two', name: 'two' },
+  ])
+  expect(request).toHaveBeenCalledWith('https://api.deepseek.com/models', expect.anything())
+  await expect(listProviderModels({ ...config, baseUrl: 'https://api.deepseek.com.example.com/v1' })).resolves.toEqual([
+    { id: 'one', name: 'one' }, { id: 'two', name: 'two' },
+  ])
+})
+
+it('reads paginated DashScope chat limits without treating embedding entries as chat', async () => {
+  const endpoint = 'https://fixture.cn-beijing.maas.aliyuncs.com'
+  const request = vi.fn((url: string) => Promise.resolve(new Response(JSON.stringify({ output: {
+    total: 2,
+    models: url.includes('page_no=1') ? [{ model: 'embed', capabilities: ['TR'] }] : [{
+      model: 'chat', name: 'Chat', model_info: { context_window: 128000, max_input_tokens: 120000, max_output_tokens: 8192 },
+    }],
+  } }))))
+  vi.stubGlobal('fetch', request)
+  await expect(listProviderModels({ ...getChatModelDiscoveryTarget(`${endpoint}/compatible-mode/v1`), apiKey: 'test-key' })).resolves.toEqual([
+    { id: 'chat', name: 'Chat', context: { contextWindowTokens: 128000, maxInputTokens: 120000, maxOutputTokens: 8192 } },
+  ])
+  expect(request.mock.calls.map(([url]) => url)).toEqual([1, 2].map(page => `${endpoint}/api/v1/models?capabilities=TG&page_size=100&page_no=${page}`))
+  expect(getChatModelDiscoveryTarget('https://dashscope.aliyuncs.com/compatible-mode/v1').protocol).toBe('openai-compatible')
+})
+
+it('uses OpenRouter model-level context without treating route-specific limits as global', async () => {
+  const body = { data: [{ id: 'fixture/chat', context_length: 128000, top_provider: { context_length: 32000, max_completion_tokens: 4096 } }] }
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(body)))))
+  await expect(listProviderModels({ ...config, baseUrl: 'https://openrouter.ai/api/v1' })).resolves.toEqual([
+    { id: 'fixture/chat', name: 'fixture/chat', context: { contextWindowTokens: 128000 } },
+  ])
+  await expect(listProviderModels({ ...config, baseUrl: 'https://api.openai.com/v1' })).resolves.toEqual([
+    { id: 'fixture/chat', name: 'fixture/chat' },
+  ])
+})
 
 describe('listProviderModels', () => {
   it.each([401, 403, 429, 500])('HTTP %s 返回中文错误，不泄露响应或密钥', async (status) => {

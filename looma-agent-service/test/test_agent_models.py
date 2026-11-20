@@ -13,6 +13,16 @@ from schemas import AgentConfig, AgentRunRequest, WorkspaceContext
 
 
 class AgentRequestContractTest(unittest.TestCase):
+    def test_context_budget_accepts_optional_snake_case_positive_integers_only(self):
+        request = {"task_id": "t", "run_id": "r", "input": "hi"}
+        self.assertIsNone(AgentRunRequest.model_validate(request).context_budget)
+        for caps in (
+            {"contextWindowTokens": 8192}, {"context_window_tokens": 0},
+            {"max_input_tokens": True}, {"max_output_tokens": "256"},
+        ):
+            with self.subTest(caps=caps), self.assertRaises(ValidationError):
+                AgentRunRequest.model_validate({**request, "context_budget": caps})
+
     def test_memory_snapshot_request_is_bounded_and_strict(self):
         memory = {"soul": {"content": "简洁", "revision": "a"}, "user": {"content": "中文", "revision": "b"}}
         request = AgentRunRequest(task_id="t", run_id="r", input="hi", memory=memory)

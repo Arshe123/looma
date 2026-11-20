@@ -107,6 +107,7 @@ class AgentPromptIntegrationTest(unittest.IsolatedAsyncioTestCase):
                         finish_reason="stop",
                     )])
                     if provider_name == "ollama":
+                        provider._agent_model_context_limit = AsyncMock(return_value=None)
                         target, method = provider, "_create_agent_completion"
                         response = {"message": {"content": content}, "done_reason": "stop"}
                     else:

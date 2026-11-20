@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import type { AgentEvent, AgentPendingFileReview, AgentSource } from '../../shared/types/agent-events'
+import type { AgentContextUsage } from '../../shared/types/agent-context'
+import { getChatContextWindowTokens } from '../../shared/utils/app-settings'
 import { useSettingsStore } from './settings'
 import { useWorkspaceStore } from './workspace'
 import type { AiAssistantMessage, AiAssistantTimelineStep } from './workspace'
@@ -17,18 +19,6 @@ import {
   normalizeAgentConversationHistory,
   type AgentHistoryMessage,
 } from './agent-history'
-
-type RagChatMessagePayload = AgentHistoryMessage
-
-type RagRequestStatsPayload = {
-  history_messages: number
-  history_token_estimate: number
-  question_token_estimate: number
-  total_token_estimate: number
-  recent_turns: number
-  distant_summary_enabled: boolean
-  distant_summary_messages: number
-}
 
 type RagSourcePayload = {
   score: number | null
@@ -99,6 +89,7 @@ type AgentStreamEventData =
   | { requestId: string; type: 'delta'; runId: string; text: string; content: string }
   | { requestId: string; type: 'done'; runId: string; status: 'completed' | 'cancelled'; answer?: string }
   | { requestId: string; type: 'usage_updated'; runId: string; operationId: string; phase: 'decision' | 'tool' | 'finalization' | 'continuation'; provider?: string | null; model?: string | null; inputTokens?: number | null; outputTokens?: number | null; totalTokens?: number | null; latencyMs: number; cost?: { amount: number; currency: 'USD'; estimated: boolean } | null }
+  | ({ requestId: string; type: 'context_usage'; runId: string } & AgentContextUsage)
   | { requestId: string; type: 'continuation_created' | 'run_interrupted' | 'recovery_failed'; runId: string; parentRunId?: string; reason?: string; message?: string }
   | { requestId: string; type: 'error'; runId: string; error: { code: string; message: string; technical_detail?: string | null; retryable: boolean } }
 
@@ -140,7 +131,7 @@ const estimateTokenCount = (text: string) => {
   return Math.max(1, cjkChars + asciiTokenEstimate)
 }
 
-const estimateMessageTokens = (message: RagChatMessagePayload) => {
+const estimateMessageTokens = (message: AgentHistoryMessage) => {
   const toolMetadata = message.tool_calls?.length
     ? JSON.stringify(message.tool_calls)
     : `${message.name || ''}${message.tool_call_id || ''}`
@@ -149,6 +140,7 @@ const estimateMessageTokens = (message: RagChatMessagePayload) => {
 
 const CONVERSATION_SUMMARY_PREFIX = '系统：已压缩早期对话'
 const CONVERSATION_SUMMARY_PENDING_TEXT = '系统：正在压缩早期对话，请稍候...'
+const CONVERSATION_SUMMARY_MAX_CHARS = 1200
 
 const isConversationSummaryMessage = (message: AiAssistantMessage) =>
   message.role === 'system' && message.text.trim().startsWith(CONVERSATION_SUMMARY_PREFIX)
@@ -171,50 +163,23 @@ const findLatestConversationSummaryIndex = (sourceMessages: AiAssistantMessage[]
   return -1
 }
 
-const countUserTurns = (history: RagChatMessagePayload[]) => history.filter((message) => message.role === 'user').length
+const countUserTurns = (history: AgentHistoryMessage[]) => history.filter((message) => message.role === 'user').length
 
-const selectRecentConversationMessages = (allMessages: RagChatMessagePayload[], recentTurns: number) => {
-  if (recentTurns <= 0) return []
-  let userTurns = 0
-  let startIndex = allMessages.length
-  for (let index = allMessages.length - 1; index >= 0; index -= 1) {
-    startIndex = index
-    if (allMessages[index].role === 'user') {
-      userTurns += 1
-      if (userTurns >= recentTurns) break
-    }
+const selectBudgetedHistory = (messages: AgentHistoryMessage[], maxTokens: number, summary?: AgentHistoryMessage) => {
+  const summaryTokens = summary ? estimateMessageTokens(summary) : 0
+  const prefix = summaryTokens <= maxTokens ? summary : undefined
+  let tokens = prefix ? summaryTokens : 0
+  let end = messages.length
+  while (end > 0) {
+    let start = end - 1
+    while (start > 0 && messages[start].role === 'tool') start -= 1
+    const group = messages.slice(start, end)
+    const nextTokens = group.reduce((sum, message) => sum + estimateMessageTokens(message), tokens)
+    if (nextTokens > maxTokens) break
+    tokens = nextTokens
+    end = start
   }
-  return allMessages.slice(startIndex)
-}
-
-const splitMessagesKeepingRecentTurns = (allMessages: RagChatMessagePayload[], keepRecentTurns: number) => {
-  const retainedMessages = selectRecentConversationMessages(allMessages, keepRecentTurns)
-  return {
-    messagesToSummarize: allMessages.slice(0, allMessages.length - retainedMessages.length),
-    retainedMessages,
-  }
-}
-
-const normalizeConversationMessagesForContext = normalizeAgentConversationHistory
-
-const buildConversationStats = (
-  currentQuestion: string,
-  history: RagChatMessagePayload[],
-  recentTurns: number,
-  distantSummaryMessages: number,
-  distantSummaryEnabled: boolean,
-): RagRequestStatsPayload => {
-  const historyTokenEstimate = history.reduce((total, message) => total + estimateMessageTokens(message), 0)
-  const questionTokenEstimate = estimateTokenCount(currentQuestion) + 4
-  return {
-    history_messages: history.length,
-    history_token_estimate: historyTokenEstimate,
-    question_token_estimate: questionTokenEstimate,
-    total_token_estimate: historyTokenEstimate + questionTokenEstimate,
-    recent_turns: recentTurns,
-    distant_summary_enabled: distantSummaryEnabled,
-    distant_summary_messages: distantSummaryMessages,
-  }
+  return [...(prefix ? [prefix] : []), ...messages.slice(end)]
 }
 
 const EMPTY_AGENT_ANSWER = 'Agent 没有返回可展示的回答。'
@@ -227,6 +192,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     indexStatusRequestIdsByWorkspaceId: {} as Record<string, string>,
     subscribeIndexStreamEvents: null as null | (() => void),
     agentRunsByConversationId: {} as Record<string, AgentConversationRunState>,
+    contextUsageByConversationId: {} as Record<string, AgentContextUsage>,
     agentRequestIdToConversationId: {} as Record<string, string>,
     agentEventsByMessageKey: {} as Record<string, AgentEvent[]>,
     agentSourcesByMessageKey: {} as Record<string, AgentSource[]>,
@@ -598,9 +564,9 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       this.agentStartingConversationIds[conversationId] = { workspaceId: options.workspaceId, cancelled: false }
 
       const settingsStore = useSettingsStore()
-      let history: RagChatMessagePayload[]
+      let history: AgentHistoryMessage[]
       try {
-        ({ history } = await this.buildConversationHistoryForRequest(conversationId, text))
+        history = await this.buildConversationHistoryForRequest(conversationId, text)
       } catch (error: any) {
         if (this.agentStartingConversationIds[conversationId]?.cancelled) {
           delete this.agentStartingConversationIds[conversationId]
@@ -641,6 +607,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
 
       const requestId = this.createStreamRequestId()
       const startedAt = Date.now()
+      delete this.contextUsageByConversationId[conversationId]
       this.agentRunsByConversationId[conversationId] = {
         requestId,
         workspaceId: options.workspaceId,
@@ -787,6 +754,12 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       if (!run || run.requestId !== payload.requestId) return
       if (run.status === 'cancelling' && payload.type !== 'done' && payload.type !== 'error') return
 
+      if (payload.type === 'context_usage') {
+        if (!run.runId || run.runId === payload.runId) this.contextUsageByConversationId[conversationId] = {
+          limitTokens: payload.limitTokens, usedTokens: payload.usedTokens, estimated: payload.estimated, parts: payload.parts,
+        }
+        return
+      }
       run.runId = payload.runId
       this.appendCanonicalAgentFacts(run, payload)
       this.syncAgentProjection(run)
@@ -1000,17 +973,24 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     },
 
 
-    async summarizeConversationMessagesWithLlm(newMessages: RagChatMessagePayload[], options: { existingSummary?: string; maxChars: number }) {
-      const summaryInput: RagChatMessagePayload[] = []
+    async summarizeConversationMessagesWithLlm(newMessages: AgentHistoryMessage[], options: { existingSummary?: string; maxChars: number }) {
+      const summaryInput: AgentHistoryMessage[] = []
       if (options.existingSummary?.trim()) {
         summaryInput.push({ role: 'system', content: `上一版对话摘要：\n${options.existingSummary.trim()}` })
       }
-      summaryInput.push(...flattenAgentHistoryForSummary(newMessages))
-      if (!summaryInput.length) return ''
-
-      const result = await (window as any).electronAPI.agent.summarizeConversation(summaryInput, options.maxChars)
-      if (!result.success) throw new Error(result.error || '对话摘要生成失败。')
-      return (result.data?.answer || '').trim()
+      const messages = flattenAgentHistoryForSummary(newMessages)
+      let summary = ''
+      // Reserve one slot for the rolling summary under the endpoint's 100-message cap.
+      for (let offset = 0; offset < messages.length;) {
+        const batch = messages.slice(offset, offset + 100 - summaryInput.length)
+        const result = await window.electronAPI.agent.summarizeConversation([...summaryInput, ...batch], options.maxChars)
+        if (!result.success) throw new Error(result.error || '对话摘要生成失败。')
+        summary = (result.data?.answer || '').trim()
+        if (!summary) return ''
+        summaryInput[0] = { role: 'system', content: `上一版对话摘要：\n${summary}` }
+        offset += batch.length
+      }
+      return summary
     },
 
     async buildConversationHistoryForRequest(
@@ -1022,26 +1002,19 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       const conversation = useWorkspaceStore().getAiAssistantConversationById(conversationId)
       const sourceMessages = options?.sourceMessages ?? conversation?.messages ?? []
       const excluded = options?.excludeMessageIds ?? new Set<number>()
-      const contextSettings = settingsStore.aiSettings.conversationContext
-      const normalizedAllMessages = normalizeConversationMessagesForContext(sourceMessages, excluded)
-      const totalUserTurns = countUserTurns(normalizedAllMessages)
-      const currentUserTurnIndex = totalUserTurns + 1
-
-      if (contextSettings.strategy === 'sliding_window') {
-        const history = selectRecentConversationMessages(normalizedAllMessages, contextSettings.recentTurns)
-        const stats = buildConversationStats(currentQuestion, history, contextSettings.recentTurns, 0, false)
-        return { history, stats }
-      }
+      const totalUserTurns = countUserTurns(normalizeAgentConversationHistory(sourceMessages, excluded))
 
       const summaryIndex = findLatestConversationSummaryIndex(sourceMessages)
       const existingSummary = summaryIndex >= 0 ? getConversationSummaryContent(sourceMessages[summaryIndex].text) : ''
       const summarizedTurnIndex = summaryIndex >= 0 ? getConversationSummaryTurnIndex(sourceMessages[summaryIndex].text) : 0
       const messagesAfterSummary = summaryIndex >= 0 ? sourceMessages.slice(summaryIndex + 1) : sourceMessages
-      const normalizedMessagesAfterSummary = normalizeConversationMessagesForContext(messagesAfterSummary, excluded)
-      const unsummarizedUserTurns = Math.max(0, currentUserTurnIndex - summarizedTurnIndex)
-      const retainedTurnCount = Math.max(1, Math.ceil(contextSettings.recentTurns / 4))
-      const { messagesToSummarize, retainedMessages } = splitMessagesKeepingRecentTurns(normalizedMessagesAfterSummary, retainedTurnCount)
-      const shouldSummarize = unsummarizedUserTurns > contextSettings.recentTurns && messagesToSummarize.length > 0
+      const normalizedMessagesAfterSummary = normalizeAgentConversationHistory(messagesAfterSummary, excluded)
+      const availableTokens = Math.max(0, getChatContextWindowTokens(settingsStore.aiSettings.chat) - estimateTokenCount(currentQuestion))
+      const candidate = selectBudgetedHistory(normalizedMessagesAfterSummary, Math.floor(availableTokens * 0.8))
+      // Summarize on budget pressure; leave headroom for system instructions, memory and output.
+      const retainedMessages = selectBudgetedHistory(normalizedMessagesAfterSummary, Math.floor(availableTokens * 0.5))
+      const messagesToSummarize = normalizedMessagesAfterSummary.slice(0, normalizedMessagesAfterSummary.length - retainedMessages.length)
+      const shouldSummarize = candidate.length < normalizedMessagesAfterSummary.length && messagesToSummarize.length > 0
 
       let summaryContent = existingSummary
       let summaryTurnIndex = summarizedTurnIndex
@@ -1056,8 +1029,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
         try {
           const nextSummary = await this.summarizeConversationMessagesWithLlm(messagesToSummarize, {
             existingSummary,
-
-            maxChars: contextSettings.summaryMaxChars,
+            maxChars: CONVERSATION_SUMMARY_MAX_CHARS,
           })
           if (nextSummary) {
             summaryContent = nextSummary
@@ -1078,7 +1050,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
             useWorkspaceStore().updateAiAssistantMessageTextInConversation(
               conversationId,
               pendingSummaryMessageId,
-              `系统：对话压缩失败，已改为携带上一版摘要和最近 ${contextSettings.recentTurns} 轮对话。\n\n${error?.message ?? String(error)}`,
+              `系统：对话压缩失败，将在上下文预算内保留最近的历史。\n\n${error?.message ?? String(error)}`,
             )
           }
           summaryContent = existingSummary
@@ -1087,17 +1059,9 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
         }
       }
 
-      const history: RagChatMessagePayload[] = summaryContent
-        ? [{ role: 'system', content: `对话摘要（已总结至第 ${summaryTurnIndex} 次用户对话）：\n${summaryContent}` }, ...contextTailMessages]
-        : contextTailMessages
-      const stats = buildConversationStats(
-        currentQuestion,
-        history,
-        contextSettings.recentTurns,
-        shouldSummarize ? messagesToSummarize.length : 0,
-        Boolean(summaryContent),
-      )
-      return { history, stats }
+      return selectBudgetedHistory(contextTailMessages, Math.floor(availableTokens * 0.8), summaryContent
+        ? { role: 'system', content: `对话摘要（已总结至第 ${summaryTurnIndex} 次用户对话）：\n${summaryContent}` }
+        : undefined)
     },
 
     async cancelWorkspaceStreams(workspaceId: string | null) {

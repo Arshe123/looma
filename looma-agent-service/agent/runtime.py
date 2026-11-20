@@ -12,6 +12,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from agent.context_budget import (
+    ContextBudgetExceeded, RequestBudget, active_budget, history_groups,
+    local_openai_tokenizer,
+)
 from agent.decision_parser import (
     AgentContextExhaustedError,
     AgentDecisionParseError,
@@ -37,7 +41,8 @@ from agent.prompts import AGENT_SYSTEM_PROMPT, final_only_prompt, observation_pr
 from agent.tools.base import AgentToolContext
 from agent.tools.registry import ToolRegistry
 from agent.tools.staging import AgentStagingArea
-from schemas import AgentConfig, ChatMessage, ChatToolCall, ChatToolFunction
+from providers.base import BaseChatProvider
+from schemas import AgentConfig, AgentContextBudget, ChatMessage, ChatToolCall, ChatToolFunction
 
 
 class _RunCancelled(Exception):
@@ -215,11 +220,14 @@ class AgentRuntime:
         run_id: str | None = None,
         cancel_event: asyncio.Event | None = None,
         memory: dict[str, Any] | None = None,
+        context_budget: AgentContextBudget | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         run_id = run_id or f"run_{uuid.uuid4().hex}"
         run_context = replace(self.context, run_id=run_id)
         yield event("run_started", run_id, startedAt=utc_iso_z())
 
+        turns = history_groups(history)
+        trace_lengths: list[int] = []
         messages = [
             ChatMessage(role="system", content=AGENT_SYSTEM_PROMPT),
             *([ChatMessage(role="user", content=(
@@ -228,7 +236,7 @@ class AgentRuntime:
                 "快照保持不变；更新画像必须先用 user_profile_read 读取最新版本，再调用 user_profile_update；工作空间记忆使用 workspace_memory_read/update。不得修改人格或跨范围复制事实。\n"
                 + json.dumps(memory, ensure_ascii=False)
             ))] if memory else []),
-            *history,
+            *(message for turn in turns for message in turn),
             ChatMessage(
                 role="system",
                 content=(
@@ -263,6 +271,10 @@ class AgentRuntime:
         chat_config = getattr(getattr(self.context, "ai_config", None), "chat", None)
         provider_name = str(getattr(chat_config, "provider", "unknown"))
         model_name = str(getattr(chat_config, "model", "unknown"))
+        budget_settings = context_budget or AgentContextBudget()
+        tokenizer = (local_openai_tokenizer(model_name)
+                     if getattr(self.provider, "official_endpoint", False)
+                     else None)
         pending_approvals: dict[str, dict[str, Any]] = {}
         try:
             while True:
@@ -283,12 +295,39 @@ class AgentRuntime:
 
                 decision_started = time.perf_counter()
                 try:
-                    raw_decision = await _wait_with_cancellation(
-                        self.provider.complete_structured(
-                            decision_messages, decision_schemas
-                        ),
-                        cancel_event,
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise _RunCancelled
+                    updates: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+                    budget = RequestBudget(
+                        budget_settings, bool(memory), [len(turn) for turn in turns],
+                        trace_lengths, updates.put_nowait, tokenizer,
                     )
+
+                    async def decide():
+                        token = active_budget.set(budget)
+                        try:
+                            sent = decision_messages
+                            if not isinstance(self.provider, BaseChatProvider):
+                                sent, _ = budget.fit(sent, tools=decision_schemas)
+                            return await self.provider.complete_structured(sent, decision_schemas)
+                        finally:
+                            active_budget.reset(token)
+
+                    async def complete():
+                        try:
+                            return await _wait_with_cancellation(decide(), cancel_event)
+                        finally:
+                            updates.put_nowait(None)
+
+                    task = asyncio.create_task(complete())
+                    try:
+                        while (update := await updates.get()) is not None:
+                            yield event("context_usage", run_id, **update)
+                        raw_decision = await task
+                    finally:
+                        if not task.done():
+                            task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
                     decision = (
                         raw_decision
                         if isinstance(
@@ -297,7 +336,7 @@ class AgentRuntime:
                         )
                         else parse_agent_decision(raw_decision)
                     )
-                except (_RunCancelled, asyncio.CancelledError):
+                except (_RunCancelled, asyncio.CancelledError, ContextBudgetExceeded, AgentContextExhaustedError):
                     raise
                 except Exception as exc:
                     if forced_final:
@@ -651,6 +690,7 @@ class AgentRuntime:
                     )
                     for plan in plans
                 )
+                trace_lengths.append(1 + len(plans))
         except _RunCancelled:
             pending_steps = list(active_steps.values()) or [
                 (tool_steps + 1, f"step_{tool_steps + 1}_cancelled")
@@ -670,12 +710,12 @@ class AgentRuntime:
                 technical_detail=type(exc).__name__,
                 retryable=True,
             ))
-        except AgentContextExhaustedError as exc:
+        except (ContextBudgetExceeded, AgentContextExhaustedError) as exc:
             yield error_event(run_id, AgentError(
                 code="decision_context_exhausted",
                 message=(
-                    "模型上下文已满，无法继续生成 Agent 决策。"
-                    "请开始新对话，或减少单次任务中的大段文件修改。"
+                    "模型上下文不足，无法继续生成 Agent 决策。"
+                    "请缩短当前输入、缩小任务范围，或选用上下文更大的模型。"
                 ),
                 technical_detail=type(exc).__name__,
                 retryable=False,

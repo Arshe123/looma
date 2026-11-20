@@ -178,6 +178,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   ollama: {
     listModels: (baseUrl: string) => ipcRenderer.invoke('ollama:listModels', baseUrl),
+    getChatModelContext: (baseUrl: string, model: string) => ipcRenderer.invoke('ollama:getChatModelContext', baseUrl, model),
     checkInstalled: (baseUrl: string) => ipcRenderer.invoke('ollama:checkInstalled', baseUrl),
     downloadInstaller: () => ipcRenderer.invoke('ollama:downloadInstaller'),
     cancelDownload: () => ipcRenderer.invoke('ollama:cancelDownload'),

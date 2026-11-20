@@ -4,13 +4,33 @@ import { createApp, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import AiSettings from '/src/renderer/components/settings/AiSettings.vue'
 import { useSettingsStore } from '/src/renderer/stores/settings.ts'
+import { normalizeAppSettings } from '/src/shared/utils/app-settings.ts'
 import '/src/renderer/styles/style.css'
 // Isolated fixture: never loads user settings, notes or real credentials.
 window.localRequests = []
+window.contextRequests = []
+let persisted
+let revision = 1
+const merge = (current, patch) => Object.fromEntries([...new Set([...Object.keys(current ?? {}), ...Object.keys(patch)])].map(key => {
+  const incoming = patch[key]
+  if (!Object.hasOwn(patch, key)) return [key, current[key]]
+  if (incoming && typeof incoming === 'object' && !Array.isArray(incoming) && key !== 'discovered') return [key, merge(current?.[key], incoming)]
+  return [key, incoming]
+}))
 window.electronAPI = {
-  appSettings: { patch: async () => ({ success: true, data: JSON.parse(JSON.stringify(store.settings)), revision: 1 }) },
+  appSettings: {
+    get: async () => ({ success: true, data: structuredClone(persisted), revision }),
+    patch: async patch => {
+      persisted = normalizeAppSettings(merge(persisted, structuredClone(patch)))
+      return { success: true, data: structuredClone(persisted), revision: ++revision }
+    },
+  },
   ollama: {
     checkInstalled: async () => ({ success: true, data: { installed: true } }),
+    getChatModelContext: async (baseUrl, model) => {
+      window.contextRequests.push({ baseUrl, model })
+      return { success: true, data: { contextWindowTokens: 32768 } }
+    },
     listModels: async baseUrl => {
       window.localRequests.push(baseUrl)
       return { success: true, data: { models: ['fixture-local-model'] } }
@@ -28,8 +48,12 @@ for (const provider of ['openai', 'qwen', 'custom']) {
     ...(provider === 'custom' ? { baseUrl: 'https://compatible.example.test/v1' } : {}),
   })
 }
+persisted = normalizeAppSettings(JSON.parse(JSON.stringify(store.settings)))
+store.acceptSettings(persisted, revision)
 window.requests = []
 window.mode = 'success'
+window.fixtureChatWindow = 65536
+window.fixtureChatOutput = 8192
 window.fetch = async (url, options) => {
   window.requests.push({ url, method: options.method })
   if (window.mode === 'error') return new Response('{}', { status: 401 })
@@ -38,7 +62,7 @@ window.fetch = async (url, options) => {
   if (store.aiSettings.chat.provider !== 'deepseek') {
     return new Response(JSON.stringify({ data: [{ id: `fixture-${store.aiSettings.chat.provider}-model` }] }))
   }
-  return new Response(JSON.stringify({ data: [{ id: 'fixture-new-model', name: '测试模型' }, { id: 'fixture-other-model' }] }))
+  return new Response(JSON.stringify({ data: [{ id: 'fixture-new-model', name: '测试模型', context_window: window.fixtureChatWindow, max_output_tokens: window.fixtureChatOutput }, { id: 'fixture-other-model' }] }))
 }
 window.store = store
 window.clickText = text => [...document.querySelectorAll('button')].find(b => b.textContent.includes(text))?.click()

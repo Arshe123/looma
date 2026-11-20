@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { openUserProfileBridge } from '../agent/UserProfileBridge'
 import type { AgentMemoryStore } from '../agent/AgentMemoryStore'
 import type { Result } from '../../../shared/types/Result'
+import { AGENT_CONTEXT_PARTS, type AgentContextLimits, type AgentContextUsage } from '../../../shared/types/agent-context'
 
 const getRagBaseUrl = () => process.env.RAG_SERVICE_URL || 'http://127.0.0.1:8765'
 
@@ -152,6 +153,7 @@ export interface AgentFileProposalPayload {
 }
 
 export interface AgentRunOptions {
+  contextBudget?: AgentContextLimits
   /** Main-only capability; never accepted from renderer options. */
   userProfileStore?: AgentMemoryStore
   workspaceMemoryStore?: AgentMemoryStore
@@ -203,6 +205,7 @@ export type AgentStreamEvent =
   | { type: 'approval_resolved'; runId: string; step: number; stepId: string; callId: string; approvalId: string; resolution: { status: 'approved' | 'rejected' | 'expired' | 'cancelled'; reason?: string | null; resolvedAt?: string | null; applied?: boolean | null } }
   | { type: 'sources'; runId: string; callId: string; retrievalId: string; sources: Array<Record<string, unknown>> }
   | { type: 'usage_updated'; runId: string; operationId: string; phase: 'decision' | 'repair' | 'final' | 'summary' | 'embedding' | 'rerank'; provider: string; model: string; inputTokens?: number; outputTokens?: number; totalTokens?: number; cost?: { amount: number; currency: 'USD'; estimated: boolean }; latencyMs: number }
+  | ({ type: 'context_usage'; runId: string } & AgentContextUsage)
   | { type: 'continuation_created'; runId: string; taskId: string; parentRunId: string; recoveryReason: 'app_restart' | 'service_restart' | 'provider_interrupted' | 'approval_continuation' | 'manual_retry' }
   | { type: 'delta'; runId: string; text: string; content: string }
   | { type: 'done'; runId: string; status: 'completed' | 'cancelled'; answer?: string }
@@ -276,8 +279,7 @@ interface AIService {
 const AGENT_TOOLS: readonly AgentToolName[] = ['rag_search', 'workspace_list', 'workspace_search', 'file_read', 'file_patch', 'user_profile_read', 'user_profile_update', 'workspace_memory_read', 'workspace_memory_update']
 const AGENT_TOOL_SET = new Set<string>(AGENT_TOOLS)
 const MAX_AGENT_INPUT_CHARS = 32_000
-const MAX_AGENT_HISTORY_MESSAGES = 200
-const MAX_AGENT_HISTORY_CHARS = 300_000
+
 const MAX_NDJSON_LINE_CHARS = 1_000_000
 
 const clampInteger = (value: unknown, fallback: number, min: number, max: number) => {
@@ -315,7 +317,6 @@ export const normalizeAgentRunOptions = (options: AgentRunOptions): NormalizedAg
   }
   const enabledTools = [...new Set(rawTools)] as AgentToolName[]
   const rawHistory = Array.isArray(options.history) ? options.history : []
-  if (rawHistory.length > MAX_AGENT_HISTORY_MESSAGES) throw new Error('Agent history has too many messages')
   const history = rawHistory.map((item): RagChatMessage => {
     if (!item || !['user', 'assistant', 'system', 'tool'].includes(item.role)) throw new Error('Invalid Agent history message')
     const normalizedContent = typeof item.content === 'string' ? item.content.trim() : null
@@ -365,10 +366,6 @@ export const normalizeAgentRunOptions = (options: AgentRunOptions): NormalizedAg
     }
   }
   if (pendingToolCalls.size) throw new Error('Unmatched Agent history tool call')
-  const historyChars = history.reduce((total, item) => total + JSON.stringify(item).length, 0)
-  if (historyChars > MAX_AGENT_HISTORY_CHARS) {
-    throw new Error('Agent history is too large')
-  }
   const taskId = normalizeOptionalAgentIdentifier(options.taskId, 'Agent task ID')
   const runId = normalizeOptionalAgentIdentifier(options.runId, 'Agent run ID')
   const parentRunId = normalizeOptionalAgentIdentifier(options.parentRunId, 'Agent parent run ID')
@@ -432,6 +429,14 @@ export const isAgentStreamEvent = (value: unknown): value is AgentStreamEvent =>
     case 'sources': return isNonEmptyString(value.callId) && isNonEmptyString(value.retrievalId)
       && Array.isArray(value.sources) && value.sources.every(source => isRecord(source)
         && isNonEmptyString(source.sourceId) && source.retrievalId === value.retrievalId && source.runId === value.runId)
+    case 'context_usage': {
+      const isCount = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0
+      const parts = value.parts
+      return isCount(value.limitTokens) && value.limitTokens > 0 && isCount(value.usedTokens)
+        && typeof value.estimated === 'boolean' && isRecord(parts)
+        && AGENT_CONTEXT_PARTS.every(part => isCount(parts[part]))
+        && AGENT_CONTEXT_PARTS.reduce((sum, part) => sum + parts[part], 0) === value.usedTokens
+    }
     case 'usage_updated': return isNonEmptyString(value.operationId)
       && ['decision', 'repair', 'final', 'summary', 'embedding', 'rerank'].includes(value.phase)
       && isNonEmptyString(value.provider) && isNonEmptyString(value.model)
@@ -463,6 +468,11 @@ const toAgentRequestBody = (workspacePath: string, rawOptions: AgentRunOptions) 
     workspace: { workspace_path: workspacePath },
     history: options.history,
     memory: options.memory,
+    ...(rawOptions.contextBudget ? { context_budget: {
+      context_window_tokens: rawOptions.contextBudget.contextWindowTokens,
+      max_input_tokens: rawOptions.contextBudget.maxInputTokens,
+      max_output_tokens: rawOptions.contextBudget.maxOutputTokens,
+    } } : {}),
     agent: {
       enabled_tools: options.enabledTools,
       max_iterations: options.maxIterations,

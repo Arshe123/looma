@@ -162,12 +162,29 @@ describe('Agent stream contract', () => {
     expect(() => normalizeAgentRunOptions({ input: 'task', enabledTools: ['terminal' as never] })).toThrow('Unsupported Agent tool')
   })
 
-  it('enforces request text budgets before starting a stream', () => {
+  it('enforces the current input limit before starting a stream', () => {
     expect(() => normalizeAgentRunOptions({ input: 'x'.repeat(32_001) })).toThrow('Agent input is too large')
-    expect(() => normalizeAgentRunOptions({
-      input: 'task',
-      history: Array.from({ length: 201 }, () => ({ role: 'user' as const, content: 'x' })),
-    })).toThrow('Agent history has too many messages')
+  })
+
+  it.each([
+    ['message count', Array.from({ length: 201 }, () => ({ role: 'user' as const, content: 'x' }))],
+    ['serialized character count', [{ role: 'user' as const, content: 'x'.repeat(300_001) }]],
+  ])('forwards history above the former %s cap to the Agent service', async (_cap, history) => {
+    const fetch = vi.fn().mockResolvedValue(ndjsonResponse([]))
+    vi.stubGlobal('fetch', fetch)
+    await aiService.streamAgent('/workspace', { input: 'task', history }, vi.fn())
+    expect(JSON.parse(fetch.mock.calls[0][1].body).history).toEqual(history)
+  })
+
+  it('forwards the selected model context budget and valid per-request context usage', async () => {
+    const usage = { type: 'context_usage', runId: 'run_1', limitTokens: 65000, usedTokens: 10, estimated: true, parts: { system: 2, memory: 1, history: 3, input: 1, tools: 1, outputReserve: 2 } }
+    const fetch = vi.fn().mockResolvedValue(ndjsonResponse([usage, { ...usage, usedTokens: 11 }]))
+    vi.stubGlobal('fetch', fetch)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const receive = vi.fn()
+    await aiService.streamAgent('/workspace', { input: 'hello', contextBudget: { contextWindowTokens: 65000, maxInputTokens: 60000 } }, receive)
+    expect(JSON.parse(fetch.mock.calls[0][1].body).context_budget).toEqual({ context_window_tokens: 65000, max_input_tokens: 60000 })
+    expect(receive.mock.calls).toEqual([[usage]])
   })
 
   it('drops unknown and malformed events with non-sensitive warnings', async () => {

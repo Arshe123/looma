@@ -32,7 +32,7 @@ describe('normalizeAppSettings RAG chunking strategy', () => {
     expect(settings.ai.chunkingStrategy).toBe(defaultAppSettings.ai.chunkingStrategy)
   })
 
-  it('normalizes conversation context strategy and legacy snake_case keys', () => {
+  it('drops obsolete conversation context settings from legacy files', () => {
     const settings = normalizeAppSettings({
       ai: {
         conversation_context: {
@@ -44,24 +44,10 @@ describe('normalizeAppSettings RAG chunking strategy', () => {
       },
     })
 
-    expect(settings.ai.conversationContext).toEqual({
-      strategy: 'sliding_window',
-      recentTurns: 8,
-      summaryMaxMessages: 32,
-      summaryMaxChars: 1600,
-    })
-  })
-
-  it('maps legacy disabled distant summary to sliding window strategy', () => {
-    const settings = normalizeAppSettings({
-      ai: {
-        conversation_context: {
-          enable_distant_summary: false,
-        },
-      },
-    })
-
-    expect(settings.ai.conversationContext.strategy).toBe('sliding_window')
+    expect(settings.ai).not.toHaveProperty('conversationContext')
+    expect(settings.ai).not.toHaveProperty('conversation_context')
+    expect(normalizeAppSettings({ ai: { conversationContext: { strategy: 'sliding_window' } } }).ai)
+      .not.toHaveProperty('conversationContext')
   })
 })
 

@@ -5,6 +5,9 @@ ipcMain.handle('ollama:listModels', async (_, baseUrl: string) => {
   return await ollamaService.listModels(baseUrl);
 });
 
+ipcMain.handle('ollama:getChatModelContext', (_, baseUrl: string, model: string) =>
+  ollamaService.getChatModelContext(baseUrl, model));
+
 ipcMain.handle('ollama:checkInstalled', async (_, baseUrl: string) => {
   return await ollamaService.checkInstalled(baseUrl);
 });

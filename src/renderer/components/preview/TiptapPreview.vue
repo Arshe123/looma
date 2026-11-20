@@ -70,6 +70,8 @@ import {
   transferContainsClipboardImage,
 } from '@/shared/utils/tiptap-clipboard'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
+import { useSettingsStore } from '@/renderer/stores/settings'
+import { matchesAppShortcut } from '@/shared/utils/app-shortcuts'
 import {
   dispatchOpenNoteRef,
   parseNoteLinkHref,
@@ -93,6 +95,7 @@ const props = defineProps<{
 }>()
 
 const workspaceStore = useWorkspaceStore()
+const settingsStore = useSettingsStore()
 const isExternalDocument = inject(externalDocumentKey, false)
 
 const emit = defineEmits<{
@@ -865,8 +868,13 @@ onMounted(() => {
         autocapitalize: 'off',
       },
       handleKeyDown: (_view, event) => {
+        if (matchesAppShortcut(event, settingsStore.appShortcuts.copySource, window.electronAPI.platform)) {
+          event.preventDefault()
+          void copyRichTextSource().catch(console.error)
+          return true
+        }
         const isClipboardShortcut = isPrimaryModifierPressed(event, window.electronAPI.platform) && !event.altKey
-        if (isClipboardShortcut && event.key.toLowerCase() === 'c') {
+        if (isClipboardShortcut && !event.shiftKey && event.key.toLowerCase() === 'c') {
           event.preventDefault()
           void copyRichTextSelection().catch(console.error)
           return true

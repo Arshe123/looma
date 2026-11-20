@@ -12,6 +12,57 @@ import { formatMarkdownImage } from './tiptap-image-insertion'
 import { normalizeNoteLinkHref } from './markdown-note-links'
 import { getInlineMarkdownSpans, hasInlineMarkdownSource } from './tiptap-inline-markdown'
 
+/** Complete only hidden syntax around fully selected visible inline content. */
+export const getInlineMarkdownSourceRange = (source: string, from: number, to: number) => {
+  const spans = getInlineMarkdownSpans(source)
+  const hidden = spans.flatMap(span => [
+    { from: span.from, to: span.contentFrom }, { from: span.contentTo, to: span.to },
+  ]).filter(range => range.from < range.to).sort((a, b) => a.from - b.from)
+  const merged: { from: number; to: number }[] = []
+  for (const range of hidden) {
+    const last = merged[merged.length - 1]
+    if (last && range.from <= last.to) last.to = Math.max(last.to, range.to)
+    else merged.push({ ...range })
+  }
+  const boundary = (position: number, side: 1 | -1) => {
+    let low = 0, high = merged.length
+    while (low < high) {
+      const mid = (low + high) >>> 1
+      if (merged[mid].from < position || side === 1 && merged[mid].from === position) low = mid + 1
+      else high = mid
+    }
+    const range = merged[low - 1]
+    return range && (side === 1 ? position < range.to : position <= range.to)
+      ? side === 1 ? range.to : range.from : position
+  }
+  for (const span of spans) {
+    const start = boundary(span.contentFrom, 1), end = boundary(span.contentTo, -1)
+    if (start < end && from <= start && to >= end) {
+      from = Math.min(from, span.from)
+      to = Math.max(to, span.to)
+    }
+  }
+  return { from, to }
+}
+
+const getSourceSelectionRange = (state: EditorState) => {
+  let { from, to } = state.selection
+  for (const position of [from, to]) {
+    const resolved = state.doc.resolve(position)
+    const node = resolved.parent
+    if (!node.isTextblock || node.type.spec.code || node.content.size === 0) continue
+    // Applied marks are serialized by the structural serializer, not inline syntax.
+    if (node.marks.some(mark => mark.type.spec.code)
+      || Array.from({ length: node.childCount }, (_, index) => node.child(index)).some(child => child.marks.some(mark => mark.type.spec.code))) continue
+    const start = resolved.start()
+    const range = getInlineMarkdownSourceRange(node.textBetween(0, node.content.size, '', '\ufffc'),
+      Math.max(0, from - start), Math.min(node.content.size, to - start))
+    from = Math.min(from, start + range.from)
+    to = Math.max(to, start + range.to)
+  }
+  return { from, to }
+}
+
 type FileTransferLike = {
   types: ArrayLike<string>
   files: ArrayLike<DroppedFileLike>
@@ -41,15 +92,17 @@ export const formatMarkdownLink = (label: string, href: string) => {
 
 export const getTiptapSelectionDocument = (state: EditorState): JSONContent | null => {
   if (state.selection.empty) return null
+  const { from, to } = getSourceSelectionRange(state)
   return {
     type: 'doc',
-    content: state.selection.content().content.toJSON() as JSONContent[],
+    content: state.doc.slice(from, to, true).content.toJSON() as JSONContent[],
   }
 }
 
 export const selectionHasMarkdownSource = (state: EditorState) => {
   if (state.selection.empty) return false
-  if (hasInlineMarkdownSource(state.doc.textBetween(state.selection.from, state.selection.to, '\n', ''))) return true
+  const { from, to } = getSourceSelectionRange(state)
+  if (hasInlineMarkdownSource(state.doc.textBetween(from, to, '\n', ''))) return true
   let hasMarkdownSyntax = false
   state.selection.content().content.descendants((node) => {
     if (node.isText) {

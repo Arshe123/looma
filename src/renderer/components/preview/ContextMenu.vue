@@ -18,6 +18,7 @@ import { parseNoteLinkHref } from '@/shared/utils/note-link-ref'
 import type { MenuAction } from '@/shared/types/MenuAction'
 import { isMacPlatform } from '@/shared/utils/window-chrome'
 import { getInlineMarkdownLinkAtPosition } from '@/shared/utils/tiptap-inline-markdown'
+import { useSettingsStore } from '@/renderer/stores/settings'
 
 const props = defineProps<{
   editor: Editor
@@ -45,6 +46,7 @@ const tablePickerVisible = ref(false)
 const quickCopyText = ref<string | null>(null)
 const sourceCopyAvailable = ref(false)
 const isMac = isMacPlatform(window.electronAPI.platform)
+const settingsStore = useSettingsStore()
 
 const menuRef = ref<HTMLElement | null>(null)
 let isDisposed = false
@@ -215,7 +217,8 @@ const closeMenu = (e: MouseEvent) => {
   }
 }
 
-const clipboardItems = computed(() => contextClipboardItems({ isMac, reference: !!quickCopyText.value, sourceCopy: sourceCopyAvailable.value }))
+const clipboardItems = computed(() => contextClipboardItems({ isMac, reference: !!quickCopyText.value, sourceCopy: sourceCopyAvailable.value,
+  sourceCopyShortcut: settingsStore.appShortcuts.copySource }))
 const handlePresentationAction = (id: string) => {
   if (id === 'copy' || id === 'copy-source' || id === 'paste') handleClipboardAction(id)
   else handleAction(tableMenuItems.find(item => item.id === id) ?? getMenuAction(id))

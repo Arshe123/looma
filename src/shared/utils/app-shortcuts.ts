@@ -22,6 +22,7 @@ export type AppShortcutId =
   | 'renameFile'
   | 'deleteFiles'
   | 'openInlineMenu'
+  | 'copySource'
 
 export type AppShortcutSettings = Record<AppShortcutId, EditorShortcutBinding>
 export type AppShortcutCategory = 'workspace' | 'file' | 'menu'
@@ -56,6 +57,7 @@ export const createDefaultAppShortcutSettings = (): AppShortcutSettings => ({
   renameFile: binding('F2'),
   deleteFiles: binding('Delete'),
   openInlineMenu: binding('Enter', { ctrl: true, shift: true }),
+  copySource: binding('C', { ctrl: true, shift: true }),
 })
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -144,6 +146,7 @@ const metadata: Array<Omit<AppShortcutDefinition, 'binding' | 'shortcut'>> = [
   { id: 'rename-file', settingKey: 'renameFile', command: '重命名选中文件', description: '重命名文件树中唯一选中的项目', scope: '文件树', category: 'file' },
   { id: 'delete-files', settingKey: 'deleteFiles', command: '删除选中文件', description: '将文件树中选中的项目移入回收站', scope: '文件树', category: 'file' },
   { id: 'open-inline-menu', settingKey: 'openInlineMenu', command: '打开快速插入菜单', description: '打开当前行的快速插入菜单', scope: '富文本编辑器', category: 'menu' },
+  { id: 'copy-source', settingKey: 'copySource', command: '复制源码', description: '复制当前选区的 Markdown 源码', scope: '富文本编辑器', category: 'file' },
 ]
 
 export const getAppShortcutDefinitions = (

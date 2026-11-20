@@ -25,6 +25,7 @@ describe('continuous menu context policy', () => {
   })
   it('offers source copy for the continuous editor highlight syntax', () => {
     expect(getContinuousMenuContext(state('==高亮==', 0, 6)).copySource).toBe(true)
+    expect(getContinuousMenuContext(state('==高亮==', 2, 4)).copySource).toBe(true)
     expect(getContinuousMenuContext(state('普通文本', 0, 4)).copySource).toBe(false)
   })
   it('keeps hot-path source reads bounded and does not flatten a giant line', () => {

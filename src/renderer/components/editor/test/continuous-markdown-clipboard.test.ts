@@ -19,6 +19,24 @@ function fixture(source: string, overrides: Partial<ContinuousMarkdownClipboardO
 }
 
 describe('continuous clipboard', () => {
+  it.each([
+    ['**加粗**123*斜体*123', '加粗', '斜体', '**加粗**123*斜体*'],
+    ['**加粗**', '加粗', '加粗', '**加粗**'],
+    ['[**链接**](note.md "标题")', '链接', '链接', '[**链接**](note.md "标题")'],
+    ['==*高亮*==', '高亮', '高亮', '==*高亮*=='],
+  ])('completes selected visible inline source in %s', async (source, first, last, expected) => {
+    const test = fixture(source)
+    const from = source.indexOf(first), to = source.indexOf(last) + last.length
+    for (const [anchor, head] of [[from, to], [to, from]]) {
+      test.view.dispatch({ selection: { anchor, head } })
+      const before = test.state
+      expect(test.controller.capabilities().copySource).toBe(true)
+      await test.controller.copySource()
+      expect(test.writes.at(-1)).toBe(expected)
+      expect(test.state).toBe(before)
+    }
+  })
+
   it('copies partial inline selections using surrounding syntax, not fragment parsing', async () => {
     const test = fixture('**粗体** 后')
     test.view.dispatch({ selection: { anchor: 3, head: 8 } })

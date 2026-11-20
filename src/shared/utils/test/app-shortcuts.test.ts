@@ -24,9 +24,11 @@ describe('fixed shortcut definitions', () => {
       'rename-file',
       'delete-files',
       'open-inline-menu',
+      'copy-source',
     ])
     expect(shortcuts.find(item => item.id === 'command-palette')?.shortcut).toBe('Ctrl + Shift + P')
     expect(shortcuts.find(item => item.id === 'rename-file')?.shortcut).toBe('F2')
+    expect(shortcuts.find(item => item.id === 'copy-source')).toMatchObject({ settingKey: 'copySource', command: '复制源码', scope: '富文本编辑器', category: 'file', shortcut: 'Ctrl + Shift + C' })
   })
 
   it('formats primary shortcuts for macOS', () => {
@@ -36,16 +38,19 @@ describe('fixed shortcut definitions', () => {
     expect(shortcuts.find(item => item.id === 'new-workspace')?.shortcut).toBe('⌘ + Shift + N')
     expect(shortcuts.find(item => item.id === 'delete-files')?.shortcut).toBe('⌫')
     expect(shortcuts.find(item => item.id === 'open-inline-menu')?.shortcut).toBe('⌘ + Shift + Enter')
+    expect(shortcuts.find(item => item.id === 'copy-source')?.shortcut).toBe('⌘ + Shift + C')
   })
 
   it('preserves customized bindings but forces fixed commands to stay enabled', () => {
     const shortcuts = normalizeAppShortcutSettings({
       openWorkspace: { key: 'K', ctrl: true, alt: true, enabled: false },
       renameFile: { key: 'F3', ctrl: false, alt: false, meta: false, enabled: false },
+      copySource: { key: 'K', ctrl: true, shift: true, enabled: false },
     })
 
     expect(shortcuts.openWorkspace).toMatchObject({ key: 'K', ctrl: true, alt: true, enabled: true })
     expect(shortcuts.renameFile).toMatchObject({ key: 'F3', ctrl: false, enabled: true })
+    expect(shortcuts.copySource).toMatchObject({ key: 'K', ctrl: true, shift: true, enabled: true })
   })
 
   it('matches a customized fixed shortcut', () => {

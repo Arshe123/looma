@@ -15,6 +15,7 @@ import { matchesAppShortcut, type AppShortcutSettings } from '../../../shared/ut
 import { formatEditorShortcut, matchesEditorShortcut, type EditorShortcutEvent, type EditorShortcutSettings } from '../../../shared/utils/editor-shortcuts'
 import { getMenuAction, getTableMenuActions } from '../../../shared/utils/tiptap-menu-actions'
 import { parseNoteLinkHref } from '../../../shared/utils/note-link-ref'
+import { continuousMarkdownSourceRange } from './continuousMarkdownSourceSelection'
 
 export interface ContinuousMarkdownMenusOptions {
   inlineItems: () => readonly string[]
@@ -72,7 +73,10 @@ export function getContinuousMenuContext(state: EditorState, position = state.se
     // Highlight is a display extension, not part of Lezer's Markdown grammar.
     // Inspect only a bounded prefix when the context menu explicitly requests
     // source-copy eligibility; scroll/geometry queries skip this branch.
-    if (!copySource) copySource = /(?:^|[^\\])==(?=\S)[^\n]*?\S==/.test(state.doc.sliceString(selection.from, Math.min(selection.to, selection.from + 4096)))
+    if (!copySource) {
+      const { from, to } = continuousMarkdownSourceRange(state, selection.from, selection.to)
+      copySource = /(?:^|[^\\])==(?=\S)[^\n]*?\S==/.test(state.doc.sliceString(from, Math.min(to, from + 4096)))
+    }
   }
   return {
     blank: !state.readOnly && selection.empty && !literal && !table && syntaxTreeAvailable(state, line.to)
@@ -524,6 +528,7 @@ export function continuousMarkdownMenus(options: ContinuousMarkdownMenusOptions)
         && !!parseNoteLinkHref(state.doc.sliceString(target.destination.from, target.destination.to), '')
       const items: MenuItem[] = contextClipboardItems({
         isMac: /mac|darwin/i.test(options.platform), reference,
+        sourceCopyShortcut: options.appShortcuts().copySource,
         sourceCopy: !!target || !!options.hasTableSelection?.(state) || getContinuousMenuContext(state).copySource, readOnly: !editable,
       }).map(item => ({ ...item, activate: () => { void this.clipboard(item.id === 'paste' ? 'paste' : item.id === 'copy-source' ? 'copy-source' : 'copy', item.id !== 'paste' ? target ?? undefined : undefined) } }))
       if (editable && getContinuousMenuContext(state).table) items.push(...continuousTableMenuItems().map(item => ({ ...item, activate: () => { this.action(item.id) } })))

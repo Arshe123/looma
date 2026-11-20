@@ -21,11 +21,24 @@ describe('engine-independent quick menu presentation', () => {
     expect(items.map(item => item.id)).toEqual(['copy', 'copy-source', 'paste'])
     expect(items[1].disabled).toBe(true)
     expect(items[0].shortcut).toBe('⌘C')
+    expect(items[1].shortcut).toBe('⌘ + Shift + C')
     const reference = contextClipboardItems({ isMac: false, reference: true, sourceCopy: true, readOnly: true })
     expect(reference[0].label).toBe('复制引用')
     expect(reference[0].shortcut).toBe('Ctrl+C')
     expect(reference[1].disabled).toBe(false)
+    expect(reference[1].shortcut).toBe('Ctrl + Shift + C')
     expect(reference[2].disabled).toBe(true)
+  })
+  it('renders the configured source-copy shortcut beside its menu action', async () => {
+    for (const isMac of [true, false]) {
+      const clipboardItems = contextClipboardItems({ isMac, reference: false, sourceCopy: true,
+        sourceCopyShortcut: { key: 'K', ctrl: true, shift: true, alt: false, meta: false, enabled: true } })
+      const expected = isMac ? '⌘ + Shift + K' : 'Ctrl + Shift + K'
+      expect(clipboardItems[1].shortcut).toBe(expected)
+      const html = await renderToString(createSSRApp({ render: () => h(ContextMenuPresentation, { clipboardItems }) }))
+      expect(html).toContain('复制源码')
+      expect(html).toContain(expected)
+    }
   })
   it('navigates enabled menu items and the shared picker column count without leaving bounds', () => {
     const enabled = [{ disabled: true }, {}, { disabled: true }, {}, { disabled: true }]

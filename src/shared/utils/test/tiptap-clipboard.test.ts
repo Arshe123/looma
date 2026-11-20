@@ -37,6 +37,27 @@ const schema = new Schema({
 })
 
 describe('tiptap clipboard helpers', () => {
+  it.each([
+    ['**加粗**123*斜体*123', '加粗', '斜体', '**加粗**123*斜体*'],
+    ['**加粗**', '加粗', '加粗', '**加粗**'],
+    ['[**链接**](note.md "标题")', '链接', '链接', '[**链接**](note.md "标题")'],
+    ['==*高亮*==', '高亮', '高亮', '==*高亮*=='],
+    ['前 **加粗** 后', '前', '加粗', '前 **加粗**'],
+    ['前 **加粗** 后', '加粗', '后', '**加粗** 后'],
+    ['~~删除~~ ==高亮== `代码`', '删除', '代码', '~~删除~~ ==高亮== `代码`'],
+  ])('completes hidden source boundaries for %s', (source, first, last, expected) => {
+    const doc = schema.nodes.doc.create(null, schema.nodes.paragraph.create(null, schema.text(source)))
+    const from = source.indexOf(first) + 1
+    const to = source.indexOf(last) + last.length + 1
+    for (const [anchor, head] of [[from, to], [to, from]]) {
+      const state = EditorState.create({ schema, doc, selection: TextSelection.create(doc, anchor, head) })
+      expect(selectionHasMarkdownSource(state)).toBe(true)
+      expect(getTiptapSelectionDocument(state)?.content?.[0].content?.[0].text).toBe(expected)
+      expect(state.selection.from).toBe(from)
+      expect(state.doc).toBe(doc)
+    }
+  })
+
   const copy = (source: string, from = 0, to = source.length, block = 'paragraph') => {
     const doc = schema.nodes.doc.create(null, [schema.nodes[block].create(null, schema.text(source))])
     const state = EditorState.create({ schema, doc, selection: TextSelection.create(doc, from + 1, to + 1) })
@@ -45,6 +66,27 @@ describe('tiptap clipboard helpers', () => {
     expect(state.doc.toJSON()).toEqual(before)
     return text
   }
+
+  it('does not include unselected visible text or interpret code-block syntax', () => {
+    for (const [source, block, first, expected] of [
+      ['**加粗文字**', 'paragraph', '粗', '粗'],
+      ['**加粗**', 'codeBlock', '加粗', '加粗'],
+      ['未闭合 **文字', 'paragraph', '文字', '文字'],
+    ]) {
+      const doc = schema.nodes.doc.create(null, schema.nodes[block].create(null, schema.text(source)))
+      const from = source.indexOf(first) + 1
+      const state = EditorState.create({ schema, doc, selection: TextSelection.create(doc, from, from + first.length) })
+      expect(getTiptapSelectionDocument(state)?.content?.[0].content?.[0].text).toBe(expected)
+    }
+  })
+
+  it('completes both boundary paragraphs without losing the middle block structure', () => {
+    const doc = schema.nodes.doc.create(null, ['**开头**', '中间', '[结尾](note.md)'].map(text =>
+      schema.nodes.paragraph.create(null, schema.text(text))))
+    const from = 3, to = doc.content.size - '[结尾](note.md)'.length + 2
+    const state = EditorState.create({ schema, doc, selection: TextSelection.create(doc, from, to) })
+    expect(getTiptapSelectionDocument(state)?.content).toEqual(doc.toJSON().content)
+  })
 
   it.each([
     ['**粗体** *斜体* ~~删除~~ ==高亮==', '粗体 斜体 删除 高亮'],

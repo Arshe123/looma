@@ -18,6 +18,7 @@ import { syntaxTree } from '@codemirror/language'
 import { isolateHistory } from '@codemirror/commands'
 import { hasInlineMarkdownSource } from '../../../shared/utils/tiptap-inline-markdown'
 import { getTiptapClipboardPlainText } from '../../../shared/utils/tiptap-clipboard'
+import { continuousMarkdownSourceRange } from './continuousMarkdownSourceSelection'
 
 const extensions = [StarterKit.configure({ link: { openOnClick: false, autolink: false, linkOnPaste: false,
   isAllowedUri: (url, { defaultValidate }) => !/^[a-z][a-z0-9+.-]*:/i.test(Array.from(url).filter(char => char.charCodeAt(0) > 31 && !/\s/.test(char)).join('')) || defaultValidate(url),
@@ -183,6 +184,7 @@ export function createContinuousMarkdownClipboard(options: ContinuousMarkdownCli
     const ranges = view.state.selection.ranges.filter(range => !range.empty)
     if (!ranges.length) return null
     return ranges.map(({ from, to }) => {
+      if (source && !options.sourceOnly?.()) ({ from, to } = continuousMarkdownSourceRange(view.state, from, to))
       const text = options.readSource(from, to)
       return options.sourceOnly?.() ? text : source ? selectionSource(view.state, from, to, text) : selectionPlainText(view.state, from, to, text)
     }).join('\n')
@@ -196,7 +198,10 @@ export function createContinuousMarkdownClipboard(options: ContinuousMarkdownCli
         if (!/^(Document|Paragraph|Escape|Entity)$/.test(node.name)) copySource = true
         return !copySource
       } })
-      if (!copySource) copySource = hasInlineMarkdownSource(view.state.doc.sliceString(selection.from, Math.min(selection.to, selection.from + 4096)))
+      if (!copySource) {
+        const { from, to } = continuousMarkdownSourceRange(view.state, selection.from, selection.to)
+        copySource = hasInlineMarkdownSource(view.state.doc.sliceString(from, Math.min(to, from + 4096)))
+      }
     }
     return { copy, copySource, cut: copy && editable(), paste: editable() }
   }

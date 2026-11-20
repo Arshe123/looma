@@ -27,10 +27,17 @@ app.whenReady().then(async () => {
     const select = host => run(host === 'ordinary'
       ? 'pm().commands.selectAll();pm().view.focus();true'
       : 'cm().dispatch({selection:{anchor:0,head:model.length}});cm().focus();true')
-    const menu = async (host, action) => {
-      await run(`(()=>{const root=${host === 'ordinary' ? 'pm().view.dom' : 'cm().contentDOM'},r=root.querySelector('p,.cm-line').getBoundingClientRect();root.querySelector('p,.cm-line').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:r.left+4,clientY:r.top+8}))})()`)
+    const menu = async (host, action, atSelection = false) => {
+      await run(`(()=>{const root=${host === 'ordinary' ? 'pm().view.dom' : 'cm().contentDOM'},r=${atSelection ? host === 'ordinary' ? 'pm().view.coordsAtPos(pm().state.selection.from)' : 'cm().coordsAtPos(cm().state.selection.main.from)' : "root.querySelector('p,.cm-line').getBoundingClientRect()"};root.querySelector('p,.cm-line').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:r.left+2,clientY:(r.top+r.bottom)/2}))})()`)
       await wait()
       const selector = host === 'ordinary' ? '#ordinary [data-looma-editor-context-menu]' : '.looma-continuous-menu-panel'
+      if (action === 'copy-source') {
+        const badge = await run(`(()=>{const button=document.querySelector(${JSON.stringify(selector + ' [data-action="copy-source"]')}),label=button?.firstElementChild,hint=button?.lastElementChild;
+          return {text:hint?.textContent,expected:window.copySourceHint??'⌘ + Shift + C',visible:!!hint&&getComputedStyle(hint).display!=='none'&&hint.getBoundingClientRect().width>0,
+          separated:!!label&&!!hint&&label.getBoundingClientRect().right<=hint.getBoundingClientRect().left}})()`)
+        assert.equal(badge.text, badge.expected, `${host}: source copy menu shows current configured shortcut`)
+        assert.equal(badge.visible && badge.separated, true, `${host}: shortcut badge is visible to the right of the label`)
+      }
       assert.equal(await run(`(()=>{const button=document.querySelector(${JSON.stringify(selector + ' [data-action="' + action + '"]')});if(!button||button.disabled)return false;button.click();return true})()`), true)
       await wait()
       return run('copied')
@@ -66,6 +73,44 @@ app.whenReady().then(async () => {
       assert.equal(result, '头\n中间\n结尾', `${host}: cross-block partial inline selection`)
     }
     console.log('PASS cross-block partial selections in both real editors')
+    for (const [text, first, last, expected] of [
+      ['**加粗**123*斜体*123', '加粗', '斜体', '**加粗**123*斜体*'],
+      ['**加粗**', '加粗', '加粗', '**加粗**'],
+      ['==高亮==', '高亮', '高亮', '==高亮=='],
+      ['[**链接**](note.md "标题")', '链接', '链接', '[**链接**](note.md "标题")'],
+      ['==*嵌套*==', '嵌套', '嵌套', '==*嵌套*=='],
+    ]) {
+      await reset(text)
+      for (const host of ['ordinary', 'continuous']) {
+        for (const reverse of [false, true]) {
+          await run(`(()=>{const from=${text.indexOf(first)},to=${text.indexOf(last) + last.length};
+            if(${host === 'ordinary'}){let start;pm().state.doc.descendants((n,p)=>{if(n.isText&&start===undefined)start=p});pm().commands.setTextSelection({from:start+${reverse ? 'to' : 'from'},to:start+${reverse ? 'from' : 'to'}});pm().view.focus()}
+            else{cm().dispatch({selection:{anchor:${reverse ? 'to' : 'from'},head:${reverse ? 'from' : 'to'}}});cm().focus()}})()`)
+          const before = await run('JSON.stringify({source:model.content,doc:pm().getJSON(),events})')
+          assert.equal(await menu(host, 'copy-source', true), expected, `${host}: complete selected source ${text}, reverse=${reverse}`)
+          if (text === '**加粗**' && !reverse) {
+            for (const [platform, modifiers] of [['darwin', 12], ['win32', 10]]) {
+              await run(`window.electronAPI.platform=${JSON.stringify(platform)};window.copied=null;true`)
+              await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'C', code: 'KeyC', windowsVirtualKeyCode: 67, modifiers })
+              await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'C', code: 'KeyC', windowsVirtualKeyCode: 67, modifiers })
+              await wait()
+              assert.equal(await run('copied'), expected, `${host}: ${platform} source shortcut completes hidden delimiters`)
+            }
+            await run(`window.electronAPI.platform='darwin';true`)
+          }
+          await wait(180)
+          assert.equal(await run('JSON.stringify({source:model.content,doc:pm().getJSON(),events})'), before, `${host}: completing clipboard source never changes document/save`)
+        }
+      }
+    }
+    console.log('PASS inline-edge source menus and Command/Ctrl+Shift+C: single, mixed, nested, links, highlight, both directions, no edits')
+    await reset('**加粗**')
+    await run(`(async()=>{const {useSettingsStore}=await import('/src/renderer/stores/settings.ts');useSettingsStore().settings.editor.appShortcuts.copySource.key='K';window.copySourceHint='⌘ + Shift + K'})()`)
+    for (const host of ['ordinary', 'continuous']) {
+      await select(host)
+      assert.equal(await menu(host, 'copy-source'), '**加粗**', `${host}: custom shortcut badge keeps source action working`)
+    }
+    console.log('PASS ordinary/continuous menu shortcut badges: default and custom binding, visible right-side layout')
     console.log('PASS rich-text copy regression', directory)
     win.destroy(); app.exit(0)
   } catch (error) {

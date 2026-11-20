@@ -29,6 +29,7 @@ import { dispatchOpenNoteRef, parseNoteLinkHref } from '@/shared/utils/note-link
 import { dispatchEditorFocus } from '@/shared/utils/editor-focus'
 import { isPrimaryModifierPressed } from '@/shared/utils/platform-shortcuts'
 import { getTextFormatShortcutAction, matchesEditorShortcut, type TextFormatShortcutId } from '@/shared/utils/editor-shortcuts'
+import { matchesAppShortcut } from '@/shared/utils/app-shortcuts'
 import { getWritingBottomMargin } from '@/shared/utils/editor-writing-scroll'
 import { useSettingsStore } from '@/renderer/stores/settings'
 import { continuousMarkdown, getContinuousMarkdownLinkAt, refreshContinuousMarkdown } from './continuousMarkdown'
@@ -308,6 +309,11 @@ function moveTableCell(backward: boolean) {
 }
 function handleKeyDown(event: KeyboardEvent) {
   if (!enabled || props.sourceOnly || view?.composing) return false
+  if (matchesAppShortcut(event, settings.appShortcuts.copySource, window.electronAPI.platform)) {
+    event.preventDefault()
+    void clipboard.copySource().catch(console.error)
+    return true
+  }
   if (view && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
     && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') && handleContinuousTableArrow(view, event.key === 'ArrowLeft')) {
     event.preventDefault(); return true

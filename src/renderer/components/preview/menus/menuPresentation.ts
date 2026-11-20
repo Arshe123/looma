@@ -1,5 +1,7 @@
 import type { Component } from 'vue'
 import { ClipboardPaste, CodeXml, Copy } from 'lucide-vue-next'
+import { createDefaultAppShortcutSettings, formatAppShortcut } from '../../../../shared/utils/app-shortcuts'
+import type { EditorShortcutBinding } from '../../../../shared/utils/editor-shortcuts'
 
 /** Display data only: engine commands and selections stay in the adapters. */
 export interface MenuPresentationItem {
@@ -13,10 +15,11 @@ export interface MenuPresentationItem {
 export interface MenuPoint { top: number; left: number }
 
 /** One public menu contract; adapters supply capability, never extra actions. */
-export function contextClipboardItems(options: { isMac: boolean; reference: boolean; sourceCopy: boolean; readOnly?: boolean }): MenuPresentationItem[] {
+export function contextClipboardItems(options: { isMac: boolean; reference: boolean; sourceCopy: boolean; readOnly?: boolean; sourceCopyShortcut?: EditorShortcutBinding }): MenuPresentationItem[] {
   return [
     { id: 'copy', label: options.reference ? '复制引用' : '复制', icon: Copy, shortcut: options.isMac ? '⌘C' : 'Ctrl+C' },
-    { id: 'copy-source', label: '复制源码', icon: CodeXml, disabled: !options.sourceCopy },
+    { id: 'copy-source', label: '复制源码', icon: CodeXml, disabled: !options.sourceCopy,
+      shortcut: formatAppShortcut(options.sourceCopyShortcut ?? createDefaultAppShortcutSettings().copySource, options.isMac ? 'darwin' : '') },
     { id: 'paste', label: '粘贴', icon: ClipboardPaste, shortcut: options.isMac ? '⌘V' : 'Ctrl+V', disabled: options.readOnly || undefined },
   ]
 }

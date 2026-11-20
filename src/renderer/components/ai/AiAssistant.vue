@@ -529,7 +529,7 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
               :class="[
                 'break-words text-sm leading-6 select-text',
                 message.role === 'assistant' ? 'mx-auto max-w-[760px] px-1 py-1 text-text-main' : '',
-                message.role === 'assistant' ? '' : 'whitespace-pre-wrap',
+                message.role === 'user' ? 'whitespace-pre-wrap' : '',
                 highlightedQuestionId === message.id ? 'ring-2 ring-accent/40 ring-offset-2 ring-offset-panel' : '',
                 message.role === 'user'
                   ? 'rounded-2xl rounded-tr-md bg-accent px-3.5 py-3 text-white shadow-sm'
@@ -555,10 +555,12 @@ watch(() => settingsStore.isLoaded, backfillLegacyAiNames)
                 <div class="mb-1.5 font-semibold text-text-main">
                   当前工作空间还没有索引
                 </div>
-                <div>
-                  {{ message.text }}
-                </div>
+                <AiMarkdown :content="message.text" />
               </template>
+              <AiMarkdown
+                v-else-if="message.role === 'system'"
+                :content="message.text"
+              />
               <template v-else>
                 {{ message.text }}
               </template>

@@ -10,7 +10,7 @@ describe('note-only title styling and integration', () => {
       expect(component).toContain("import '@/renderer/styles/note-title.css'")
       expect(component).toContain('looma-note-body')
     }
-    expect(rich).toMatch(/LineNumbers,\s+NoteTitle,/)
+    expect(rich).toMatch(/LineNumbers,\s+NoteTitle\.configure\(/)
     expect(chunked).toContain('getMarkdownNoteTitleMetadata(props.content, props.isPartial)')
     expect(chunked).toContain('JSON.stringify(noteTitle)')
     expect(chunked).toContain('renderMarkdownWithLineData(chunk.content, chunk.startLine, noteTitle)')

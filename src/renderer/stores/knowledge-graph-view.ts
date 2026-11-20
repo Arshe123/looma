@@ -10,6 +10,8 @@ export interface KnowledgeGraphView {
   camera: { x: number; y: number; scale: number }
   initialized: boolean
   selectedPath: string
+  requestedPath: string
+  requestToken: number
   focused: boolean
   alwaysShowReferences: boolean
   query: string
@@ -23,7 +25,7 @@ export const useKnowledgeGraphViewStore = defineStore('knowledge-graph-view', {
     forWorkspace(id: string): KnowledgeGraphView {
       if (!this.views[id]) this.views[id] = {
         camera: { x: 16, y: 16, scale: 1 }, initialized: false,
-        selectedPath: '', focused: false, alwaysShowReferences: false, query: '', cards: [], cardPlacements: {},
+        selectedPath: '', requestedPath: '', requestToken: 0, focused: false, alwaysShowReferences: false, query: '', cards: [], cardPlacements: {},
       }
       return this.views[id]
     },

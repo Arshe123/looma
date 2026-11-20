@@ -3,12 +3,13 @@ import type { Node } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { findDocumentNoteTitle, readDocumentNoteStats, noteStatsLabel } from './note-reading-time'
+import { appendNoteTitleRelations, noteRelationsKey, type NoteTitleRelations } from './note-title-relations'
 
 type NoteStats = ReturnType<typeof readDocumentNoteStats>
 type TitleState = NoteStats & { decorations: DecorationSet }
 export const NOTE_TITLE_KEY = new PluginKey<TitleState>('loomaNoteTitle')
 
-const decorate = (doc: Node, stats: NoteStats): TitleState => {
+const decorate = (doc: Node, stats: NoteStats, relations: NoteTitleRelations): TitleState => {
   const title = findDocumentNoteTitle(doc)
   return { ...stats, decorations: title ? DecorationSet.create(doc, [
     Decoration.node(title.from, title.to, { class: 'looma-note-title' }),
@@ -17,19 +18,20 @@ const decorate = (doc: Node, stats: NoteStats): TitleState => {
       meta.className = 'looma-note-reading-time'
       meta.contentEditable = 'false'
       meta.textContent = noteStatsLabel(stats.minutes, stats.words)
+      appendNoteTitleRelations(meta, relations)
       return meta
-    }, { key: `note-reading-time:${stats.minutes}:${stats.words}`, side: -1, ignoreSelection: true, stopEvent: () => true }),
+    }, { key: `note-reading-time:${stats.minutes}:${stats.words}:${noteRelationsKey(relations)}`, side: -1, ignoreSelection: true, stopEvent: () => true }),
   ]) : DecorationSet.empty }
 }
 
-export const createNoteTitlePlugin = (count = readDocumentNoteStats) => new Plugin<TitleState>({
+export const createNoteTitlePlugin = (count = readDocumentNoteStats, relations: () => NoteTitleRelations = () => undefined) => new Plugin<TitleState>({
   key: NOTE_TITLE_KEY,
   state: {
-    init: (_, state) => decorate(state.doc, count(state.doc)),
+    init: (_, state) => decorate(state.doc, count(state.doc), relations()),
     apply: (tr, value) => {
       const stats = tr.getMeta(NOTE_TITLE_KEY) as NoteStats | undefined
       if (!tr.docChanged && stats === undefined) return value
-      return decorate(tr.doc, stats ?? { minutes: value.minutes, words: value.words })
+      return decorate(tr.doc, stats ?? { minutes: value.minutes, words: value.words }, relations())
     },
   },
   props: { decorations: state => NOTE_TITLE_KEY.getState(state)!.decorations },
@@ -52,7 +54,8 @@ export const createNoteTitlePlugin = (count = readDocumentNoteStats) => new Plug
   },
 })
 
-export const NoteTitle = Extension.create({
+export const NoteTitle = Extension.create<{ relations: () => NoteTitleRelations }>({
   name: 'noteTitle',
-  addProseMirrorPlugins: () => [createNoteTitlePlugin()],
+  addOptions: () => ({ relations: () => undefined }),
+  addProseMirrorPlugins() { return [createNoteTitlePlugin(undefined, this.options.relations)] },
 })

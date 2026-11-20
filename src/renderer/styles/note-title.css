@@ -30,3 +30,35 @@
 .markdown-body.looma-note-body .markdown-render-chunk:has(> .looma-note-reading-time:last-child) + .markdown-render-chunk > :first-child {
   margin-top: 0;
 }
+
+:is(.markdown-body.looma-note-body, .chunked-markdown-editor) .looma-note-relations {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+:is(.markdown-body.looma-note-body, .chunked-markdown-editor) .looma-note-relations:hover {
+  color: var(--accent);
+}
+
+:is(.markdown-body.looma-note-body, .chunked-markdown-editor) .looma-note-relations:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.chunked-markdown-editor .looma-note-reading-time:has(.looma-note-relations) {
+  display: inline-block;
+  width: 100%;
+  vertical-align: top;
+  margin-left: 0;
+  padding-top: 0.95em;
+  padding-bottom: 2.6em;
+  line-height: 1.5;
+  user-select: none;
+  -webkit-user-select: none;
+}

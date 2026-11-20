@@ -77,7 +77,8 @@ import {
   parseNoteLinkHref,
 } from '@/shared/utils/note-link-ref'
 import { LineNumbers } from '@/shared/utils/tiptap-line-numbers'
-import { NoteTitle } from '@/shared/utils/tiptap-note-title'
+import { NoteTitle, NOTE_TITLE_KEY } from '@/shared/utils/tiptap-note-title'
+import type { NoteTitleRelations } from '@/shared/utils/note-title-relations'
 import { LinkIcons } from '@/shared/utils/tiptap-link-icons'
 import { InlineMarkdown, getInlineMarkdownLinkAtPosition, isInlineMarkdownCodeAtPosition } from '@/shared/utils/tiptap-inline-markdown'
 import { getNoteRefClickIntent } from '@/shared/utils/note-ref-interaction'
@@ -92,6 +93,7 @@ const props = defineProps<{
   filePath: string
   relativeFilePath: string
   showLineNumbers: boolean
+  noteRelations?: NoteTitleRelations
 }>()
 
 const workspaceStore = useWorkspaceStore()
@@ -841,7 +843,7 @@ onMounted(() => {
         markedOptions: { gfm: true },
       }),
       LineNumbers,
-      NoteTitle,
+      NoteTitle.configure({ relations: () => props.noteRelations }),
       LinkIcons,
       InlineMarkdown,
     ],
@@ -947,6 +949,13 @@ onBeforeUnmount(() => {
   editor.value = null
   destroyTiptapEditorSafely(currentEditor)
 })
+
+watch(() => props.noteRelations, () => {
+  const current = editor.value
+  if (!current || current.isDestroyed) return
+  const stats = NOTE_TITLE_KEY.getState(current.state)
+  if (stats) current.view.dispatch(current.state.tr.setMeta(NOTE_TITLE_KEY, { minutes: stats.minutes, words: stats.words }).setMeta('addToHistory', false))
+}, { deep: true })
 
 watch(
   () => props.content,

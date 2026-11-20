@@ -1,0 +1,35 @@
+<!doctype html><html><body style="margin:0"><div id="app"></div><script type="module">
+import { createApp, h, reactive } from 'vue'
+import { createPinia } from 'pinia'
+import MarkdownEditor from '/src/renderer/components/editor/MarkdownEditor.vue'
+import KnowledgeGraphPanel from '/src/renderer/components/knowledge/KnowledgeGraphPanel.vue'
+import { useWorkspaceStore } from '/src/renderer/stores/workspace'
+import { useKnowledgeGraphViewStore } from '/src/renderer/stores/knowledge-graph-view'
+import { useNoteRelationsStore } from '/src/renderer/stores/note-relations'
+import { serializeMarkdownAst } from '/src/shared/utils/markdown-rich-text'
+import { undoDepth } from '@tiptap/pm/history'
+import { EditorView } from '@codemirror/view'
+import { EditorSelection } from '@codemirror/state'
+import { undoDepth as cmUndoDepth } from '@codemirror/commands'
+import '/src/renderer/styles/style.css'
+const files = { 'a.md':'# 当前笔记\n\n引用 [乙](b.md) 和 [再次引用乙](b.md#标题) 与 [丙](c.md)。', 'b.md':'# 乙\n\n[甲](a.md)', 'c.md':'# 丙' }
+window.calls = { lists:0, reads:0, saves:[], edits:0, updates:0 }
+const listeners = new Set()
+window.electronAPI = { platform:'darwin', fs:{ listNotes:async()=>{calls.lists++;return {success:true,data:Object.keys(files)}}, onEvent:fn=>{listeners.add(fn);return()=>listeners.delete(fn)} }, file:{ readMarkdown:async path=>{calls.reads++;return {success:true,data:files[path.split('/').pop()]}} } }
+const pinia = createPinia()
+window.workspace = useWorkspaceStore(pinia)
+workspace.$patch({ workspaces:[{id:'fixture',name:'测试',path:'/isolated-fixture'}],activeWorkspaceId:'fixture' })
+workspace.saveWorkspaceMeta = async()=>{}
+window.graphView = useKnowledgeGraphViewStore(pinia)
+window.relations = useNoteRelationsStore(pinia)
+window.state = reactive({content:files['a.md'],chunked:false,path:'a.md',external:false})
+window.editor = () => document.querySelector('.tiptap')?.editor
+window.cm = () => {const root=document.querySelector('.chunked-markdown-editor .cm-editor');return root?EditorView.findFromDOM(root):null}
+window.snapshot = () => state.chunked ? {source:cm().state.doc.toString(),history:cmUndoDepth(cm().state)} : {source:serializeMarkdownAst(editor()),json:editor().getJSON(),history:undoDepth(editor().state)}
+window.copy = () => {const data=new DataTransfer();let dom;if(state.chunked){const view=cm();view.dispatch({selection:EditorSelection.single(0,view.state.doc.length)});dom=view.contentDOM}else{editor().commands.selectAll();dom=editor().view.dom}dom.dispatchEvent(new ClipboardEvent('copy',{bubbles:true,cancelable:true,clipboardData:data}));return data.getData('text/plain')}
+window.changeDisk = (path,content) => {files[path]=content;for(const fn of listeners)fn({workspaceId:'fixture',relativePath:path,event:'change'})}
+createApp({setup:()=>()=>h('main',{style:'display:flex;height:700px;width:1200px'},[
+ h('section',{style:'width:800px;height:700px'},[h(MarkdownEditor,{key:state.external?'external':'workspace',filePath:'/isolated-fixture/'+state.path,relativeFilePath:state.path,content:state.content,saveTrigger:0,isPartial:false,isLoading:false,isLoadingMore:false,totalBytes:0,useChunkedPreview:state.chunked,...(state.external?{documentSession:{getSession:()=>undefined,saveSession:()=>{}}}:{}),'onUpdate:content':value=>{calls.updates++;state.content=value},onSave:value=>calls.saves.push(value),onEditPending:()=>calls.edits++})]),
+ workspace.activeAuxiliaryPanel==='graph'?h('aside',{style:'width:400px;height:700px'},[h(KnowledgeGraphPanel)]):null,
+])}).use(pinia).mount('#app')
+</script></body></html>

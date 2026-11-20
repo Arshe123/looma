@@ -35,6 +35,7 @@ import { useSettingsStore } from '@/renderer/stores/settings'
 import { continuousMarkdown, getContinuousMarkdownLinkAt, refreshContinuousMarkdown } from './continuousMarkdown'
 import type { ScrollSyncState } from '@/shared/types/ScrollSyncState'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
+import type { NoteTitleRelations } from '@/shared/utils/note-title-relations'
 import '@/renderer/styles/note-title.css'
 import '@/renderer/styles/rich-text-presentation.css'
 
@@ -51,6 +52,7 @@ const props = withDefaults(defineProps<{
   sourceOnly?: boolean
   showLineNumbers?: boolean
   scrollSyncEnabled?: boolean
+  noteRelations?: NoteTitleRelations
 }>(), { sourceOnly: false, showLineNumbers: true, scrollSyncEnabled: false, isLoadingFullContent: false })
 const emit = defineEmits<{
   (event: 'update:content', content: string): void
@@ -246,6 +248,7 @@ function presentationExtension() {
   // fills source-line tails and paints behind opaque cells/code shells.
   return props.sourceOnly ? [drawSelection(), highlightActiveLine()] : [continuousMarkdown({
     contextAt: offset => doc().contextAt(offset), resolveImage, metadata: () => metadata, references: currentReferences,
+    noteRelations: () => props.noteRelations,
   }), continuousMarkdownCode(), noteReferences.extension, continuousMarkdownMedia(media), continuousTableSelection({
     enabled: () => enabled && !props.sourceOnly,
     reportError: (message, detail) => { if (enabled) clipboardError.value = { message, detail } },
@@ -421,6 +424,7 @@ function queueMetadata() {
   metadataTimer = setTimeout(() => { metadataWorker?.postMessage({ requestId, revision: doc().revision, content: doc().content, isPartial: props.isPartial }) }, 300)
 }
 watch([() => props.content, () => props.isPartial], queueMetadata)
+watch(() => props.noteRelations, () => view?.dispatch({ effects: refreshContinuousMarkdown.of(null) }), { deep: true })
 watch(() => props.documentRevision, () => syncFromDocument())
 watch(() => props.isPartial, () => {
   view?.dispatch({ effects: editability.reconfigure(EditorState.readOnly.of(props.isPartial)) })

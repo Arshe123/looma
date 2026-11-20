@@ -4,6 +4,7 @@ import { externalDocumentKey, type DocumentSession } from './documentSession'
 import { Columns, Edit3, Eye } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
 import { useSettingsStore } from '@/renderer/stores/settings'
+import { useNoteRelationsStore } from '@/renderer/stores/note-relations'
 import type { MarkdownOutlineItem } from '@/shared/types/MarkdownOutlineItem'
 import type TiptapPreviewComponent from '../preview/TiptapPreview.vue'
 import type EditorComponent from './Editor.vue'
@@ -40,6 +41,18 @@ const emit = defineEmits<{
 }>()
 
 const workspaceStore = useWorkspaceStore()
+const noteRelationsStore = useNoteRelationsStore()
+const noteRelations = computed(() => props.documentSession || !workspaceStore.activeWorkspaceId
+  ? undefined : noteRelationsStore.summary(props.relativeFilePath))
+watch(() => props.documentSession ? null : workspaceStore.activeWorkspaceId, id => {
+  if (id) void noteRelationsStore.ensureLoaded()
+}, { immediate: true })
+const handleNoteRelations = (event: MouseEvent) => {
+  if (!(event.target instanceof Element) || !event.target.closest('.looma-note-relations')) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (event.type === 'click' && !props.documentSession) noteRelationsStore.open(props.relativeFilePath)
+}
 provide(externalDocumentKey, Boolean(props.documentSession))
 const getSession = () => props.documentSession?.getSession() ?? (props.documentSession ? undefined : workspaceStore.fileSessions[props.relativeFilePath])
 const saveSession = (session: Parameters<DocumentSession['saveSession']>[0], skipSaveMeta = false) => {
@@ -484,7 +497,7 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="splitContainerRef" class="h-full w-full relative flex overflow-hidden">
+  <div ref="splitContainerRef" class="h-full w-full relative flex overflow-hidden" @click.capture="handleNoteRelations" @mousedown.capture="handleNoteRelations">
     <div
       v-if="viewMode !== 'preview' && !isPartial && !isLoading"
       class="overflow-hidden"
@@ -551,6 +564,7 @@ defineExpose({
       <ChunkedMarkdownEditor
         v-else-if="useChunkedEditor && chunkDocument"
         ref="chunkedPreviewRef"
+        :note-relations="noteRelations"
         :document-model="chunkDocument"
         :document-revision="chunkRevision"
         :scroll-sync-enabled="viewMode === 'split'"
@@ -573,6 +587,7 @@ defineExpose({
       <TiptapPreview
         v-else
         ref="previewRef"
+        :note-relations="noteRelations"
         :content="props.content"
         :filePath="props.filePath"
         :relativeFilePath="props.relativeFilePath"

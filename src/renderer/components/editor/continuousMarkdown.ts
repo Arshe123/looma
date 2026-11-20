@@ -4,6 +4,7 @@ import type { NoteTitleMetadata } from '@/shared/utils/markdown-renderer'
 import { getInlineMarkdownSpans, type InlineMarkdownSpan } from '@/shared/utils/tiptap-inline-markdown'
 import { parseMarkdownImageBlock, type MarkdownImageTarget } from '@/shared/utils/tiptap-image-insertion'
 import { noteStatsLabel } from '@/shared/utils/note-reading-time'
+import { appendNoteTitleRelations, noteRelationsKey, type NoteTitleRelations } from '@/shared/utils/note-title-relations'
 import { syntaxTree } from '@codemirror/language'
 import type { Tree } from '@lezer/common'
 import { getContinuousBlockLine } from './continuousMarkdownBlocks'
@@ -16,6 +17,7 @@ export type ContinuousMarkdownOptions = {
   contextAt: (offset: number) => { fence: string; fenceLength: number }
   resolveImage: (source: string) => Promise<string | null>
   metadata: () => NoteTitleMetadata | null
+  noteRelations?: () => NoteTitleRelations
   references?: () => MarkdownReferenceIndex
 }
 
@@ -283,12 +285,13 @@ class StructuralWidget extends WidgetType {
   ignoreEvent() { return false }
 }
 class ReadingTimeWidget extends WidgetType {
-  constructor(readonly minutes: number | null, readonly words: number | null) { super() }
-  eq(other: ReadingTimeWidget) { return this.minutes === other.minutes && this.words === other.words }
+  constructor(readonly minutes: number | null, readonly words: number | null, readonly relations: NoteTitleRelations) { super() }
+  eq(other: ReadingTimeWidget) { return this.minutes === other.minutes && this.words === other.words && noteRelationsKey(this.relations) === noteRelationsKey(other.relations) }
   toDOM() {
     const element = document.createElement('span')
     element.className = 'looma-note-reading-time'
     element.textContent = noteStatsLabel(this.minutes, this.words)
+    appendNoteTitleRelations(element, this.relations)
     return element
   }
 }
@@ -474,7 +477,7 @@ export function continuousMarkdown(options: ContinuousMarkdownOptions): Extensio
         const decoration = Decoration.replace({ widget: new ImageWidget(image, options.resolveImage) })
         ranges.push(decoration.range(image.from, image.to)); atoms.push(decoration.range(image.from, image.to))
       }
-      if (plan.title) ranges.push(Decoration.widget({ widget: new ReadingTimeWidget(plan.title.minutes, plan.title.words), side: 1 }).range(plan.title.at))
+      if (plan.title) ranges.push(Decoration.widget({ widget: new ReadingTimeWidget(plan.title.minutes, plan.title.words, options.noteRelations?.()), side: 1 }).range(plan.title.at))
       this.decorations = Decoration.set(ranges, true)
       this.cells = Decoration.set(cells, true)
       this.atomic = Decoration.set(atoms, true)

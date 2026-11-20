@@ -13,6 +13,19 @@ const doc = () => schema.node('doc', null, [schema.node('heading', null, schema.
 const decorations = (state: EditorState) => NOTE_TITLE_KEY.getState(state)!.decorations.find()
 
 describe('non-document note title decoration', () => {
+  it('refreshes relation counts without changing content or history', () => {
+    let relations = { outgoing: 2, incoming: 3 }
+    const plugin = createNoteTitlePlugin(undefined, () => relations)
+    let state = EditorState.create({ doc: doc(), plugins: [history(), plugin] })
+    const original = state.doc.toJSON()
+    const key = decorations(state)[1].spec.key
+    relations = { outgoing: 4, incoming: 3 }
+    state = state.apply(state.tr.setMeta(NOTE_TITLE_KEY, { minutes: 1, words: 2 }).setMeta('addToHistory', false))
+    expect(decorations(state)[1].spec.key).not.toBe(key)
+    expect(decorations(state)[1].spec.key).toContain('4:3')
+    expect(state.doc.toJSON()).toEqual(original)
+    expect(undoDepth(state)).toBe(0)
+  })
   it('decorates the top-level boundary, immediately removes on downgrade and follows undo/redo without changing document data', () => {
     let state = EditorState.create({ doc: doc(), plugins: [history(), createNoteTitlePlugin()] })
     const original = state.doc.toJSON()

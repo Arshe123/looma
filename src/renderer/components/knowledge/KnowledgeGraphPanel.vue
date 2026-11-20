@@ -1,26 +1,25 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { Compass, Focus, Link2, Maximize2, Minimize2, Minus, Plus, RefreshCw, Search, X } from 'lucide-vue-next'
 import { useWorkspaceStore } from '@/renderer/stores/workspace'
-import { KnowledgeGraphLoader } from '@/renderer/services/knowledge-graph-loader'
-import { buildGraphEdges, layoutKnowledgeNotes, parseGraphNote, type GraphEdge, type GraphNote } from '@/shared/utils/knowledge-graph'
+import { useNoteRelationsStore } from '@/renderer/stores/note-relations'
+import { layoutKnowledgeNotes, type GraphEdge } from '@/shared/utils/knowledge-graph'
 import { dispatchOpenNoteRef, type NoteLinkAnchor } from '@/shared/utils/note-link-ref'
-import { resolveWorkspaceFilePath } from '@/shared/utils/main-content-routing'
 import { KNOWLEDGE_GRAPH_WORLD, useKnowledgeGraphViewStore, type GraphNoteCard } from '@/renderer/stores/knowledge-graph-view'
-import { createGraphCard, type FloatingGraphCardBounds } from '@/renderer/utils/floating-graph-card'
+import { createGraphCard, placeGraphCard, type FloatingGraphCardBounds } from '@/renderer/utils/floating-graph-card'
 import KnowledgeGraphCard from './KnowledgeGraphCard.vue'
 import KnowledgeGraphScene from './KnowledgeGraphScene.vue'
 import { graphMotionEase, straightKnowledgeEdge, settleKnowledgeGraph, type GraphPoint } from '@/renderer/utils/knowledge-graph-physics'
 import { GraphNodeIndex, graphAdjacency, graphInteractionEdges, graphLabelScale, graphNoteName, graphRectFromKey, graphRectsIntersect, graphRenderWindowKey, graphSceneLabels, type GraphCamera } from '@/renderer/utils/knowledge-graph-scene'
 
 const workspace = useWorkspaceStore()
-const loader = new KnowledgeGraphLoader()
+const relations = useNoteRelationsStore()
+const { notes, graph, loading, error: loadError, progress } = storeToRefs(relations)
 const panel = ref<HTMLElement>()
 const viewport = ref<HTMLElement>()
 const expandButton = ref<HTMLButtonElement>()
 const expanded = ref(false)
-const diskNotes = shallowRef<GraphNote[]>([])
-const draftNotes = shallowRef(new Map<string, GraphNote>())
 const viewStore = useKnowledgeGraphViewStore()
 const view = computed(() => viewStore.forWorkspace(workspace.activeWorkspaceId || ''))
 const selectedPath = computed({ get: () => view.value.selectedPath, set: value => { view.value.selectedPath = value } })
@@ -29,25 +28,13 @@ const hoveredPath = ref('')
 const focused = computed({ get: () => view.value.focused, set: value => { view.value.focused = value } })
 const alwaysShowReferences = computed({ get: () => view.value.alwaysShowReferences, set: value => { view.value.alwaysShowReferences = value } })
 const query = computed({ get: () => view.value.query, set: value => { view.value.query = value } })
-const loading = ref(false)
-const loadError = ref('')
-const progress = ref({ done: 0, total: 0 })
 const size = ref({ width: 340, height: 420 })
 const camera = computed({ get: () => view.value.camera, set: value => { view.value.camera = value } })
 const cards = computed({ get: () => view.value.cards, set: value => { view.value.cards = value } })
 const floatingLayer = ref<HTMLElement>()
 const dragging = ref(false)
 let resizeObserver: ResizeObserver | undefined
-let unsubscribe: (() => void) | undefined
-let reloadTimer: ReturnType<typeof setTimeout> | undefined
-let draftTimer: ReturnType<typeof setTimeout> | undefined
-let requestId = 0
-let destroyed = false
 let drag: { pointer: number; x: number; y: number; startX: number; startY: number; moved: boolean } | null = null
-const draftCache = new Map<string, { content: string; note: GraphNote }>()
-
-const notes = computed(() => diskNotes.value.map(note => draftNotes.value.has(note.path) ? { ...draftNotes.value.get(note.path)!, createdAt: note.createdAt } : note))
-const graph = computed(() => buildGraphEdges(notes.value))
 const noteByPath = computed(() => new Map(notes.value.map(note => [note.path, note])))
 const selectedNote = computed(() => noteByPath.value.get(selectedPath.value))
 const adjacency = computed(() => graphAdjacency(graph.value.edges))
@@ -140,60 +127,7 @@ function flushCamera() {
   pendingCamera = null
 }
 
-function updateDrafts() {
-  const overrides = new Map<string, GraphNote>()
-  for (const [path, state] of Object.entries(workspace.openedTextFileContents)) {
-    if (state.isPartial || state.isLoading || !/\.(md|txt)$/i.test(path)) continue
-    let cached = draftCache.get(path)
-    if (!cached || cached.content !== state.content) {
-      cached = { content: state.content, note: parseGraphNote(path, state.content) }
-      draftCache.set(path, cached)
-    }
-    overrides.set(path, cached.note)
-  }
-  for (const path of draftCache.keys()) if (!overrides.has(path)) draftCache.delete(path)
-  draftNotes.value = overrides
-}
-
-async function load() {
-  const ws = workspace.activeWorkspace
-  const id = ++requestId
-  if (!ws) { diskNotes.value = []; loading.value = false; return }
-  loading.value = true
-  loadError.value = ''
-  try {
-    const result = await loader.load({
-      list: () => window.electronAPI.fs.listNotes(ws.id, { watchDirectories: true, includeCreatedAt: true }),
-      read: path => window.electronAPI.file.readMarkdown(resolveWorkspaceFilePath(ws.path, path)),
-    }, (done, total) => { if (id === requestId) progress.value = { done, total } })
-    if (!result || id !== requestId || destroyed) return
-    diskNotes.value = result
-    updateDrafts()
-    if (!noteByPath.value.has(selectedPath.value)) {
-      selectedPath.value = ''
-      focused.value = false
-      selectedEdgeId.value = ''
-    }
-    cards.value = cards.value.filter(card => noteByPath.value.has(card.path))
-    if (!view.value.initialized && layout.value.nodes.length) {
-      await nextTick()
-      if (id !== requestId || destroyed) return
-      const node = positioned.value.get(workspace.activeFileRelativePath) || layout.value.nodes[0]
-      camera.value = { scale: 1, x: size.value.width / 2 - node.x, y: size.value.height / 2 - node.y }
-      view.value.initialized = true
-    }
-  } catch (error) {
-    if (id === requestId && !destroyed) loadError.value = error instanceof Error ? error.message : '图谱加载失败'
-  } finally {
-    if (id === requestId && !destroyed) loading.value = false
-  }
-}
-
-function scheduleLoad() {
-  clearTimeout(reloadTimer)
-  reloadTimer = setTimeout(() => { void load() }, 300)
-}
-function refresh() { loader.invalidate(); void load() }
+function refresh() { void relations.refresh() }
 
 function fit() {
   hoveredPath.value = ''
@@ -337,24 +271,47 @@ watch(() => workspace.activeWorkspaceId, () => {
   if (cameraFrame !== undefined) cancelAnimationFrame(cameraFrame)
   cameraFrame = undefined
   pendingCamera = null
-  clearTimeout(reloadTimer)
-  requestId++
-  loader.invalidate()
-  diskNotes.value = []
-  draftNotes.value = new Map()
-  draftCache.clear()
   selectedEdgeId.value = ''
-  progress.value = { done: 0, total: 0 }
-  loadError.value = ''
   if (expanded.value) void setExpanded(false)
-  void load()
 }, { immediate: true })
+
+watch([notes, loading], () => {
+  if (!relations.loaded || loading.value) return
+  if (!noteByPath.value.has(selectedPath.value) && !view.value.requestedPath) {
+    selectedPath.value = ''
+    focused.value = false
+    selectedEdgeId.value = ''
+  }
+  cards.value = cards.value.filter(card => noteByPath.value.has(card.path))
+}, { immediate: true })
+
+// Requests survive lazy panel mounting and wait for both layout and viewport.
+watch([() => view.value.requestToken, () => view.value.requestedPath, positioned, viewport, size, loading], () => {
+  if (!viewport.value || loading.value || !relations.loaded) return
+  const rect = viewport.value.getBoundingClientRect()
+  if (!rect.width || !rect.height) return
+  if (size.value.width !== rect.width || size.value.height !== rect.height) size.value = { width: rect.width, height: rect.height }
+  const path = view.value.requestedPath
+  const node = positioned.value.get(path)
+  if (path && node) {
+    flushCamera()
+    hoveredPath.value = ''
+    selectedEdgeId.value = ''
+    camera.value = { scale: 1, x: size.value.width / 2 - node.x, y: size.value.height / 2 - node.y }
+    select(path)
+    const card = cards.value.find(item => item.path === path)!
+    card.edgeId = ''
+    cardBounds(path, placeGraphCard(card, camera.value, size.value))
+    view.value.initialized = true
+    view.value.requestedPath = ''
+  } else if (!path && !view.value.initialized && layout.value.nodes.length) {
+    const initial = positioned.value.get(workspace.activeFileRelativePath) || layout.value.nodes[0]
+    camera.value = { scale: 1, x: size.value.width / 2 - initial.x, y: size.value.height / 2 - initial.y }
+    view.value.initialized = true
+  }
+}, { immediate: true, flush: 'post' })
 watch(renderedNodes, nodes => {
   if (hoveredPath.value && !nodes.some(node => node.note.path === hoveredPath.value)) hoveredPath.value = ''
-})
-watch(() => Object.entries(workspace.openedTextFileContents).map(([path, state]) => [path, state.content, state.isPartial, state.isLoading]), () => {
-  clearTimeout(draftTimer)
-  draftTimer = setTimeout(updateDrafts, 180)
 })
 watch(() => workspace.activeFileRelativePath, path => {
   if (focused.value && noteByPath.value.has(path)) { selectedPath.value = path; selectedEdgeId.value = '' }
@@ -366,23 +323,11 @@ onMounted(() => {
     if (rect.width && rect.height) size.value = { width: rect.width, height: rect.height }
   })
   resizeObserver.observe(viewport.value!)
-  unsubscribe = window.electronAPI.fs.onEvent(event => {
-    if (event.workspaceId !== workspace.activeWorkspaceId) return
-    if (!/\.(md|txt)$/i.test(event.relativePath) && event.event !== 'addDir' && event.event !== 'unlinkDir') return
-    loader.invalidate(event.relativePath.replace(/\\/g, '/'))
-    if (event.event === 'addDir') window.electronAPI.fs.watchAdd(event.workspaceId, [event.relativePath]).catch(() => {})
-    scheduleLoad()
-  })
+  void relations.ensureLoaded()
 })
 onUnmounted(() => {
   if (motionFrame !== undefined) cancelAnimationFrame(motionFrame)
-  destroyed = true
-  requestId++
-  loader.cancel()
   if (cameraFrame !== undefined) cancelAnimationFrame(cameraFrame)
-  clearTimeout(reloadTimer)
-  clearTimeout(draftTimer)
-  unsubscribe?.()
   resizeObserver?.disconnect()
 })
 </script>

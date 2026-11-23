@@ -26,8 +26,6 @@ const selectTab = (tab: WorkspaceTab) => {
   }
 }
 
-// Renderer-local ordering: external identities must never enter workspace metadata.
-const visualOrder = ref<string[]>([])
 const tabRenderKeys = ref(new Map<string, number>())
 let nextTabRenderKey = 0
 const availableTabs = computed(() => [
@@ -35,36 +33,25 @@ const availableTabs = computed(() => [
   ...externalDocuments.documents.map(doc => ({ ...doc, kind: 'external' as const })),
 ])
 watch(() => workspaceStore.activeWorkspaceId, () => {
-  visualOrder.value = availableTabs.value.map(tab => tab.id)
   tabRenderKeys.value = new Map()
 }, { flush: 'sync' })
 watch([availableTabs, () => workspaceStore.previewTabId], ([tabs, previewId], [, previousPreviewId]) => {
   const ids = new Set(tabs.map(tab => tab.id))
   const replacingPreview = previousPreviewId && !ids.has(previousPreviewId) && ids.has(previewId)
-  // Transfer the visual slot and node identity, not the file/editor identity.
-  const order = visualOrder.value.map(id => replacingPreview && id === previousPreviewId ? previewId : id)
+  // Transfer the tab node identity, not the file/editor identity.
   const previousKeys = tabRenderKeys.value
   tabRenderKeys.value = new Map(tabs.map(tab => [tab.id,
     previousKeys.get(tab.id)
       ?? (replacingPreview && tab.id === previewId ? previousKeys.get(previousPreviewId) : undefined)
       ?? nextTabRenderKey++,
   ]))
-  const nextOrder = [
-    ...order.filter(id => ids.has(id)),
-    ...tabs.filter(tab => !order.includes(tab.id)).map(tab => tab.id),
-  ]
-  // Restored/programmatically reordered workspace tabs remain authoritative for
-  // ordinary slots; only the interleaving and external order are renderer-local.
-  const ordinaryIds = new Set(workspaceStore.tabs.map(tab => tab.id))
-  let ordinaryIndex = 0
-  visualOrder.value = nextOrder.map(id => ordinaryIds.has(id) ? workspaceStore.tabs[ordinaryIndex++].id : id)
 }, { immediate: true })
 const visualTabs = computed(() => {
   const tabs = new Map(availableTabs.value.map(tab => [tab.id, tab]))
-  return visualOrder.value.flatMap(id => tabs.has(id) ? [tabs.get(id)!] : [])
+  return workspaceStore.documentTabOrder.map(id => tabs.get(id)!)
 })
 const tabGroup = ref<ComponentPublicInstance | null>(null)
-const activeVisualTabId = computed(() => externalDocuments.activeId || workspaceStore.activeTabId)
+const activeVisualTabId = computed(() => workspaceStore.activeDocumentTabId)
 const revealActiveTab = () => {
   const container = tabGroup.value?.$el as HTMLElement | undefined
   if (!container || container.clientWidth <= 0) return
@@ -113,7 +100,7 @@ const onDragOver = (e: DragEvent) => {
   const items = [...visualTabs.value]
   const [removed] = items.splice(from, 1)
   items.splice(index, 0, removed)
-  visualOrder.value = items.map(tab => tab.id)
+  workspaceStore.visualTabSlots = items.map(tab => tab.id)
   workspaceStore.setTabs(items.filter((tab): tab is WorkspaceTab => tab.kind !== 'external'), workspaceStore.activeTabId)
   workspaceStore.saveWorkspaceMeta().catch(() => {})
 }

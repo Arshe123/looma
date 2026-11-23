@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { useExternalDocumentsStore } from './externalDocuments'
+import type { ExternalDocumentData } from '@/shared/types/external-document'
 import { confirmMessageDialog, showMessageDialog, useMessageDialogStore, type ConfirmationDialogOptions } from './message-dialog'
 export type { ConfirmationDialogOptions } from './message-dialog'
 import { DEFAULT_THEME_PALETTE, getStoredThemePalette, normalizeThemePalette, THEME_PALETTE_STORAGE_KEY, type ThemePalette } from '../theme'
@@ -362,6 +363,8 @@ export const useWorkspaceStore = defineStore('workspace', {
     openedTextFileContents: {} as Record<string, OpenTextFileState>,
     nextTextFileLoadRequestId: 0 as number,
     tabs: [] as WorkspaceTab[],
+    // Runtime only. Workspace metadata uses the projection in `tabs`.
+    visualTabSlots: [] as string[],
     previewTabId: '',
     activeTabId: '' as string,
     activeSystemPage: null as SystemPageId | null,
@@ -439,6 +442,17 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
     activeTab(state): WorkspaceTab | null {
       return state.tabs.find((tab) => tab.id === state.activeTabId) || null
+    },
+    activeDocumentTabId(state): string {
+      return useExternalDocumentsStore().activeId || state.activeTabId
+    },
+    documentTabOrder(state): string[] {
+      const ordinary = new Set(state.tabs.map(tab => tab.id))
+      const remaining = new Set([...ordinary, ...useExternalDocumentsStore().documents.map(doc => doc.id)])
+      const slots = state.visualTabSlots.filter(id => remaining.delete(id))
+      // Restoration and programmatic reordering own the order of workspace tabs.
+      let index = 0
+      return [...slots, ...remaining].map(id => ordinary.has(id) ? state.tabs[index++].id : id)
     },
     activeFileTab(): FileWorkspaceTab | null {
       const tab = this.activeTab
@@ -1026,6 +1040,27 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.saveWorkspaceMeta().catch(() => {})
     },
 
+    placeNewDocumentTab(tabId: string) {
+      const order = [...this.documentTabOrder]
+      const anchor = order.indexOf(this.activeDocumentTabId)
+      order.splice(anchor < 0 ? order.length : anchor + 1, 0, tabId)
+      this.visualTabSlots = order
+      return order
+    },
+
+    insertWorkspaceTab(tab: WorkspaceTab) {
+      const order = this.placeNewDocumentTab(tab.id)
+      const following = new Set(order.slice(order.indexOf(tab.id) + 1))
+      const index = this.tabs.findIndex(item => following.has(item.id))
+      this.tabs.splice(index < 0 ? this.tabs.length : index, 0, tab)
+    },
+
+    openExternalDocument(input: ExternalDocumentData) {
+      const external = useExternalDocumentsStore()
+      if (!external.documents.some(doc => doc.id === input.id)) this.placeNewDocumentTab(input.id)
+      external.open(input)
+    },
+
     openPreviewFileTab(relativePath: string) {
       const rel = normalizeDir(relativePath)
       if (!rel) return
@@ -1037,10 +1072,11 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (this.previewTabId && this.isTabDirty(this.previewTabId)) this.retainTab(this.previewTabId)
       const index = this.tabs.findIndex((tab) => tab.id === this.previewTabId)
       if (index >= 0) {
+        this.visualTabSlots = this.documentTabOrder.map(tabId => tabId === this.previewTabId ? id : tabId)
         const [removed] = this.tabs.splice(index, 1, createFileTab(rel))
         this.cleanupTabState(removed)
       } else {
-        this.tabs.push(createFileTab(rel))
+        this.insertWorkspaceTab(createFileTab(rel))
       }
       this.previewTabId = id
       this.activateTab(id)
@@ -1049,6 +1085,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     openFileTab(relativePath: string) {
       const rel = normalizeDir(relativePath)
       if (!rel) {
+        useExternalDocumentsStore().activeId = null
         this.activeTabId = ''
         this.activeSystemPage = null
         this.resetActiveFileState()
@@ -1057,7 +1094,7 @@ export const useWorkspaceStore = defineStore('workspace', {
 
       const id = getFileTabId(rel)
       if (!this.tabs.some((tab) => tab.id === id)) {
-        this.tabs.push(createFileTab(rel))
+        this.insertWorkspaceTab(createFileTab(rel))
       }
       this.retainTab(id)
       this.activateTab(id)
@@ -1066,7 +1103,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     openSystemTab(page: SystemPageId, options: { section?: SettingsSectionId } = {}) {
       const id = getSystemTabId(page)
       if (!this.tabs.some((tab) => tab.id === id)) {
-        this.tabs.push(createSystemTab(page))
+        this.insertWorkspaceTab(createSystemTab(page))
       }
       if (page === 'settings') {
         this.activeSettingsSection = options.section || this.activeSettingsSection
@@ -1079,6 +1116,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (!tab) return
 
       this.activeTabId = tab.id
+      useExternalDocumentsStore().activeId = null
       if (tab.kind === 'file') {
         this.activateFileTab(tab.relativePath)
       } else {
@@ -1426,7 +1464,11 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       const result = remapFileTabsByMoves(this.tabs, items)
       const preview = this.tabs.find((tab) => tab.id === this.previewTabId)
-      if (preview?.kind === 'file') this.previewTabId = getFileTabId(remapByMoves(preview.relativePath, items))
+      if (preview?.kind === 'file') {
+        const nextId = getFileTabId(remapByMoves(preview.relativePath, items))
+        if (nextId !== preview.id) this.visualTabSlots = this.documentTabOrder.map(id => id === preview.id ? nextId : id)
+        this.previewTabId = nextId
+      }
       this.tabs = result.tabs
       const activeTab = this.activeTabId ? this.tabs.find((tab) => tab.id === this.activeTabId) : null
       if (!activeTab && this.activeFileRelativePath) {
@@ -1721,6 +1763,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.previewTabId = ''
       this.resetActiveFileState()
       this.tabs = []
+      this.visualTabSlots = []
       this.activeTabId = ''
       this.activeSystemPage = null
       this.watchedWorkspaceId = null
@@ -1745,7 +1788,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       await window.electronAPI.workspace.setActive(null)
     },
 
-    async adoptExternalDocument(relativePath: string, doc: import('@/shared/types/external-document').ExternalDocumentData, diskContent: string, claim: () => Promise<unknown> = async () => {}) {
+    async adoptExternalDocument(relativePath: string, doc: ExternalDocumentData, diskContent: string, claim: () => Promise<unknown> = async () => {}) {
       const workspaceId = this.activeWorkspaceId
       if (!workspaceId || this.isFileDirty(relativePath) || this.openedTextFileContents[relativePath]?.isSaving) throw new Error('目标标签存在未保存内容，已保留两个编辑现场')
       const revision = createDraftRecoveryRevision()
@@ -1850,6 +1893,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.aiAssistantLoadStatus = 'loading'
       this.previewTabId = ''
       const metaResult = await window.electronAPI.workspaceMeta.get(id)
+      this.visualTabSlots = []
       if (!metaResult.success || !metaResult.data) {
         this.expandedDirs = []
         this.selectedPaths = []

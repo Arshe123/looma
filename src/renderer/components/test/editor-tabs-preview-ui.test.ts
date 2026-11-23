@@ -135,7 +135,7 @@ it('preserves the preview slot next to external tabs and keeps nodes stable on r
   app.mount(root)
   const tabs = () => all(root).filter(item => item.props['data-document-tab'])
   try {
-    externalDocuments.useExternalDocumentsStore().open({ id: 'external:note', filePath: '/outside/note.md', content: '', baseContent: '' })
+    store.openExternalDocument({ id: 'external:note', filePath: '/outside/note.md', content: '', baseContent: '' })
     await nextTick()
     store.openFileTab('right.md')
     await nextTick()
@@ -187,4 +187,66 @@ it('reveals activated tabs by the minimum distance, even when clicking the curre
     await nextTick()
     expect(container.scrollLeft).toBe(124)
   } finally { app.unmount() }
+})
+
+it.each(['file', 'preview', 'system'] as const)('inserts a new %s tab immediately after the active tab', async kind => {
+  const store = workspace.useWorkspaceStore()
+  vi.spyOn(store, 'saveWorkspaceMeta').mockResolvedValue()
+  store.openFileTab('left.md')
+  store.openFileTab('right.md')
+  store.activateTab('file:left.md')
+  const root = node('root')
+  const app = renderer.createApp(componentModule.exports.default)
+  app.mount(root)
+  try {
+    if (kind === 'file') store.openFileTab('new.md')
+    if (kind === 'preview') store.openPreviewFileTab('new.md')
+    if (kind === 'system') store.openSystemTab('help')
+    await nextTick()
+    const expected = ['file:left.md', kind === 'system' ? 'system:help' : 'file:new.md', 'file:right.md']
+    expect(all(root).flatMap(tab => tab.dataset.documentTab ?? [])).toEqual(expected)
+    expect(store.tabs.map(tab => tab.id)).toEqual(expected)
+    expect(store.activeTabId).toBe(expected[1])
+  } finally { app.unmount() }
+})
+
+it('opens after the active tab across workspace and external tabs without moving reopened tabs', async () => {
+  const store = workspace.useWorkspaceStore()
+  vi.spyOn(store, 'saveWorkspaceMeta').mockResolvedValue()
+  const openExternal = (name: string) => store.openExternalDocument({ id: `external:${name}`, filePath: `/${name}.md`, content: '', baseContent: '' })
+  store.openFileTab('left.md')
+  store.openFileTab('right.md')
+  store.activateTab('file:left.md')
+  const root = node('root')
+  const app = renderer.createApp(componentModule.exports.default)
+  app.mount(root)
+  const renderedOrder = () => all(root).flatMap(tab => tab.dataset.documentTab ?? [])
+  try {
+    openExternal('first')
+    openExternal('second')
+    await nextTick()
+    expect(renderedOrder()).toEqual(['file:left.md', 'external:first', 'external:second', 'file:right.md'])
+    openExternal('first')
+    store.openSystemTab('help')
+    await nextTick()
+    const expected = ['file:left.md', 'external:first', 'system:help', 'external:second', 'file:right.md']
+    expect(renderedOrder()).toEqual(expected)
+    expect(store.tabs.map(tab => tab.id)).toEqual(['file:left.md', 'system:help', 'file:right.md'])
+    expect(store.activeDocumentTabId).toBe('system:help')
+    store.openFileTab('left.md')
+    await nextTick()
+    expect(renderedOrder()).toEqual(expected)
+    expect(store.activeDocumentTabId).toBe('file:left.md')
+  } finally { app.unmount() }
+})
+
+it('uses the right edge when there is no active tab', () => {
+  const store = workspace.useWorkspaceStore()
+  vi.spyOn(store, 'saveWorkspaceMeta').mockResolvedValue()
+  store.openExternalDocument({ id: 'external:first', filePath: '/first.md', content: '', baseContent: '' })
+  expect(store.documentTabOrder).toEqual(['external:first'])
+  store.openFileTab('left.md')
+  store.openFileTab('')
+  store.openFileTab('right.md')
+  expect(store.documentTabOrder).toEqual(['external:first', 'file:left.md', 'file:right.md'])
 })

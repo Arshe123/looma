@@ -41,9 +41,6 @@ const reportOpenDocuments = () => {
   if (!initialized || workspaceStore.isWorkspaceTransitioning) return;
   void window.electronAPI.externalDocuments.ready(workspaceStore.activeWorkspaceId, workspaceStore.tabs.flatMap(tab => tab.kind === 'file' ? [tab.relativePath] : [])).catch(console.error);
 };
-const cleanupWorkspaceActions = workspaceStore.$onAction(({ name }) => {
-  if (['activateTab', 'openFileTab', 'openPreviewFileTab', 'openSystemTab'].includes(name)) externalDocuments.activeId = null;
-});
 watch(() => [workspaceStore.activeWorkspaceId, workspaceStore.tabs, workspaceStore.isWorkspaceTransitioning], reportOpenDocuments, { deep: true });
 const settingsStore = useSettingsStore();
 watchFontPreset(() => settingsStore.fontPreset)
@@ -199,7 +196,7 @@ onMounted(async () => {
         });
       } else {
         const doc = await api.claim(request.token);
-        if (doc) externalDocuments.open(doc);
+        if (doc) workspaceStore.openExternalDocument(doc);
       }
     } catch (error) {
       await api.claim(request.token, String(error)).catch(() => {});
@@ -207,8 +204,8 @@ onMounted(async () => {
     } finally { externalDocuments.transferring = false; }
   });
   cleanupExternalOpen = window.electronAPI.externalDocuments.onOpen(request => {
-    if (request.kind === 'external') externalDocuments.open(request.document);
-    else { externalDocuments.activeId = null; workspaceStore.openFileTab(request.relativePath); }
+    if (request.kind === 'external') workspaceStore.openExternalDocument(request.document);
+    else workspaceStore.openFileTab(request.relativePath);
   });
   if (editorOnly) {
     workspaceStore.applyTheme();
@@ -255,7 +252,6 @@ onUnmounted(() => {
   settingsStore.stopSync();
   cleanupHandoff?.();
   cleanupExternalOpen?.();
-  cleanupWorkspaceActions();
   stopAuxiliaryResize()
   stopSidebarResize()
   window.removeEventListener('resize', onWindowResize)

@@ -41,7 +41,8 @@ const historyToolMessages = (canonical: AgentHistoryMessage[]): AgentHistoryMess
     })
     messages.push(call, ...results)
   }
-  return messages
+  // Canonical ledger data is JSON; detach nested Pinia proxies before crossing Electron IPC.
+  return JSON.parse(JSON.stringify(messages)) as AgentHistoryMessage[]
 }
 
 export const normalizeAgentConversationHistory = (

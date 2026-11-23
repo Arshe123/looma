@@ -283,7 +283,7 @@ const indexWorkspace = async () => {
 
   const conversationId = workspaceStore.ensureAiAssistantConversationForRequest()
   const result = await aiAssistStore.startWorkspaceIndex({ workspaceId, conversationId })
-  if (!result?.success && result?.error) {
+  if (!result?.success && result?.error && !result.errorDisplayed) {
     workspaceStore.appendAiAssistantMessageToConversation(conversationId, 'system', result.error)
   }
   scrollToBottom()
@@ -300,7 +300,7 @@ const askQuestion = async () => {
     text,
     aiName: aiDisplayName.value,
   })
-  if (!result?.success && result?.error) {
+  if (!result?.success && result?.error && !result.errorDisplayed) {
     appendMessage('system', result.error)
   }
   scrollToBottom()

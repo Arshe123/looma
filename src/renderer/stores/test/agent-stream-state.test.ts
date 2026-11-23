@@ -100,6 +100,12 @@ describe('agent stream state', () => {
     ])
     expect(history.filter(message => message.content === '读取笔记')).toHaveLength(1)
     expect(history.filter(message => message.content === '已读取')).toHaveLength(1)
+    agentApi.start.mockImplementationOnce(async (_requestId, _workspaceId, options) => {
+      structuredClone(options)
+      return { success: true, data: { taskId: 'task-1', runId: 'run-main' } }
+    })
+    await startAgent(conversationId, '总结一下')
+    expect(agentApi.start).toHaveBeenCalledWith(expect.any(String), 'workspace-1', expect.objectContaining({ history }))
   })
 
   it('invalidates hydrated model history when new canonical events arrive', () => {

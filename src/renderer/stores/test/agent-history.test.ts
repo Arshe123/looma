@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { reactive } from 'vue'
 import { flattenAgentHistoryForSummary, normalizeAgentConversationHistory, type AgentHistoryMessage } from '../agent-history'
 import type { AiAssistantMessage } from '../workspace-types'
 
@@ -22,6 +23,22 @@ const agentMessage: AiAssistantMessage = {
 }
 
 describe('Agent conversation history', () => {
+  it('creates a cloneable snapshot of reactive canonical tool history', () => {
+    const argumentsData = { path: '笔记/配置.md', options: { ranges: [1, 3], enabled: true, cursor: null } }
+    const toolHistory = reactive<AgentHistoryMessage[]>([
+      { role: 'assistant', content: '', tool_calls: [{ id: 'read', type: 'function', function: { name: 'file_read', arguments: argumentsData } }] },
+      { role: 'tool', name: 'file_read', tool_call_id: 'read', content: '{"content":"真实正文\\n第二行"}' },
+    ])
+    const expected = JSON.parse(JSON.stringify(toolHistory))
+    const history = normalizeAgentConversationHistory([agentMessage], new Set(), new Map([[7, toolHistory]]))
+
+    expect(() => structuredClone(history)).not.toThrow()
+    expect(history).toEqual([...expected, { role: 'assistant', content: agentMessage.text }])
+    toolHistory[0].tool_calls![0].function.arguments.options = { ranges: [9] }
+    toolHistory[1].content = '已改变'
+    expect(history).toEqual([...expected, { role: 'assistant', content: agentMessage.text }])
+  })
+
   it('uses canonical tool content instead of the timeline summary', () => {
     const toolHistory: AgentHistoryMessage[] = [
       { role: 'assistant', content: '', tool_calls: [{ id: 'read', type: 'function', function: { name: 'file_read', arguments: { path: 'docs/config.md' } } }] },

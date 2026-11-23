@@ -489,7 +489,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
         const result = await (window as any).electronAPI.rag.indexStream.start(requestId, options.workspaceId)
         if (!result.success) {
           this.failWorkspaceIndexStream(options.workspaceId, result.error || '建立索引失败。', 'validate-workspace')
-          return result
+          return { ...result, errorDisplayed: true }
         }
         const stream = this.indexStreamsByWorkspaceId[options.workspaceId]
         if (stream) stream.status = 'streaming'
@@ -497,7 +497,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       } catch (error: any) {
         const errorText = `建立索引失败：${error?.message ?? String(error)}`
         this.failWorkspaceIndexStream(options.workspaceId, errorText, 'validate-workspace')
-        return { success: false, error: errorText }
+        return { success: false, error: errorText, errorDisplayed: true }
       }
     },
 
@@ -641,7 +641,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
         })
         if (!result.success) {
           this.failAgentConversation(conversationId, result.error || 'Agent 启动失败。')
-          return result
+          return { ...result, errorDisplayed: true }
         }
         const run = this.agentRunsByConversationId[conversationId]
         if (run) {
@@ -653,7 +653,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       } catch (error: any) {
         const runtimeError = formatAiRuntimeError(error?.message ?? String(error), 'Agent 启动失败。')
         this.failAgentConversation(conversationId, runtimeError.message, runtimeError.technicalDetail)
-        return { success: false, error: runtimeError.message }
+        return { success: false, error: runtimeError.message, errorDisplayed: true }
       }
     },
 

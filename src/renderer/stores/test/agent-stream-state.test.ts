@@ -77,6 +77,88 @@ describe('agent stream state', () => {
     settings.settings.ai.chat.model = 'gpt-4o-mini'
   })
 
+  it('hydrates canonical tool observations before assembling a new request after reload', async () => {
+    const workspace = useWorkspaceStore()
+    workspace.activeWorkspaceId = 'workspace-1'
+    const conversationId = createConversation()
+    workspace.appendAiAssistantMessageToConversation(conversationId, 'user', '读取笔记')
+    const id = workspace.appendAiAssistantMessageToConversation(conversationId, 'assistant', '已读取')
+    workspace.updateAiAssistantMessageMetaInConversation(conversationId, id, { mode: 'agent', runId: 'saved-run' })
+    const toolContent = JSON.stringify({ modelContext: { facts: [], structuredData: { content: '真实正文，不是成功提示' } } })
+    vi.mocked(window.electronAPI.agent.getRun).mockResolvedValue({ success: true, data: {
+      run: { id: 'saved-run', taskId: 'saved-task' }, events: [], sources: [], recovery: {}, history: [
+        { role: 'user', content: '读取笔记' },
+        { role: 'assistant', content: null, tool_calls: [{ id: 'canonical-call', type: 'function', function: { name: 'file_read', arguments: { path: 'a.md' } } }] },
+        { role: 'tool', tool_call_id: 'canonical-call', name: 'file_read', content: toolContent },
+        { role: 'assistant', content: '已读取' },
+      ],
+    } } as any)
+    const history = await useAiAssistantStore().buildConversationHistoryForRequest(conversationId, '总结一下')
+    expect(window.electronAPI.agent.getRun).toHaveBeenCalledWith('workspace-1', 'saved-run')
+    expect(history.filter(message => message.role === 'tool')).toEqual([
+      { role: 'tool', tool_call_id: 'canonical-call', name: 'file_read', content: toolContent },
+    ])
+    expect(history.filter(message => message.content === '读取笔记')).toHaveLength(1)
+    expect(history.filter(message => message.content === '已读取')).toHaveLength(1)
+  })
+
+  it('invalidates hydrated model history when new canonical events arrive', () => {
+    const store = useAiAssistantStore()
+    store.agentHistoryByMessageKey['conversation:7'] = []
+    store.appendCanonicalAgentFacts({ conversationId: 'conversation', assistantMessageId: 7, runId: 'saved-run' }, {
+      requestId: 'request', type: 'done', runId: 'saved-run', status: 'completed',
+      agentEvents: [canonicalEvent('saved-run', 3, 'execution', 'run_completed', { answerMessageId: 'answer' })],
+    })
+    expect(store.agentHistoryByMessageKey['conversation:7']).toBeUndefined()
+  })
+
+  it('retains unsummarized turns before a persisted summary marker', async () => {
+    const sourceMessages = [
+      { id: 1, role: 'user' as const, text: '已总结的问题', createdAt: 2 },
+      { id: 2, role: 'assistant' as const, text: '已总结的回答', createdAt: 3 },
+      { id: 3, role: 'user' as const, text: '开发过哪些业务功能', createdAt: 4 },
+      { id: 4, role: 'assistant' as const, text: '业务功能开发明细', createdAt: 5 },
+      { id: 5, role: 'system' as const, text: '系统：已压缩早期对话（已总结至第 1 次用户对话，保留最近 1 轮对话）\n\n旧问题摘要', createdAt: 6 },
+      { id: 6, role: 'user' as const, text: '压缩成 STAR 式', createdAt: 7 },
+    ]
+    const history = await useAiAssistantStore().buildConversationHistoryForRequest('saved', '继续', { sourceMessages })
+    expect(history).toEqual([
+      { role: 'system', content: '对话摘要（已总结至第 1 次用户对话）：\n旧问题摘要' },
+      { role: 'user', content: '开发过哪些业务功能' },
+      { role: 'assistant', content: '业务功能开发明细' },
+      { role: 'user', content: '压缩成 STAR 式' },
+    ])
+  })
+
+  it('preserves the retained tail on the request after compression', async () => {
+    const chat = useSettingsStore().settings.ai.chat
+    chat.modelContext = { key: getChatModelContextKey(chat), overrideTokens: 1000 }
+    const conversationId = createConversation()
+    const workspace = useWorkspaceStore()
+    for (let i = 0; i < 20; i++) {
+      workspace.appendAiAssistantMessageToConversation(conversationId, 'user', `问题${i}：${'业务'.repeat(30)}`)
+      workspace.appendAiAssistantMessageToConversation(conversationId, 'assistant', `回答${i}：${'开发'.repeat(30)}`)
+    }
+    const store = useAiAssistantStore()
+    const first = await store.buildConversationHistoryForRequest(conversationId, '继续')
+    expect(first.some(message => message.role === 'system')).toBe(true)
+    expect(first.some(message => message.role === 'user')).toBe(true)
+    const second = await store.buildConversationHistoryForRequest(conversationId, '继续')
+    expect(second).toEqual(first)
+  })
+
+  it('summarizes complete user turns rather than separating a question from its answer', async () => {
+    const chat = useSettingsStore().settings.ai.chat
+    chat.modelContext = { key: getChatModelContextKey(chat), overrideTokens: 1000 }
+    await useAiAssistantStore().buildConversationHistoryForRequest('large', '继续', { sourceMessages: [
+      { id: 1, role: 'user', text: '业务'.repeat(1000), createdAt: 2 },
+      { id: 2, role: 'assistant', text: '这是该问题的回答', createdAt: 3 },
+    ] })
+    expect(window.electronAPI.agent.summarizeConversation).toHaveBeenCalledWith(expect.arrayContaining([
+      { role: 'assistant', content: '这是该问题的回答' },
+    ]), 1200)
+  })
+
   it('passes every earlier message through bounded summary requests', async () => {
     const summarize = vi.mocked(window.electronAPI.agent.summarizeConversation)
     const history = Array.from({ length: 201 }, (_, index) => ({ role: 'user' as const, content: `question ${index}` }))

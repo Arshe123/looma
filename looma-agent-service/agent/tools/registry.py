@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from agent.models import AgentError, ToolResult
+from agent.events import bounded_file_read_data, bounded_rag_data
 from agent.tools.base import (
     AgentTool,
     AgentToolContext,
@@ -339,6 +340,12 @@ class ToolRegistry:
                 technical_detail=type(exc).__name__,
             )
         if truncated:
+            if tool_name == "file_read" and isinstance(data, dict):
+                data = bounded_file_read_data(data, self._max_output_chars)
+            elif tool_name == "rag_search" and isinstance(data, dict) and isinstance(data.get("sources"), list):
+                data = bounded_rag_data(data, self._max_output_chars)
+            else:
+                data = serialized
             result = ToolResult(
                 tool=tool_name,
                 success=True,
@@ -346,7 +353,7 @@ class ToolRegistry:
                     "Tool execution completed; output was truncated to "
                     f"{self._max_output_chars} characters."
                 ),
-                data=serialized,
+                data=data,
                 truncated=True,
             )
         else:

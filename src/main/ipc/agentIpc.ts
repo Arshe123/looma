@@ -708,6 +708,7 @@ const discardedFilePatchObservation = () => JSON.stringify({
 const buildContinuationHistory = (
   messages: AgentMessage[],
   discardedRunIds: ReadonlySet<string> = new Set(),
+  preserveCompletedExchanges = false,
 ): AgentRunOptions['history'] => {
   const pendingCalls = new Map<string, number>()
   for (let index = 0; index < messages.length; index += 1) {
@@ -715,8 +716,11 @@ const buildContinuationHistory = (
     for (const call of message.tool_calls || []) pendingCalls.set(call.id, index)
     if (message.role === 'tool' && message.tool_call_id) pendingCalls.delete(message.tool_call_id)
   }
-  const safeLength = pendingCalls.size ? Math.min(...pendingCalls.values()) : messages.length
-  return messages.slice(0, safeLength).map(message => ({
+  const safeLength = !preserveCompletedExchanges && pendingCalls.size ? Math.min(...pendingCalls.values()) : messages.length
+  const incompleteMessageIndexes = preserveCompletedExchanges ? new Set(pendingCalls.values()) : new Set<number>()
+  const incompleteCallIds = new Set([...incompleteMessageIndexes].flatMap(index => messages[index].tool_calls?.map(call => call.id) || []))
+  return messages.slice(0, safeLength).filter((message, index) => !incompleteMessageIndexes.has(index)
+    && !(message.role === 'tool' && message.tool_call_id && incompleteCallIds.has(message.tool_call_id))).map(message => ({
     role: message.role,
     content: message.role === 'tool'
       && message.name === 'file_patch'
@@ -849,6 +853,11 @@ const buildAgentRunHistory = async (
     run,
     events: runEvents,
     sources: runSources,
+    history: buildContinuationHistory(
+      view.messages.filter(message => message.runId === runId),
+      ['failed', 'cancelled'].includes(state.status) ? new Set([runId]) : new Set(),
+      true,
+    ),
     auditIssues: runAuditIssues,
     recovery: {
       recoverable,

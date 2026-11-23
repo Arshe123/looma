@@ -260,6 +260,7 @@ interface AgentRunHistoryPayload {
   run: AgentRun;
   events: AgentEvent[];
   sources: AgentSource[];
+  history: RagChatMessagePayload[];
   auditIssues: Array<{ code: string; runId?: string; callId?: string; detail: string }>;
   recovery: { recoverable: boolean; checkpointAvailable: boolean; reason: string };
 }

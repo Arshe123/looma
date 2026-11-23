@@ -86,10 +86,14 @@ def observation_prompt(result: ToolResult, max_chars: int = MAX_OBSERVATION_CHAR
     base: dict[str, Any] = {
         "tool": result.tool,
         "success": result.success,
-        "modelContext": tool_result_model_context(result),
+        "modelContext": {},
         "error": error,
         "truncated": result.truncated,
     }
+    envelope_chars = len(json.dumps(base, ensure_ascii=False, separators=(",", ":"), allow_nan=False)) - 2
+    base["modelContext"] = tool_result_model_context(result, max_chars=max_chars - envelope_chars)
+    if base["modelContext"].get("structuredData", {}).get("truncated") is True:
+        base["truncated"] = True
     rendered = json.dumps(base, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
     if len(rendered) <= max_chars:
         return rendered

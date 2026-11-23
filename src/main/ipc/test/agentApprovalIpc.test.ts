@@ -501,6 +501,52 @@ describe('Agent approval IPC trusted boundary', () => {
     }))
   })
 
+  it('returns canonical model observations through single and batch history reads', async () => {
+    const owner = sender(399)
+    const started = await state.handlers.get('agent:runStream:start')!({ sender: owner }, 'request-history', 'workspace-1', { input: '读取笔记' })
+    const runId = started.data.runId
+    await vi.waitFor(() => expect(state.streamEvent).toBeTypeOf('function'))
+    await state.streamEvent!({ type: 'tool_call', runId, step: 1, stepId: 'step-read', callId: 'call-read', tool: 'file_read', arguments: { path: 'notes/a.md' }, thought_summary: '读取文件' })
+    const modelContext = { facts: [], structuredData: { path: 'notes/a.md', content: '账本中的完整正文' } }
+    await state.streamEvent!({ type: 'tool_result', runId, step: 1, stepId: 'step-read', callId: 'call-read', result: {
+      tool: 'file_read', success: true, status: 'completed', uiSummary: 'Tool execution completed successfully.', modelContext, durationMs: 1, error: null, truncated: false,
+    } })
+    await state.streamEvent!({ type: 'done', runId, status: 'completed', answer: '已读取' })
+    const single = await state.handlers.get('agent:ledger:getRun')!({ sender: owner }, 'workspace-1', runId)
+    const batch = await state.handlers.get('agent:ledger:getRuns')!({ sender: owner }, 'workspace-1', [runId])
+    for (const history of [single.data.history, batch.data.runs[runId].history]) {
+      expect(history).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: 'assistant', tool_calls: [expect.objectContaining({ id: 'call-read' })] }),
+        expect.objectContaining({ role: 'tool', tool_call_id: 'call-read', content: expect.stringContaining('账本中的完整正文') }),
+      ]))
+    }
+  })
+
+  it('keeps confirmed parallel observations after an unfinished call while marking discarded patches', async () => {
+    const owner = sender(400)
+    const started = await state.handlers.get('agent:runStream:start')!({ sender: owner }, 'request-partial-history', 'workspace-1', { input: '并行读取' })
+    const runId = started.data.runId
+    await vi.waitFor(() => expect(state.streamEvent).toBeTypeOf('function'))
+    for (const [callId, tool] of [['pending', 'file_read'], ['confirmed', 'file_read'], ['patch', 'file_patch']] as const) {
+      await state.streamEvent!({ type: 'tool_call', runId, step: 1, stepId: `step-${callId}`, callId, tool, arguments: { path: 'notes/a.md' }, thought_summary: '处理文件' })
+    }
+    for (const [callId, tool] of [['confirmed', 'file_read'], ['patch', 'file_patch']] as const) {
+      await state.streamEvent!({ type: 'tool_result', runId, step: 1, stepId: `step-${callId}`, callId, result: {
+        tool, success: true, status: 'completed', uiSummary: '已处理', modelContext: { facts: [], structuredData: { content: '已确认的正文' } }, durationMs: 1, error: null, truncated: false,
+      } })
+    }
+    await state.handlers.get('agent:runStream:cancel')!({ sender: owner }, 'request-partial-history')
+    const single = await state.handlers.get('agent:ledger:getRun')!({ sender: owner }, 'workspace-1', runId)
+    const batch = await state.handlers.get('agent:ledger:getRuns')!({ sender: owner }, 'workspace-1', [runId])
+    for (const history of [single.data.history, batch.data.runs[runId].history]) {
+      expect(history).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: 'tool', tool_call_id: 'confirmed', content: expect.stringContaining('已确认的正文') }),
+        expect.objectContaining({ role: 'tool', tool_call_id: 'patch', content: expect.stringContaining('staging_discarded') }),
+      ]))
+      expect(history.some((message: any) => message.tool_calls?.some((call: any) => call.id === 'pending'))).toBe(false)
+    }
+  })
+
   it('creates a new continuation run and trims a dangling provider tool call from history', async () => {
     const owner = sender(401)
     const start = state.handlers.get('agent:runStream:start')!

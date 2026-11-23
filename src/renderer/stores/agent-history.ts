@@ -1,4 +1,4 @@
-import type { AiAssistantMessage, AiAssistantTimelineStep } from './workspace-types'
+import type { AiAssistantMessage } from './workspace-types'
 
 export type AgentHistoryToolCall = {
   id: string
@@ -17,77 +17,37 @@ export type AgentHistoryMessage = {
   tool_call_id?: string
 }
 
-const AGENT_TOOL_NAMES = new Set([
-  'rag_search',
-  'workspace_list',
-  'workspace_search',
-  'file_read',
-  'file_patch',
-  'user_profile_read',
-  'user_profile_update',
-  'workspace_memory_read',
-  'workspace_memory_update',
-])
-
-const parseArguments = (step: AiAssistantTimelineStep): Record<string, unknown> => {
-  const raw = step.outputs.find(output => output.title === '调用参数')?.content
-  if (!raw) return {}
-  try {
-    const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {}
-  } catch {
-    return {}
-  }
-}
-
-const getToolName = (step: AiAssistantTimelineStep) => {
-  const match = step.title.trim().match(/^调用\s+([a-z_]+)$/i)
-  const tool = match?.[1] || ''
-  return AGENT_TOOL_NAMES.has(tool) ? tool : ''
-}
-
-const getResultContent = (step: AiAssistantTimelineStep) => {
-  const result = step.outputs.find(output => output.title === '结果摘要' || output.title === '错误')
-  return result?.content?.trim() || ''
-}
-
-const historyToolMessages = (message: AiAssistantMessage): AgentHistoryMessage[] => {
-  if (message.role !== 'assistant' || message.mode !== 'agent' || !message.timeline?.length) return []
-
+const historyToolMessages = (canonical: AgentHistoryMessage[]): AgentHistoryMessage[] => {
   const messages: AgentHistoryMessage[] = []
-  message.timeline.forEach((step, stepIndex) => {
-    const tool = getToolName(step)
-    const result = getResultContent(step)
-    // Provider-native tool history must contain a complete call/result pair.
-    // Interrupted or legacy incomplete rows remain visible in the UI but are not sent to the model.
-    if (!tool || !result) return
-    const callId = `history_${message.id}_${stepIndex + 1}`
-    messages.push(
-      {
-        role: 'assistant',
-        content: `此前调用了工具 ${tool}。`,
-        tool_calls: [{
-          id: callId,
-          type: 'function',
-          function: { name: tool, arguments: parseArguments(step) },
-        }],
-      },
-      {
-        role: 'tool',
-        name: tool,
-        tool_call_id: callId,
-        content: result,
-      },
-    )
+  const resultsById = new Map<string, Array<{ message: AgentHistoryMessage; index: number }>>()
+  canonical.forEach((message, index) => {
+    if (message.role !== 'tool' || !message.tool_call_id) return
+    const results = resultsById.get(message.tool_call_id) || []
+    results.push({ message, index })
+    resultsById.set(message.tool_call_id, results)
   })
+  const usedIds = new Set<string>()
+  for (let index = 0; index < canonical.length; index += 1) {
+    const call = canonical[index]
+    if (call.role !== 'assistant' || !call.tool_calls?.length) continue
+    const ids = new Set(call.tool_calls.map(item => item.id))
+    if (ids.size !== call.tool_calls.length || call.tool_calls.some(item => {
+      const results = resultsById.get(item.id)
+      return usedIds.has(item.id) || results?.length !== 1 || results[0].index <= index
+    })) continue
+    const results = call.tool_calls.map(item => {
+      usedIds.add(item.id)
+      return resultsById.get(item.id)![0].message
+    })
+    messages.push(call, ...results)
+  }
   return messages
 }
 
 export const normalizeAgentConversationHistory = (
   sourceMessages: AiAssistantMessage[],
   excluded: Set<number>,
+  canonicalHistory: ReadonlyMap<number, AgentHistoryMessage[]> = new Map(),
 ): AgentHistoryMessage[] => sourceMessages.flatMap((message) => {
   if (
     (message.role !== 'user' && message.role !== 'assistant')
@@ -98,7 +58,9 @@ export const normalizeAgentConversationHistory = (
   ) return []
 
   const history: AgentHistoryMessage[] = []
-  if (message.role === 'assistant') history.push(...historyToolMessages(message))
+  // UI timeline summaries are not model observations. Without the ledger keep
+  // the visible answer, but never manufacture successful tool results.
+  if (message.role === 'assistant') history.push(...historyToolMessages(canonicalHistory.get(message.id) || []))
   history.push({
     role: message.role === 'assistant' ? 'assistant' : 'user',
     content: message.text.trim(),

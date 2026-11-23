@@ -172,7 +172,9 @@ const selectBudgetedHistory = (messages: AgentHistoryMessage[], maxTokens: numbe
   let end = messages.length
   while (end > 0) {
     let start = end - 1
-    while (start > 0 && messages[start].role === 'tool') start -= 1
+    // Summary boundaries are user-turn ordinals, so never split a question
+    // from its answer or the tool exchanges belonging to that answer.
+    while (start > 0 && messages[start].role !== 'user') start -= 1
     const group = messages.slice(start, end)
     const nextTokens = group.reduce((sum, message) => sum + estimateMessageTokens(message), tokens)
     if (nextTokens > maxTokens) break
@@ -195,6 +197,7 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
     contextUsageByConversationId: {} as Record<string, AgentContextUsage>,
     agentRequestIdToConversationId: {} as Record<string, string>,
     agentEventsByMessageKey: {} as Record<string, AgentEvent[]>,
+    agentHistoryByMessageKey: {} as Record<string, AgentHistoryMessage[]>,
     agentSourcesByMessageKey: {} as Record<string, AgentSource[]>,
     agentRecoveryByMessageKey: {} as Record<string, AgentRecoveryState>,
     subscribeAgentStreamEvents: null as null | (() => void),
@@ -293,7 +296,10 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       const existingEvents = this.agentEventsByMessageKey[key] || []
       const knownEventIds = new Set(existingEvents.map((event) => event.id))
       const nextEvents = (payload.agentEvents || []).filter((event) => event.runId === (run.runId || event.runId) && !knownEventIds.has(event.id))
-      if (nextEvents.length) this.agentEventsByMessageKey[key] = [...existingEvents, ...nextEvents].sort((a, b) => a.sequence - b.sequence)
+      if (nextEvents.length) {
+        this.agentEventsByMessageKey[key] = [...existingEvents, ...nextEvents].sort((a, b) => a.sequence - b.sequence)
+        delete this.agentHistoryByMessageKey[key]
+      }
 
       const existingSources = this.agentSourcesByMessageKey[key] || []
       const knownSourceIds = new Set(existingSources.map((source) => source.sourceId))
@@ -340,6 +346,9 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
         if (!isCurrentWorkspace() || !data) return
         const key = getAgentDisplayMessageKey(conversationId, message.id)
         this.agentEventsByMessageKey[key] = data.events
+        this.agentHistoryByMessageKey[key] = (data.history || []).map((message: AgentHistoryMessage) => ({
+          ...message, content: message.content ?? '',
+        }))
         this.agentSourcesByMessageKey[key] = data.sources
         const projection = projectAgentRunView(data.events, data.sources)
         if (['failed', 'cancelled'].includes(projection.state.status) && !isArtifactBackedFilePatchBridgeInterruption(data.events)) {
@@ -1002,13 +1011,26 @@ export const useAiAssistantStore = defineStore('aiAssistant', {
       const conversation = useWorkspaceStore().getAiAssistantConversationById(conversationId)
       const sourceMessages = options?.sourceMessages ?? conversation?.messages ?? []
       const excluded = options?.excludeMessageIds ?? new Set<number>()
-      const totalUserTurns = countUserTurns(normalizeAgentConversationHistory(sourceMessages, excluded))
+      const workspaceId = this.agentStartingConversationIds[conversationId]?.workspaceId || useWorkspaceStore().activeWorkspaceId
+      const missingHistory = sourceMessages.filter(message => message.mode === 'agent' && message.runId
+        && !excluded.has(message.id) && !this.agentHistoryByMessageKey[getAgentDisplayMessageKey(conversationId, message.id)])
+      if (workspaceId && missingHistory.length) {
+        await this.hydrateAgentHistory(workspaceId, [{ id: conversationId, messages: missingHistory }])
+      }
+      const canonicalHistory = new Map(sourceMessages.map(message => [
+        message.id, this.agentHistoryByMessageKey[getAgentDisplayMessageKey(conversationId, message.id)] || [],
+      ]))
+      const normalizedAllMessages = normalizeAgentConversationHistory(sourceMessages, excluded, canonicalHistory)
+      const totalUserTurns = countUserTurns(normalizedAllMessages)
 
       const summaryIndex = findLatestConversationSummaryIndex(sourceMessages)
       const existingSummary = summaryIndex >= 0 ? getConversationSummaryContent(sourceMessages[summaryIndex].text) : ''
       const summarizedTurnIndex = summaryIndex >= 0 ? getConversationSummaryTurnIndex(sourceMessages[summaryIndex].text) : 0
-      const messagesAfterSummary = summaryIndex >= 0 ? sourceMessages.slice(summaryIndex + 1) : sourceMessages
-      const normalizedMessagesAfterSummary = normalizeAgentConversationHistory(messagesAfterSummary, excluded)
+      let turnIndex = 0
+      const tailStart = summarizedTurnIndex > 0
+        ? normalizedAllMessages.findIndex(message => message.role === 'user' && ++turnIndex > summarizedTurnIndex)
+        : 0
+      const normalizedMessagesAfterSummary = tailStart >= 0 ? normalizedAllMessages.slice(tailStart) : []
       const availableTokens = Math.max(0, getChatContextWindowTokens(settingsStore.aiSettings.chat) - estimateTokenCount(currentQuestion))
       const candidate = selectBudgetedHistory(normalizedMessagesAfterSummary, Math.floor(availableTokens * 0.8))
       // Summarize on budget pressure; leave headroom for system instructions, memory and output.

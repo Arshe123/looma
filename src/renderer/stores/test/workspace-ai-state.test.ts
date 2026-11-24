@@ -115,6 +115,22 @@ describe('workspace ai assistant temporary conversation state', () => {
     expect(persist).toHaveBeenCalledTimes(3)
   })
 
+  it('persists the restore time as the new activity time when manually unarchiving', () => {
+    const store = useWorkspaceStore()
+    store.activeWorkspaceId = 'workspace-1'
+    const conversation = store.aiAssistant.conversations[0]
+    Object.assign(conversation, { archived: true, archivedAt: 2, updatedAt: 1 })
+    const now = Date.UTC(2026, 10, 24, 12)
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    try {
+      store.toggleArchiveAiAssistantConversation(conversation.id)
+      expect(window.electronAPI.workspaceAi.set).toHaveBeenLastCalledWith('workspace-1', expect.objectContaining({
+        conversations: [expect.objectContaining({ id: conversation.id, archived: false, updatedAt: now })],
+      }))
+      expect(conversation.archivedAt).toBeUndefined()
+    } finally { clock.mockRestore() }
+  })
+
   it('materializes a real conversation only when the first message is appended', () => {
     const store = useWorkspaceStore()
     const originalCount = store.aiAssistant.conversations.length

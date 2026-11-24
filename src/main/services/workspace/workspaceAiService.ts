@@ -470,6 +470,22 @@ const readLegacyAiAssistant = async (workspaceId: string) => {
 }
 
 const persistence = new AiDraftPersistence()
+const AUTO_ARCHIVE_AGE_MS = 90 * 24 * 60 * 60 * 1000
+
+// Called with the normalized checkpoint after recovery drafts have been merged.
+const archiveInactiveConversations = (state: AiAssistantState, now: number): boolean => {
+  const cutoff = now - AUTO_ARCHIVE_AGE_MS
+  let changed = false
+  for (const conversation of state.conversations) {
+    if (conversation.archived || conversation.favorite || conversation.pinned || conversation.draft) continue
+    if (!Number.isFinite(conversation.updatedAt) || conversation.updatedAt <= 0 || conversation.updatedAt >= cutoff) continue
+    conversation.archived = true
+    conversation.archivedAt = now
+    changed = true
+  }
+  return changed
+}
+
 const pendingOperations = new Map<string, Promise<unknown>>()
 const enqueueOperation = <T>(id: string, operation: () => Promise<T>): Promise<T> => {
   const pending = (pendingOperations.get(id) ?? Promise.resolve()).catch(() => {}).then(operation)
@@ -525,7 +541,8 @@ export const workspaceAiService = {
           const workspacePath = await getWorkspacePath(workspaceId)
           if (!workspacePath) return { success: true, data: normalized }
           const migration = await migrateLegacyAgentState(workspacePath, normalized)
-          if ((parsed as any)?.schemaVersion !== 2 || migration.migratedRunIds.length > 0) {
+          const archived = archiveInactiveConversations(migration.state, Date.now())
+          if (archived || (parsed as any)?.schemaVersion !== 2 || migration.migratedRunIds.length > 0) {
             await persistState(workspaceId, migration.state)
           }
           return { success: true, data: migration.state }
@@ -537,6 +554,7 @@ export const workspaceAiService = {
         const migratedState = workspacePath
           ? (await migrateLegacyAgentState(workspacePath, initialState)).state
           : initialState
+        archiveInactiveConversations(migratedState, Date.now())
         await persistState(workspaceId, migratedState)
         return { success: true, data: migratedState }
       } catch (err) {

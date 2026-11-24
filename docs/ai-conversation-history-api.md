@@ -15,6 +15,10 @@
 | 读取历史对话 | `workspaceAi.get(workspaceId)` | `workspaceAiService` | `AiAssistantState` |
 | 保存标题、收藏、置顶、归档和删除结果 | `workspaceAi.set(workspaceId, state)` | `workspaceAiService` | 完整 `AiAssistantState` |
 
+### 自动归档
+
+打开或切换工作空间、加载 AI 对话时，主进程检查该工作空间。距离最后更新超过 90 天、且未收藏、未置顶、未归档、没有未发草稿的对话会自动归档。自动归档只设置 `archived` 和 `archivedAt`，不改变最后更新时间或消息。归档记录仍可搜索、查看和手动恢复；现有的「取消归档」会刷新最后更新时间，因此恢复后重新计算 90 天。没有符合条件的记录时，不因这项规则额外写盘。
+
 ## 本地交互契约
 
 ### 文本输入

@@ -18,6 +18,50 @@ const fixture = async () => {
 const state = (draft = '') => ({ schemaVersion: 2, conversations: [{ id: 'chat', title: 'Chat', createdAt: 1, updatedAt: 1, draft, messages: [] }], activeConversationId: 'chat' })
 
 describe('workspace AI persistence transactions', () => {
+  it('archives only ordinary conversations older than 90 days on load and preserves their activity time', async () => {
+    const { file } = await fixture()
+    const now = Date.UTC(2026, 10, 24, 12)
+    const cutoff = now - 90 * 24 * 60 * 60 * 1000
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const old = { ...state().conversations[0], createdAt: cutoff - 2, updatedAt: cutoff - 1,
+      messages: [{ id: 1, createdAt: cutoff - 1, role: 'user' as const, text: 'Keep me' }] }
+    await workspaceAiService.setState('ws', { ...state(), conversations: [
+      old,
+      { ...old, id: 'boundary', updatedAt: cutoff },
+      { ...old, id: 'recent', updatedAt: cutoff + 1 },
+      { ...old, id: 'favorite', favorite: true },
+      { ...old, id: 'pinned', pinned: true },
+      { ...old, id: 'archived', archived: true, archivedAt: cutoff },
+      { ...old, id: 'draft' },
+    ] })
+    expect((await workspaceAiService.setDraft('ws', 'draft', 'unsent text')).success).toBe(true)
+
+    const result = await workspaceAiService.getState('ws')
+    expect(result.success).toBe(true)
+    expect(result.data?.conversations.filter(chat => chat.archived).map(chat => [chat.id, chat.archivedAt]))
+      .toEqual([['chat', now], ['archived', cutoff]])
+    expect(result.data?.conversations[0]).toMatchObject(old)
+    expect(result.data?.conversations.find(chat => chat.id === 'draft')?.draft).toBe('unsent text')
+    const checkpoint = await fs.readFile(file, 'utf8')
+    expect(JSON.parse(checkpoint).conversations[0]).toMatchObject({ ...old, archived: true, archivedAt: now })
+    const rename = vi.spyOn(fs, 'rename')
+    expect((await workspaceAiService.getState('ws')).data?.conversations[0].archivedAt).toBe(now)
+    expect(rename).not.toHaveBeenCalled()
+  })
+
+  it('archives eligible legacy conversations during migration without changing the source', async () => {
+    const { legacy, file } = await fixture()
+    const now = Date.UTC(2026, 10, 24, 12)
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const original = JSON.stringify({ aiAssistant: state() })
+    await fs.writeFile(legacy, original)
+
+    expect((await workspaceAiService.getState('ws')).data?.conversations[0])
+      .toMatchObject({ archived: true, archivedAt: now, updatedAt: 1 })
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).conversations[0].archivedAt).toBe(now)
+    expect(await fs.readFile(legacy, 'utf8')).toBe(original)
+  })
+
   it('round trips generated titles and their protection flag through the disk checkpoint', async () => {
     const { file } = await fixture()
     const saved = state()

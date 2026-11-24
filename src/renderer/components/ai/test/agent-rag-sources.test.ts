@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { createSSRApp } from 'vue'
+import { renderToString } from '@vue/server-renderer'
 import type { AiAssistantMessage } from '@/renderer/stores/workspace'
+import AgentRagSources from '../AgentRagSources.vue'
 import { formatAgentRagSourceScore, getAgentRagSources } from '../agentRagSources'
 
 const createMessage = (outputs: NonNullable<AiAssistantMessage['timeline']>[number]['outputs']): AiAssistantMessage => ({
@@ -65,5 +68,26 @@ describe('Agent RAG source display helpers', () => {
     ])
 
     expect(getAgentRagSources(message).map(source => source.path)).toEqual(['', ''])
+  })
+})
+
+describe('Agent RAG source disclosure', () => {
+  it('shows the source count in a closed disclosure with the source buttons inside', async () => {
+    const message = createMessage([
+      { id: 'source-1', type: 'source', title: '笔记', path: 'docs/guide.md' },
+    ])
+    const html = await renderToString(createSSRApp(AgentRagSources, { message }))
+    const disclosure = html.match(/<details([^>]*)><summary[^>]*>(.*?)<\/summary>(.*?)<\/details>/s)
+
+    expect(disclosure).not.toBeNull()
+    expect(disclosure?.[1]).not.toMatch(/\sopen\b/)
+    expect(disclosure?.[2]).toContain('参考来源')
+    expect(disclosure?.[2]).toContain('1 条')
+    expect(disclosure?.[3]).toMatch(/<button[^>]*>.*guide\.md.*<\/button>/s)
+  })
+
+  it('omits the disclosure when there are no sources', async () => {
+    const html = await renderToString(createSSRApp(AgentRagSources, { message: createMessage([]) }))
+    expect(html).not.toContain('参考来源')
   })
 })

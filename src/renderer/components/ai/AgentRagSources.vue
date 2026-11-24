@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ExternalLink, Search } from 'lucide-vue-next'
+import { ChevronDown, ExternalLink, Search } from 'lucide-vue-next'
 import type { AiAssistantMessage } from '@/renderer/stores/workspace'
 import {
   formatAgentRagSourceScore,
@@ -30,16 +30,19 @@ const toggleSource = (source: AgentRagSourceDisplayItem) => {
 </script>
 
 <template>
-  <section v-if="sources.length" class="mt-4 border-t border-border-soft pt-3" aria-label="RAG 检索来源">
-    <div class="mb-2 flex items-center justify-between gap-2">
-      <div class="inline-flex items-center gap-1.5 text-[10px] font-medium text-text-muted">
+  <details v-if="sources.length" class="group/sources mt-4 border-t border-border-soft pt-3">
+    <summary class="flex cursor-pointer list-none items-center justify-between gap-2 text-text-muted transition-colors hover:text-text-main [&::-webkit-details-marker]:hidden">
+      <span class="inline-flex items-center gap-1.5 text-[10px] font-medium">
         <Search :size="11" />
         参考来源
-      </div>
-      <span class="text-[9px] text-text-subtle">{{ sources.length }} 条</span>
-    </div>
+      </span>
+      <span class="inline-flex items-center gap-1.5 text-[9px] text-text-subtle">
+        {{ sources.length }} 条
+        <ChevronDown :size="11" aria-hidden="true" class="shrink-0 transition-transform group-open/sources:rotate-180" />
+      </span>
+    </summary>
 
-    <div class="flex flex-wrap gap-1.5">
+    <div class="mt-2 flex flex-wrap gap-1.5">
       <button
         v-for="source in sources"
         :key="source.id"
@@ -81,5 +84,5 @@ const toggleSource = (source: AgentRagSourceDisplayItem) => {
       <p v-if="selectedSource.content" class="mt-2 whitespace-pre-wrap break-words">{{ selectedSource.content }}</p>
       <p v-else class="mt-2 text-text-subtle">该来源没有可展示的检索片段。</p>
     </div>
-  </section>
+  </details>
 </template>

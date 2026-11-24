@@ -8,7 +8,7 @@ const classes = (markup: string) => markup.match(/(?<!:)class="([^"]*)"/)![1]
 
 it('keeps external tab layout, state colors and controls consistent with ordinary tabs', () => {
   expect(classes(external).replace('external-document-tab ', '')).toBe(classes(ordinary))
-  for (const state of ['bg-surface text-accent', 'text-text-muted hover:bg-accent-soft']) {
+  for (const state of ['bg-surface text-accent', 'text-text-muted hover:bg-accent-soft transition-colors']) {
     expect(external).toContain(`'${state}'`)
     expect(ordinary).toContain(`'${state}'`)
   }
@@ -21,8 +21,7 @@ it('keeps external tab layout, state colors and controls consistent with ordinar
 it('animates keyed mixed tabs with a short transform transition and respects reduced motion', () => {
   expect(source).toMatch(/<TransitionGroup\s+name="editor-tab"\s+tag="div"/)
   expect(source).toContain('v-for="(tab, index) in visualTabs" :key="tabRenderKeys.get(tab.id)"')
-  expect(source).toMatch(/\.editor-tab-move\s*\{[^}]*transform 160ms ease-out/)
-  expect(source).toMatch(/@media\s*\(prefers-reduced-motion: reduce\)\s*\{\s*\.editor-tab-move\s*\{\s*transition: none/)
+  expect(source).toMatch(/@media\s*\(prefers-reduced-motion: no-preference\)\s*\{[^}]*\.editor-tab-move\s*\{\s*transition: transform 160ms ease-out;/)
 })
 
 it('retains the external icon, label, full path and unsaved indicator', () => {

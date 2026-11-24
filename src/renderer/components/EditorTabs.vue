@@ -217,8 +217,8 @@ onUnmounted(() => {
     >
       <template v-for="(tab, index) in visualTabs" :key="tabRenderKeys.get(tab.id)">
       <div v-if="tab.kind === 'external'" :title="tab.filePath" :data-document-tab="tab.id"
-        class="external-document-tab group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full cursor-pointer relative shrink-0 transition-colors rounded-lg mr-1"
-        :class="externalDocuments.activeId === tab.id ? 'bg-surface text-accent' : 'text-text-muted hover:bg-accent-soft'"
+        class="external-document-tab group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full cursor-pointer relative shrink-0 rounded-lg mr-1"
+        :class="externalDocuments.activeId === tab.id ? 'bg-surface text-accent' : 'text-text-muted hover:bg-accent-soft transition-colors'"
         draggable="true"
         @dragstart="(e) => onDragStart(e, index)"
         @dragend="onDragEnd"
@@ -237,11 +237,11 @@ onUnmounted(() => {
         ><X :size="12" /></button>
       </div>
       <div v-else :data-document-tab="tab.id"
-        class="group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full cursor-pointer relative shrink-0 transition-colors rounded-lg mr-1"
+        class="group flex items-center gap-2 px-3 min-w-[120px] max-w-[200px] h-full cursor-pointer relative shrink-0 rounded-lg mr-1"
         :class="[
           !externalDocuments.activeId && workspaceStore.activeTabId === tab.id
             ? 'bg-surface text-accent'
-            : 'text-text-muted hover:bg-accent-soft'
+            : 'text-text-muted hover:bg-accent-soft transition-colors'
         ]"
         draggable="true"
         @dragstart="(e) => onDragStart(e, index)"
@@ -312,13 +312,14 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.editor-tab-move {
-  transition: transform 160ms ease-out, background-color 150ms, color 150ms;
-}
-
-@media (prefers-reduced-motion: reduce) {
+@media (prefers-reduced-motion: no-preference) {
+  /* The active tab must follow the editor surface even while moving. */
   .editor-tab-move {
-    transition: none;
+    transition: transform 160ms ease-out;
+  }
+
+  .editor-tab-move.transition-colors {
+    transition: transform 160ms ease-out, background-color 150ms, color 150ms;
   }
 }
 

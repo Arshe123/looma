@@ -15,7 +15,7 @@ const themes: { id: ThemeName; label: string; icon: typeof Sun }[] = [
     <button
       v-for="theme in themes"
       :key="theme.id"
-      class="h-6 w-8 inline-flex items-center justify-center rounded-md cursor-pointer transition-colors"
+      class="h-6 w-8 inline-flex items-center justify-center rounded-md cursor-pointer"
       :class="workspaceStore.theme === theme.id ? 'bg-accent-soft text-accent' : 'text-text-muted hover:bg-accent-soft'"
       :title="theme.label"
       :aria-label="theme.label"

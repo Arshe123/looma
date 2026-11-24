@@ -1,4 +1,4 @@
-// Run with Vite test mode on 5189. Real MainContent/EditorTabs and CSS,
+// Run with Vite test mode on 5189. Real MainContent/ThemeSwitcher and CSS,
 // memory-only documents/IPC and an isolated profile; never touches user notes.
 const { app, BrowserWindow } = require('electron')
 const watchMessageDialogs = require('./message-dialog-driver.cjs')
@@ -19,6 +19,62 @@ app.whenReady().then(async () => {
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
     for (let i = 0; i < 100 && !await run('window.ready?.()'); i++) await wait(100)
     assert.ok(await run('window.ready?.()'), 'real editor mounted')
+    const themeFrames = await run(`(async () => {
+      const vueUrl = performance.getEntriesByType('resource').find(entry => new URL(entry.name).pathname.endsWith('/vue.js')).name;
+      const { h, render } = await import(vueUrl);
+      const { default: ThemeSwitcher } = await import('/src/renderer/components/ThemeSwitcher.vue');
+      const host = document.createElement('div');
+      document.body.append(host);
+      const switcher = h(ThemeSwitcher);
+      switcher.appContext = document.querySelector('#app').__vue_app__._context;
+      render(switcher, host);
+      const tab = document.querySelector('[data-document-tab="file:old/deep/prior.md"]');
+      const themeButtons = [...host.querySelectorAll('button')];
+      const modeButtons = ['编辑模式', '分割视图', '预览模式'].map(title => document.querySelector('button[title="' + title + '"]'));
+      const reference = document.createElement('div');
+      document.body.append(reference);
+      const colors = el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).color];
+      const frames = [];
+      const check = (button, background, color) => {
+        reference.style.backgroundColor = background;
+        reference.style.color = color;
+        frames.push({ label: button.title, actual: colors(button), expected: colors(reference) });
+      };
+      const checkButtons = (buttons, selected) => {
+        for (const button of buttons) {
+          check(button, button === selected ? 'var(--accent-soft)' : 'transparent', button === selected ? 'var(--accent)' : 'var(--text-muted)');
+        }
+      };
+      const sample = (changes, theme, mode) => new Promise(resolve => {
+        changes();
+        requestAnimationFrame(() => {
+          check(tab, 'var(--surface)', 'var(--accent)');
+          checkButtons(themeButtons, themeButtons[theme]);
+          checkButtons(modeButtons, modeButtons[mode]);
+          resolve();
+        });
+      });
+      try {
+        store.setThemePalette('paper');
+        store.setTheme('light');
+        await new Promise(resolve => setTimeout(resolve, 200));
+        [tab, ...themeButtons, ...modeButtons].forEach(colors);
+        await sample(() => themeButtons[1].click(), 1, 2);
+        await sample(() => store.setThemePalette('ocean'), 1, 2);
+        await sample(() => modeButtons[0].click(), 1, 0);
+        await sample(() => modeButtons[1].click(), 1, 1);
+        await sample(() => themeButtons[2].click(), 2, 1);
+        await sample(() => themeButtons[0].click(), 0, 1);
+        await sample(() => modeButtons[2].click(), 0, 2);
+        return frames;
+      } finally {
+        reference.remove();
+        render(null, host);
+        host.remove();
+      }
+    })()`)
+    const staleColors = themeFrames.filter(({ actual, expected }) => actual.some((color, i) => color !== expected[i]))
+    assert.equal(staleColors.length, 0, `incorrect first-frame colors: ${[...new Set(staleColors.map(({ label }) => label))].join(', ')}`)
     await run(`(async () => {
       const vueUrl = performance.getEntriesByType('resource').find(entry => new URL(entry.name).pathname.endsWith('/vue.js')).name;
       const { h, render } = await import(vueUrl);

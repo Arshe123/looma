@@ -611,10 +611,8 @@ defineExpose({
       <button
         @click="setViewMode('editor')"
         :disabled="isPreparingFullContent"
-        :class="[
-          'p-2 rounded-lg transition-all duration-200',
-          viewMode === 'editor' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'
-        ]"
+        class="p-2 rounded-lg"
+        :class="viewMode === 'editor' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'"
         title="编辑模式"
       >
         <Edit3 :size="18" />
@@ -622,20 +620,16 @@ defineExpose({
       <button
         @click="setViewMode('split')"
         :disabled="isPreparingFullContent"
-        :class="[
-          'p-2 rounded-lg transition-all duration-200',
-          viewMode === 'split' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'
-        ]"
+        class="p-2 rounded-lg"
+        :class="viewMode === 'split' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'"
         title="分割视图"
       >
         <Columns :size="18" />
       </button>
       <button
         @click="setViewMode('preview')"
-        :class="[
-          'p-2 rounded-lg transition-all duration-200',
-          viewMode === 'preview' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'
-        ]"
+        class="p-2 rounded-lg"
+        :class="viewMode === 'preview' ? 'bg-accent-soft text-accent shadow-xs' : 'text-text-muted hover:text-text-main hover:bg-accent-soft'"
         title="预览模式"
       >
         <Eye :size="18" />

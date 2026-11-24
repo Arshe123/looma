@@ -19,7 +19,7 @@
 
 ### 文本输入
 
-编辑标题、首次收藏、修改分类和批量收藏调用：
+编辑标题、首次收藏和修改分类调用：
 
 ```ts
 workspaceStore.requestTextInput(title, defaultValue, placeholder)
@@ -34,7 +34,7 @@ workspaceStore.requestTextInput(title, defaultValue, placeholder)
 
 ### 删除确认
 
-删除单个或批量删除历史对话调用：
+删除单条历史对话调用：
 
 ```ts
 workspaceStore.requestConfirmation({

@@ -862,10 +862,9 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.deleteAiAssistantConversations([id])
     },
 
-    deleteAiAssistantConversations(ids: string[]) {
-      const idSet = new Set(ids)
-      if (!idSet.size) return
-      const nextConversations = this.aiAssistant.conversations.filter((conversation) => !idSet.has(conversation.id))
+    deleteAiAssistantConversations(ids: readonly string[]) {
+      const selected = new Set(ids)
+      const nextConversations = this.aiAssistant.conversations.filter(conversation => !selected.has(conversation.id))
       if (nextConversations.length === this.aiAssistant.conversations.length) return
 
       if (nextConversations.length === 0) {
@@ -878,7 +877,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
 
       this.aiAssistant.conversations = nextConversations
-      if (this.aiAssistant.activeConversationId && idSet.has(this.aiAssistant.activeConversationId)) {
+      if (this.aiAssistant.activeConversationId !== null && selected.has(this.aiAssistant.activeConversationId)) {
         const nextActive = sortAiAssistantConversations(nextConversations.filter((conversation) => !conversation.archived))[0]
           ?? sortAiAssistantConversations(nextConversations)[0]
         this.aiAssistant.activeConversationId = nextActive?.id ?? null
@@ -899,69 +898,46 @@ export const useWorkspaceStore = defineStore('workspace', {
 
     toggleArchiveAiAssistantConversation(id: string) {
       const conversation = this.aiAssistant.conversations.find((item) => item.id === id)
-      if (!conversation) return
-      conversation.archived = !conversation.archived
-      conversation.archivedAt = conversation.archived ? Date.now() : undefined
-      conversation.updatedAt = Date.now()
-      this.saveAiAssistantState()
+      if (conversation) this.setAiAssistantConversationFlags([id], { archived: !conversation.archived })
     },
 
     togglePinAiAssistantConversation(id: string) {
       const conversation = this.aiAssistant.conversations.find((item) => item.id === id)
-      if (!conversation) return
-      conversation.pinned = !conversation.pinned
-      conversation.pinnedAt = conversation.pinned ? Date.now() : undefined
-      this.saveAiAssistantState()
+      if (conversation) this.setAiAssistantConversationFlags([id], { pinned: !conversation.pinned })
     },
 
-    setAiAssistantConversationsPinned(ids: string[], pinned: boolean) {
-      const idSet = new Set(ids)
+    setAiAssistantConversationFlags(ids: readonly string[], flags: { pinned?: boolean; archived?: boolean; favorite?: boolean; category?: string }) {
+      const selected = new Set(ids)
       const now = Date.now()
       let changed = false
-      this.aiAssistant.conversations.forEach((conversation) => {
-        if (!idSet.has(conversation.id) || Boolean(conversation.pinned) === pinned) return
-        conversation.pinned = pinned
-        conversation.pinnedAt = pinned ? now : undefined
-        changed = true
-      })
+      for (const conversation of this.aiAssistant.conversations) {
+        if (!selected.has(conversation.id)) continue
+        if (flags.pinned !== undefined && flags.pinned !== Boolean(conversation.pinned)) {
+          conversation.pinned = flags.pinned
+          conversation.pinnedAt = flags.pinned ? now : undefined
+          changed = true
+        }
+        if (flags.archived !== undefined && flags.archived !== Boolean(conversation.archived)) {
+          conversation.archived = flags.archived
+          conversation.archivedAt = flags.archived ? now : undefined
+          conversation.updatedAt = now
+          changed = true
+        }
+        if (flags.favorite !== undefined) {
+          const category = flags.favorite ? flags.category?.trim() || '默认收藏' : undefined
+          if (flags.favorite !== Boolean(conversation.favorite) || category !== conversation.favoriteCategory) {
+            conversation.favorite = flags.favorite
+            conversation.favoriteCategory = category
+            changed = true
+          }
+        }
+      }
       if (changed) this.saveAiAssistantState()
     },
 
     toggleFavoriteAiAssistantConversation(id: string, category = '默认收藏') {
       const conversation = this.aiAssistant.conversations.find((item) => item.id === id)
-      if (!conversation) return
-      conversation.favorite = !conversation.favorite
-      conversation.favoriteCategory = conversation.favorite ? (category.trim() || '默认收藏') : undefined
-      this.saveAiAssistantState()
-    },
-
-    setAiAssistantConversationsFavorite(ids: string[], favorite: boolean, category = '默认收藏') {
-      const idSet = new Set(ids)
-      const normalizedCategory = category.trim() || '默认收藏'
-      let changed = false
-      this.aiAssistant.conversations.forEach((conversation) => {
-        if (!idSet.has(conversation.id)) return
-        const nextCategory = favorite ? normalizedCategory : undefined
-        if (Boolean(conversation.favorite) === favorite && conversation.favoriteCategory === nextCategory) return
-        conversation.favorite = favorite
-        conversation.favoriteCategory = nextCategory
-        changed = true
-      })
-      if (changed) this.saveAiAssistantState()
-    },
-
-    setAiAssistantConversationsArchived(ids: string[], archived: boolean) {
-      const idSet = new Set(ids)
-      const now = Date.now()
-      let changed = false
-      this.aiAssistant.conversations.forEach((conversation) => {
-        if (!idSet.has(conversation.id) || Boolean(conversation.archived) === archived) return
-        conversation.archived = archived
-        conversation.archivedAt = archived ? now : undefined
-        conversation.updatedAt = now
-        changed = true
-      })
-      if (changed) this.saveAiAssistantState()
+      if (conversation) this.setAiAssistantConversationFlags([id], { favorite: !conversation.favorite, category })
     },
 
     setAiAssistantConversationFavoriteCategory(id: string, category: string) {

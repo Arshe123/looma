@@ -89,26 +89,29 @@ describe('workspace ai assistant temporary conversation state', () => {
     expect(conversation.updatedAt).toBe(1_234)
   })
 
-  it('applies batch conversation flags with one persisted state update per action', () => {
+  it('applies conversation flags only to the requested conversation and persists each action once', () => {
     const store = useWorkspaceStore()
     store.activeWorkspaceId = 'workspace-1'
     const first = store.aiAssistant.conversations[0]
     store.startTemporaryAiAssistantConversation()
     const secondId = store.ensureAiAssistantConversationForRequest()
-    const ids = [first.id, secondId]
+    const second = store.aiAssistant.conversations.find(item => item.id === secondId)!
     const persist = window.electronAPI.workspaceAi.set as any
     persist.mockClear()
 
-    store.setAiAssistantConversationsPinned(ids, true)
-    expect(store.aiAssistant.conversations.filter(item => ids.includes(item.id)).every(item => item.pinned)).toBe(true)
+    store.togglePinAiAssistantConversation(secondId)
+    expect(second.pinned).toBe(true)
+    expect(first.pinned).toBeFalsy()
     expect(persist).toHaveBeenCalledTimes(1)
 
-    store.setAiAssistantConversationsFavorite(ids, true, ' 项目 ')
-    expect(store.aiAssistant.conversations.filter(item => ids.includes(item.id)).every(item => item.favoriteCategory === '项目')).toBe(true)
+    store.toggleFavoriteAiAssistantConversation(secondId, ' 项目 ')
+    expect(second.favoriteCategory).toBe('项目')
+    expect(first.favorite).toBeFalsy()
     expect(persist).toHaveBeenCalledTimes(2)
 
-    store.setAiAssistantConversationsArchived(ids, true)
-    expect(store.aiAssistant.conversations.filter(item => ids.includes(item.id)).every(item => item.archived)).toBe(true)
+    store.toggleArchiveAiAssistantConversation(secondId)
+    expect(second.archived).toBe(true)
+    expect(first.archived).toBeFalsy()
     expect(persist).toHaveBeenCalledTimes(3)
   })
 

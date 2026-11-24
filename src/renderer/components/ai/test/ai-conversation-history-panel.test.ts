@@ -321,9 +321,22 @@ it('按本地最后更新日期检索，包含两端且不影响顶部置顶', a
 
 const clickRow = async (row: Node, insideButton = false) => {
   const handler = row.props.onClick as ((event: MouseEvent) => void) | undefined
-  handler?.({ target: { closest: () => insideButton ? {} : null } } as unknown as MouseEvent)
+  handler?.({ target: { closest: (selector: string) => selector === 'button' && insideButton ? {} : null } } as unknown as MouseEvent)
   await Vue.nextTick()
 }
+
+it.each([false, true])('普通模式点击对话条目的非按钮区域会切换对话（置顶：%s）', async (pinned) => {
+  const { app, root, store, title } = mount([record('当前对话', 23), record('目标对话', 22, { pinned })])
+  try {
+    store.setActiveAiAssistantConversation('当前对话')
+    const row = all(root).find(n => n.tag === 'article' && all(n).includes(title('目标对话')))!
+    await clickRow(row, true)
+    expect(store.aiAssistant.activeConversationId).toBe('当前对话')
+    await clickRow(row)
+    expect(store.aiAssistant.activeConversationId).toBe('目标对话')
+    expect(store.activeAuxiliaryPanel).toBe('ai')
+  } finally { app.unmount() }
+})
 
 it('批量模式用非交互的绿色钩标记选中，只对已选对话执行操作', async () => {
   const { app, root, store, titles, title, click } = mount([
@@ -354,18 +367,29 @@ it('批量模式用非交互的绿色钩标记选中，只对已选对话执行�
   } finally { app.unmount() }
 })
 
-it('批量模式点击条目空白可切换选中，但按钮及其图标不会触发整行选中', async () => {
-  const { app, root, title, click } = mount([record('空白区样例', 23)])
-  const row = () => all(root).find(n => n.tag === 'article')!
+it('批量模式点击空白只切换批量选中，标题和最近问题切换对话', async () => {
+  const { app, root, title, click, store } = mount([
+    record('空白区样例', 23, { messages: [{ id: 1, role: 'user', text: '最近问题样例', createdAt: 1 }] }),
+    record('当前对话', 22),
+  ])
+  const row = () => all(root).find(n => n.tag === 'article' && all(n).includes(title('空白区样例')))!
   const isSelected = () => all(row()).some(n => n.props.class === 'history-crayon-check')
   try {
-    await clickRow(row())
+    store.setActiveAiAssistantConversation('当前对话')
     await click(title('批量操作'))
     expect(isSelected()).toBe(false)
     await clickRow(row())
     expect(isSelected()).toBe(true)
+    expect(store.aiAssistant.activeConversationId).toBe('当前对话')
     await clickRow(row(), true)
     expect(isSelected()).toBe(true)
+    expect(store.aiAssistant.activeConversationId).toBe('当前对话')
+    for (const label of ['空白区样例', '最近问题样例']) {
+      store.setActiveAiAssistantConversation('当前对话')
+      await click(title(label))
+      expect(store.aiAssistant.activeConversationId).toBe('空白区样例')
+      expect(isSelected()).toBe(true)
+    }
     await clickRow(row())
     expect(isSelected()).toBe(false)
     expect(row().props.tabindex).toBe(0)

@@ -241,8 +241,12 @@ const toggleBatchSelection = (id: string) => {
 }
 
 const handleConversationRowClick = (event: MouseEvent, id: string) => {
-  if (!isBatchSelectable(id) || (event.target as Element | null)?.closest('button')) return
-  toggleBatchSelection(id)
+  if ((event.target as Element | null)?.closest('button')) return
+  if (!batchMode.value) {
+    selectConversation(id)
+  } else if (isBatchSelectable(id)) {
+    toggleBatchSelection(id)
+  }
 }
 
 const handleConversationRowKeydown = (event: KeyboardEvent, id: string) => {
@@ -381,7 +385,7 @@ const runBatchAction = async () => {
           v-for="conversation in section.pinned && !pinsExpanded ? [] : group.conversations"
           :key="conversation.id"
           class="group history-row grid items-start gap-x-2 border-t border-border-soft px-1.5 py-2.5 transition-colors hover:bg-panel"
-          :class="[isBatchSelectable(conversation.id) ? 'grid-cols-[minmax(0,1fr)_minmax(2.25rem,14%)_auto]' : 'grid-cols-[minmax(0,1fr)_auto]', { 'bg-success/5': isBatchSelectable(conversation.id) && selectedIds.has(conversation.id), 'cursor-pointer': isBatchSelectable(conversation.id) && !batchBusy }]"
+          :class="[isBatchSelectable(conversation.id) ? 'grid-cols-[minmax(0,1fr)_minmax(2.25rem,14%)_auto]' : 'grid-cols-[minmax(0,1fr)_auto]', { 'bg-success/5': isBatchSelectable(conversation.id) && selectedIds.has(conversation.id), 'cursor-pointer': !batchMode || (isBatchSelectable(conversation.id) && !batchBusy) }]"
           :tabindex="isBatchSelectable(conversation.id) ? 0 : undefined"
           :aria-label="isBatchSelectable(conversation.id) ? `${conversation.title}，${selectedIds.has(conversation.id) ? '已选中' : '未选中'}` : undefined"
           :aria-keyshortcuts="isBatchSelectable(conversation.id) ? 'Enter Space' : undefined"
@@ -398,7 +402,7 @@ const runBatchAction = async () => {
               <span v-if="conversation.archived" class="shrink-0 rounded-full bg-panel px-1.5 py-0.5 text-[9px] text-text-muted">归档</span>
             </div>
             <div class="mt-1 flex min-w-0 items-center gap-2">
-              <button type="button" class="min-w-0 truncate text-left text-xs text-text-muted hover:text-text-main" :class="{ 'flex-1': !isBatchSelectable(conversation.id) }" @click="selectConversation(conversation.id)">
+              <button type="button" class="min-w-0 truncate text-left text-xs text-text-muted hover:text-text-main" @click="selectConversation(conversation.id)">
                 {{ getLastUserQuestion(conversation) || '暂无用户问题' }}
               </button>
             </div>

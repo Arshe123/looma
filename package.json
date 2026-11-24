@@ -60,6 +60,7 @@
     "lucide-vue-next": "^0.511.0",
     "markdown-it": "^14.0.0",
     "markdown-it-task-lists": "^2.1.1",
+    "mermaid": "12.3.0",
     "pinia": "^2.1.7",
     "vue": "^3.4.15"
   },

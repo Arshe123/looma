@@ -79,7 +79,8 @@
 
 .tiptap .code-block-shell,
 .ai-markdown .code-block-shell,
-.markdown-body .code-block-shell {
+.markdown-body .code-block-shell,
+.cm-editor .looma-continuous-mermaid {
   margin: 0.95em 0;
   position: relative;
   overflow: hidden;
@@ -93,7 +94,7 @@
 .code-block-floating-copy {
   position: absolute;
   top: 0.55rem;
-  right: 0.55rem;
+  left: 0.55rem;
   z-index: 2;
   display: inline-flex;
   align-items: center;
@@ -124,6 +125,7 @@
 .tiptap .code-block-shell:hover .code-block-floating-copy,
 .ai-markdown .code-block-shell:hover .code-block-floating-copy,
 .markdown-body .code-block-shell:hover .code-block-floating-copy,
+.looma-continuous-mermaid:hover .code-block-floating-copy,
 .tiptap .code-block-shell:focus-within .code-block-floating-copy,
 .ai-markdown .code-block-shell:focus-within .code-block-floating-copy,
 .markdown-body .code-block-shell:focus-within .code-block-floating-copy,
@@ -182,7 +184,7 @@
   overflow-x: auto;
   overflow-y: hidden;
   /* 左侧间距由 code-block-content 统一管理，避免与代码行号 gutter 重复叠加。 */
-  padding: 0.85rem 5.75rem 0.85rem 0;
+  padding: 0.85rem 1rem 0.85rem 0;
   border: 0;
   border-radius: 0;
   color: inherit;
@@ -276,13 +278,14 @@
   display: inline-flex;
   position: absolute;
   top: 0.55rem;
-  right: 0.55rem;
+  left: 0.55rem;
   z-index: 2;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 0.5rem;
   max-width: calc(100% - 1.1rem);
   font: 12px var(--font-ui);
+  pointer-events: none;
   user-select: none;
 }
 
@@ -302,6 +305,7 @@
   user-select: none;
 }
 
+.looma-continuous-code-toolbar label { order: 1; pointer-events: auto; }
 .looma-continuous-code-toolbar label[hidden] { display: none; }
 
 .looma-continuous-code-toolbar select {

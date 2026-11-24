@@ -19,7 +19,7 @@ describe('rich-text code block layout', () => {
     const codeBlock = readSource('src/renderer/components/shared/code-block-presentation.css')
     const preview = readSource('src/renderer/components/preview/TiptapPreview.vue')
 
-    expect(codeBlock).toContain('padding: 0.85rem 5.75rem 0.85rem 0;')
+    expect(codeBlock).toContain('padding: 0.85rem 1rem 0.85rem 0;')
     expect(preview).toContain('padding-left: 2.25rem;')
     expect(preview).toContain('left: 0.25rem;')
     expect(preview).not.toContain('.code-block-content {\n  position: relative;\n  padding-left: 3rem;')

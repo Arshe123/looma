@@ -1,5 +1,5 @@
 import { syntaxTree } from '@codemirror/language'
-import { EditorState, type Extension, type TransactionSpec } from '@codemirror/state'
+import { EditorState, StateField, type Extension, type TransactionSpec } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
 import type { RootContent } from 'hast'
 import type { SyntaxNode } from '@lezer/common'
@@ -7,6 +7,7 @@ import { common, createLowlight } from 'lowlight'
 import { getContinuousEmptyInlineSource } from './continuousMarkdownSyntax'
 import { h, render } from 'vue'
 import CodeBlockCopy from '../shared/CodeBlockCopy.vue'
+import { isMermaidLanguage, MERMAID_SOURCE_LIMIT, mountMermaidPreview } from '../shared/mermaid-preview'
 import '../shared/code-block-presentation.css'
 
 type SourceRange = { from: number; to: number }
@@ -70,7 +71,7 @@ function fencedBlockAt(state: EditorState, position: number) {
 /** Uses the host view's dispatch, so its source model and history own this edit. */
 export function changeContinuousCodeLanguage(view: CodeView, position: number, language: string) {
   if (view.state.readOnly || !/^[a-zA-Z0-9_+-]+$/.test(language)
-    || (language !== 'text' && !lowlight.registered(language))) return false
+    || (language !== 'text' && !isMermaidLanguage(language) && !lowlight.registered(language))) return false
   const block = fencedBlockAt(view.state, position)
   if (!block?.opening || block.language === language) return false
   const from = block.info?.from ?? block.opening.to
@@ -80,7 +81,7 @@ export function changeContinuousCodeLanguage(view: CodeView, position: number, l
   return true
 }
 
-/** Full block reads happen only for an explicit copy action, never during presentation. */
+/** Callers must bound the block size before reading it for presentation. */
 export function readContinuousCodeContent(state: EditorState, position: number): string | null {
   const block = fencedBlockAt(state, position)
   if (!block) return null
@@ -105,7 +106,9 @@ export function buildContinuousCodePlan(state: EditorState, ranges: readonly Sou
   for (const range of ranges) {
     tree.iterate({ from: range.from, to: range.to, enter(ref) {
       if (ref.name === 'FencedCode' || ref.name === 'CodeBlock') {
-        if (!blocks.has(ref.from)) blocks.set(ref.from, describeBlock(state, ref.node))
+        const block = blocks.get(ref.from) ?? describeBlock(state, ref.node)
+        if (isMermaidLanguage(block.language)) return false
+        blocks.set(ref.from, block)
       }
       if (ref.name !== 'CodeText') return
       const parent = ref.node.parent
@@ -145,11 +148,12 @@ class CodeLineNumber extends WidgetType {
 }
 
 // Equal widgets can inherit an older instance's DOM; ownership follows the DOM.
-const codeToolbarHosts = new WeakMap<HTMLElement, HTMLElement>()
+const codeToolbarHosts = new WeakMap<HTMLElement, { copy: HTMLElement; dispose?: () => void }>()
 class CodeToolbar extends WidgetType {
-  constructor(readonly position: number, readonly language: string, readonly readOnly: boolean) { super() }
+  constructor(readonly position: number, readonly language: string, readonly readOnly: boolean, readonly diagram?: { source: string | null; prefix: number }) { super() }
   eq(other: CodeToolbar) {
     return this.position === other.position && this.language === other.language && this.readOnly === other.readOnly
+      && this.diagram?.source === other.diagram?.source && this.diagram?.prefix === other.diagram?.prefix
   }
   toDOM(view: EditorView) {
     const doc = view.dom.ownerDocument
@@ -165,7 +169,7 @@ class CodeToolbar extends WidgetType {
     const select = doc.createElement('select')
     select.setAttribute('aria-label', '代码语言')
     select.disabled = this.readOnly
-    const languages = [...new Set(['text', ...lowlight.listLanguages(), ...(this.language ? [this.language] : [])])]
+    const languages = [...new Set(['text', 'mermaid', ...lowlight.listLanguages(), ...(this.language ? [this.language] : [])])]
     for (const language of languages) {
       const option = doc.createElement('option')
       option.value = language
@@ -174,7 +178,7 @@ class CodeToolbar extends WidgetType {
     }
     select.value = this.language || 'text'
     // Resolve from the live widget DOM, never from stale document offsets.
-    const position = () => view.posAtDOM(root)
+    const position = () => view.posAtDOM(widget) + (this.diagram?.prefix ?? 0)
     select.addEventListener('change', () => {
       if (!changeContinuousCodeLanguage(view, position(), select.value)) select.value = this.language || 'text'
     })
@@ -203,28 +207,76 @@ class CodeToolbar extends WidgetType {
     label.appendChild(select)
     const copy = doc.createElement('span')
     copy.className = 'code-block-copy-host'
-    codeToolbarHosts.set(root, copy)
+    root.append(label, copy)
+    let widget = root
+    let dispose: (() => void) | undefined
+    if (this.diagram) {
+      widget = doc.createElement('div')
+      widget.className = 'code-block-shell looma-continuous-mermaid'
+      const preview = doc.createElement('div')
+      preview.className = 'looma-mermaid-preview'
+      widget.append(root, preview)
+      dispose = mountMermaidPreview(preview, this.diagram.source, () => view.requestMeasure())
+    }
+    codeToolbarHosts.set(widget, { copy, dispose })
     // Vue render flushes unrelated pre-flush watchers, which may dispatch to
     // this editor. Never run it inside CodeMirror's synchronous DOM update.
     queueMicrotask(() => {
-      if (codeToolbarHosts.get(root) !== copy) return
+      if (codeToolbarHosts.get(widget)?.copy !== copy) return
       render(h(CodeBlockCopy, {
         language: this.language,
         getText: () => readContinuousCodeContent(view.state, position()),
       }), copy)
     })
-    root.append(label, copy)
-    return root
+    return widget
   }
   destroy(dom: HTMLElement) {
     const host = codeToolbarHosts.get(dom)
     codeToolbarHosts.delete(dom)
-    if (host) queueMicrotask(() => render(null, host))
+    if (host) {
+      host.dispose?.()
+      queueMicrotask(() => render(null, host.copy))
+    }
   }
   ignoreEvent() { return true }
 }
 
-/** Inline marks and same-line fence replacements only. No code content is replaced. */
+const mermaidContainers = new Set(['Document', 'Blockquote', 'BulletList', 'OrderedList', 'ListItem'])
+function buildMermaidBlocks(state: EditorState): DecorationSet {
+  const replacements: ReturnType<Decoration['range']>[] = []
+  syntaxTree(state).iterate({ enter(ref) {
+    // Only inspect block containers, not inline syntax or the body of other fences.
+    if (mermaidContainers.has(ref.name)) return
+    if (ref.name === 'FencedCode') {
+      const block = describeBlock(state, ref.node)
+      if (block.opening && isMermaidLanguage(block.language)) {
+        const from = state.doc.lineAt(block.from).from
+        const to = state.doc.lineAt(block.to).to
+        const source = block.content.to - block.content.from <= MERMAID_SOURCE_LIMIT
+          ? readContinuousCodeContent(state, block.opening.from) : null
+        const diagram = { source, prefix: block.opening.from - from }
+        replacements.push(Decoration.replace({
+          block: true,
+          widget: new CodeToolbar(block.opening.from, block.language, state.readOnly, diagram),
+        }).range(from, to))
+      }
+    }
+    return false
+  } })
+  return Decoration.set(replacements)
+}
+
+// Multiline replacements must be available before the viewport is measured.
+const mermaidBlocks = StateField.define<DecorationSet>({
+  create: buildMermaidBlocks,
+  update(value, tr) {
+    return tr.docChanged || tr.startState.readOnly !== tr.state.readOnly || syntaxTree(tr.startState) !== syntaxTree(tr.state)
+      ? buildMermaidBlocks(tr.state) : value
+  },
+  provide: field => [EditorView.decorations.from(field), EditorView.atomicRanges.of(view => view.state.field(field))],
+})
+
+/** Inline marks and same-line fence replacements for ordinary code. */
 export function buildContinuousCodeDecorations(state: EditorState, ranges: readonly SourceRange[], focused = true): DecorationSet {
   const plan = buildContinuousCodePlan(state, ranges)
   const pending = focused ? getContinuousEmptyInlineSource(state.doc, state.selection.main) : null
@@ -237,6 +289,8 @@ export function buildContinuousCodeDecorations(state: EditorState, ranges: reado
     if (block.opening && pending && block.opening.from === pending.from) continue
     const first = state.doc.lineAt(block.from).number
     const last = state.doc.lineAt(block.to).number
+    const opening = block.opening && visible(block.opening) ? block.opening : null
+
     for (const range of ranges) {
       const from = Math.max(first, state.doc.lineAt(range.from).number)
       const to = Math.min(last, state.doc.lineAt(range.to).number)
@@ -255,10 +309,10 @@ export function buildContinuousCodeDecorations(state: EditorState, ranges: reado
         }
       }
     }
-    if (block.opening && visible(block.opening)) {
+    if (opening) {
       // A pathological info line must not cause an enormous replacement or read.
-      const end = block.info && block.info.to - block.opening.from <= 512 ? block.info.to : block.opening.to
-      decorations.push(Decoration.replace({ widget: new CodeToolbar(block.opening.from, block.language, state.readOnly) }).range(block.opening.from, end))
+      const end = block.info && block.info.to - opening.from <= 512 ? block.info.to : opening.to
+      decorations.push(Decoration.replace({ widget: new CodeToolbar(opening.from, block.language, state.readOnly) }).range(opening.from, end))
     }
     if (block.closing && visible(block.closing)) decorations.push(Decoration.replace({}).range(block.closing.from, block.closing.to))
   }
@@ -267,16 +321,18 @@ export function buildContinuousCodeDecorations(state: EditorState, ranges: reado
 
 /** Hover follows block identity across native sibling lines, not the entire editor. */
 export function updateContinuousCodeHover(view: EditorView, target: Element | null) {
-  const line = target && view.dom.contains(target) ? target.closest('.looma-code-line') : null
+  const line = target && view.dom.contains(target) ? target.closest('.looma-code-line, .looma-continuous-mermaid') : null
   const block = line?.getAttribute('data-code-block')
   for (const toolbar of view.dom.querySelectorAll<HTMLElement>('.looma-continuous-code-toolbar')) {
-    toolbar.classList.toggle('is-block-hovered', block != null && toolbar.closest('.looma-code-line')?.getAttribute('data-code-block') === block)
+    toolbar.classList.toggle('is-block-hovered', block != null
+      ? toolbar.closest('.looma-code-line')?.getAttribute('data-code-block') === block
+      : !!line?.contains(toolbar))
   }
 }
 
 /** Host supplies markdown(); one native EditorView and the host's existing history remain authoritative. */
 export function continuousMarkdownCode(): Extension {
-  return [ViewPlugin.fromClass(class {
+  return [mermaidBlocks, ViewPlugin.fromClass(class {
     decorations: DecorationSet
     pending: number | undefined
     constructor(view: EditorView) {

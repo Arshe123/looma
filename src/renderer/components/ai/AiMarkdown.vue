@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount } from 'vue'
+import { computed, onBeforeUnmount, ref, watchEffect } from 'vue'
 import { renderMarkdown, type MarkdownRenderOptions } from '@/shared/utils/markdown-renderer'
 import { getCodeHighlightSegments } from '@/shared/utils/markdown-code-highlight'
 import '@/renderer/styles/rich-text-presentation.css'
 import '../shared/code-block-presentation.css'
+import { isMermaidLanguage, mountMermaidPreview } from '../shared/mermaid-preview'
 
 const props = defineProps<{
   content: string
@@ -11,6 +12,25 @@ const props = defineProps<{
 }>()
 
 const html = computed(() => renderMarkdown(props.content, { highlightCode: getCodeHighlightSegments, references: props.references }))
+const markdownRoot = ref<HTMLElement | null>(null)
+watchEffect((onCleanup) => {
+  if (!markdownRoot.value || !html.value) return
+  const cleanups: (() => void)[] = []
+  for (const button of markdownRoot.value.querySelectorAll<HTMLButtonElement>('.code-block-floating-copy[data-language]')) {
+    if (!isMermaidLanguage(button.dataset.language)) continue
+    const pre = button.nextElementSibling
+    if (!(pre instanceof HTMLElement)) continue
+    const code = pre.querySelector('code.code-block-content')
+    if (!code) continue
+    pre.hidden = true
+    const host = button.ownerDocument.createElement('div')
+    host.className = 'looma-mermaid-preview'
+    pre.before(host)
+    const cleanup = mountMermaidPreview(host, code.textContent || '')
+    cleanups.push(() => { cleanup(); host.remove() })
+  }
+  onCleanup(() => cleanups.forEach(cleanup => cleanup()))
+}, { flush: 'post' })
 
 let resetTimer: number | null = null
 let activeCopyButton: HTMLButtonElement | null = null
@@ -83,7 +103,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ai-markdown" @click="handleMarkdownClick" v-html="html" />
+  <div ref="markdownRoot" class="ai-markdown" @click="handleMarkdownClick" v-html="html" />
 </template>
 
 <style>

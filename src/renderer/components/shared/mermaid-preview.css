@@ -1,0 +1,54 @@
+.looma-mermaid-preview:not([hidden]) {
+  display: block;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 0.75rem;
+  overflow: auto;
+  color: var(--looma-code-foreground);
+  font: 0.85rem/1.5 var(--font-ui);
+  user-select: none;
+}
+
+.looma-mermaid-preview .looma-mermaid-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.looma-mermaid-expand {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.code-block-shell:hover .looma-mermaid-expand,
+.looma-mermaid-expand:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.looma-mermaid-expand:hover { color: var(--accent); background: var(--accent-soft); }
+.looma-mermaid-expand:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.looma-mermaid-expand svg { width: 0.95rem; height: 0.95rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.code-block-shell pre.code-block-body[hidden] {
+  display: none;
+}
+
+.cm-editor .looma-continuous-mermaid {
+  min-height: 2.75rem;
+}

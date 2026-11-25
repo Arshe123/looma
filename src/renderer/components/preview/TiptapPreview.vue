@@ -7,7 +7,7 @@ import { externalDocumentKey } from '../editor/documentSession'
 import { inject, shallowRef, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
 import { dispatchEditorFocus, getRenderedEditorFocus } from '@/shared/utils/editor-focus'
 import { findChildren } from '@tiptap/core'
-import { NodeSelection } from '@tiptap/pm/state'
+import { NodeSelection, TextSelection } from '@tiptap/pm/state'
 import { Editor, EditorContent, VueNodeViewRenderer } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import { CodeBlock } from '@tiptap/extension-code-block'
@@ -29,6 +29,7 @@ import InlineMenu from './InlineMenu.vue'
 import ContextMenu from './ContextMenu.vue'
 import TableToolbar from './TableToolbar.vue'
 import CodeBlockView from './CodeBlockView.vue'
+import { isMermaidLanguage } from '../shared/mermaid-preview'
 import LocalImageView from './LocalImageView.vue'
 import ImageInsertDialog from './ImageInsertDialog.vue'
 import NoteRefPicker from './NoteRefPicker.vue'
@@ -249,6 +250,22 @@ const CodeBlockWithHeader = CodeBlock.extend({
     ]
   },
 })
+
+function backspaceAfterMermaid(view: import('@tiptap/pm/view').EditorView, event: KeyboardEvent) {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
+    || event.isComposing || view.composing || !view.editable) return false
+  const { state } = view
+  const cursor = state.selection instanceof TextSelection ? state.selection.$cursor : null
+  if (!cursor || cursor.parent.type !== state.schema.nodes.paragraph || cursor.parent.content.size !== 0) return false
+  const from = cursor.before()
+  const previous = state.doc.resolve(from).nodeBefore
+  if (previous?.type !== state.schema.nodes.codeBlock || !isMermaidLanguage(previous.attrs.language)) return false
+
+  // Don't join into the hidden code or recreate the deleted paragraph at EOF.
+  const tr = state.tr.delete(from, cursor.after()).setMeta('skipTrailingNode', true)
+  view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, from - previous.nodeSize)).scrollIntoView())
+  return true
+}
 
 const resolvedImageCache = new Map<string, string | null>()
 
@@ -870,6 +887,7 @@ onMounted(() => {
         autocapitalize: 'off',
       },
       handleKeyDown: (_view, event) => {
+        if (event.key === 'Backspace' && backspaceAfterMermaid(_view, event)) return true
         if (matchesAppShortcut(event, settingsStore.appShortcuts.copySource, window.electronAPI.platform)) {
           event.preventDefault()
           void copyRichTextSource().catch(console.error)

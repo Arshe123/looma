@@ -17,9 +17,54 @@ const onlyDiagram = `(() => {
   return { mermaidSource: text.includes('flowchart LR') || text.includes('A[开始]') || text.includes('not a diagram'), jsSource: text.includes('const x = 1') };
 })()`
 
+async function verifyTiptapBackspace(run, until, send, atEnd) {
+  const fence = note.split('\n\n')[1]
+  await run(`setFixture(${JSON.stringify(atEnd ? fence : `${fence}\n\n后文`)})`)
+  await until('document.querySelector("#note img.looma-mermaid-image")?.naturalWidth > 0', 'diagram before Backspace')
+  await run(`(() => {
+    const view = editor().view;
+    const afterCode = view.state.doc.firstChild.nodeSize;
+    const next = view.state.doc.nodeAt(afterCode);
+    if (next?.type.name !== 'paragraph' || next.content.size) {
+      editor().commands.insertContentAt(afterCode, { type: 'paragraph' });
+    }
+    editor().commands.setTextSelection(afterCode + 1);
+    view.focus();
+    const imageSelector = '#note img.looma-mermaid-image';
+    const original = document.querySelector(imageSelector);
+    const height = original.getBoundingClientRect().height;
+    window.diagramFrames = [];
+    const sample = () => {
+      const image = document.querySelector(imageSelector);
+      diagramFrames.push(image === original && image.getBoundingClientRect().height === height);
+      if (diagramFrames.length < 12) requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  })()`)
+  const backspace = async () => {
+    for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 })
+  }
+  await backspace()
+  await until('diagramFrames.length === 12', 'sample Backspace frames')
+  const state = await run(`(() => {
+    const { doc, selection } = editor().state;
+    const blocks = [];
+    doc.forEach(node => blocks.push([node.type.name, node.textContent]));
+    return { blocks, selection: selection.toJSON(), stable: diagramFrames.every(Boolean), visualSelection: !!document.querySelector('#note .code-block-shell.ProseMirror-selectednode'), caretCollapsed: getSelection().isCollapsed };
+  })()`)
+  assert.deepEqual(state, {
+    blocks: [['codeBlock', 'flowchart LR\n  A[开始] --> B[结束]'], ...(atEnd ? [] : [['paragraph', '后文']])],
+    selection: { type: 'node', anchor: 0 }, stable: true, visualSelection: true, caretCollapsed: false,
+  }, `first Backspace removes only the empty paragraph and selects the unchanged diagram: ${JSON.stringify(state)}`)
+  await backspace()
+  assert.equal((await run('editor().getMarkdown()')).trim(), atEnd ? '' : '后文', 'second Backspace removes only the selected diagram')
+  await until(`events.updates.at(-1)?.trim() === ${JSON.stringify(atEnd ? '' : '后文')}`, 'deletion finishes serializing before replacing the fixture')
+}
+
 app.whenReady().then(async () => {
   try {
-    for (const chunked of [false, true]) {
+    const backspaceOnly = process.argv.includes('--backspace')
+    for (const chunked of backspaceOnly ? [false] : [false, true]) {
       const win = new BrowserWindow({ show: false, width: 1200, height: 950, webPreferences: { backgroundThrottling: false } })
       win.webContents.on('console-message', (_event, level, message) => { if (level >= 3) console.error(message) })
       try {
@@ -35,6 +80,17 @@ app.whenReady().then(async () => {
         await win.loadURL(`http://127.0.0.1:5189/${fixture}`)
 
         await until(chunked ? 'window.ready?.() && !!cm()' : 'window.ready?.()', 'editor mounted')
+        if (backspaceOnly) {
+          const debug = win.webContents.debugger
+          debug.attach('1.3')
+          await debug.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
+          await debug.sendCommand('Page.bringToFront')
+          for (const atEnd of [false, true]) {
+            await verifyTiptapBackspace(run, until, (...args) => debug.sendCommand(...args), atEnd)
+          }
+          console.log('PASS Tiptap: Mermaid Backspace')
+          continue
+        }
         const initialSource = chunked ? await run('model().content') : ''
         await run('events.updates.length = 0')
         await run(`setFixture(${JSON.stringify(note)})`)

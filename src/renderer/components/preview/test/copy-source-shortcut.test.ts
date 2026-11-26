@@ -5,7 +5,8 @@ import { createDefaultAppShortcutSettings, matchesAppShortcut, normalizeAppShort
 import { isPrimaryModifierPressed } from '../../../../shared/utils/platform-shortcuts'
 import { createDefaultEditorShortcutSettings, getTextFormatShortcutAction, matchesEditorShortcut } from '../../../../shared/utils/editor-shortcuts'
 
-const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
+// Match source boundaries consistently with LF and CRLF checkouts.
+const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const ordinary = read('../TiptapPreview.vue')
 const continuous = read('../../editor/ChunkedMarkdownEditor.vue')
 
